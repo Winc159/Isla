@@ -1,7 +1,13 @@
 import { ChatSession } from "./session.js";
 import type { PluginContext, RuntimePlugin } from "./plugin.js";
-import type { ModelProvider } from "./types.js";
-export interface CreateSessionOptions { readonly providerId: string; readonly systemPrompt?: string; }
+import type { Message, ModelProvider } from "./types.js";
+export interface CreateSessionOptions {
+  readonly providerId: string;
+  readonly systemPrompt?: string;
+  readonly messages?: readonly Message[];
+  readonly maxContextTurns?: number;
+  readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
+}
 export class IslaRuntime {
   private readonly plugins = new Set<string>();
   private readonly providers = new Map<string, ModelProvider>();
@@ -16,6 +22,6 @@ export class IslaRuntime {
   createSession(options: CreateSessionOptions): ChatSession {
     const provider = this.providers.get(options.providerId);
     if (!provider) throw new Error(`Provider not found: ${options.providerId}`);
-    return new ChatSession(provider, options.systemPrompt);
+    return new ChatSession(provider, options);
   }
 }

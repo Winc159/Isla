@@ -1,9 +1,12 @@
+import { DEFAULT_MAX_CONTEXT_TURNS } from './core/session.js';
+
 export type OpenAIConfig = {
   readonly provider: 'openai';
   readonly model: string;
   readonly systemPrompt?: string;
   readonly timeoutMs: number;
   readonly debug: boolean;
+  readonly maxContextTurns: number;
   readonly apiKey: string;
 };
 export type DeepSeekConfig = {
@@ -12,6 +15,7 @@ export type DeepSeekConfig = {
   readonly systemPrompt?: string;
   readonly timeoutMs: number;
   readonly debug: boolean;
+  readonly maxContextTurns: number;
   readonly apiKey: string;
 };
 export type LocalConfig = {
@@ -20,6 +24,7 @@ export type LocalConfig = {
   readonly systemPrompt?: string;
   readonly timeoutMs: number;
   readonly debug: boolean;
+  readonly maxContextTurns: number;
   readonly baseURL: string;
   readonly apiKey?: string;
 };
@@ -36,11 +41,15 @@ export function readConfig(env: Env = process.env): AppConfig {
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0)
     throw new Error('ISLA_TIMEOUT_MS must be a positive integer');
   const debug = env.ISLA_DEBUG === '1' || env.ISLA_DEBUG === 'true';
+  const maxContextTurns = Number(env.ISLA_MAX_CONTEXT_TURNS ?? DEFAULT_MAX_CONTEXT_TURNS);
+  if (!Number.isInteger(maxContextTurns) || maxContextTurns <= 0)
+    throw new Error('ISLA_MAX_CONTEXT_TURNS must be a positive integer');
   const common = {
     provider,
     model,
     timeoutMs,
     debug,
+    maxContextTurns,
     ...(env.ISLA_SYSTEM_PROMPT ? { systemPrompt: env.ISLA_SYSTEM_PROMPT } : {}),
   };
   if (provider === 'openai') {
