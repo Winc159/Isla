@@ -15,6 +15,7 @@ export interface StoredSession {
 }
 
 export interface SessionStore {
+  list(provider: string, model: string): Promise<StoredSession[]>;
   loadLatest(provider: string, model: string): Promise<StoredSession | undefined>;
   create(provider: string, model: string, messages: readonly Message[]): Promise<StoredSession>;
   save(session: StoredSession, messages: readonly Message[]): Promise<StoredSession>;
@@ -23,17 +24,19 @@ export interface SessionStore {
 export class JsonSessionStore implements SessionStore {
   constructor(private readonly directory = join(homedir(), ".isla", "sessions")) {}
 
-  async loadLatest(provider: string, model: string): Promise<StoredSession | undefined> {
+  async list(provider: string, model: string): Promise<StoredSession[]> {
     await mkdir(this.directory, { recursive: true });
-    const files = (await readdir(this.directory))
-      .filter(file => file.endsWith(".json"))
-      .sort()
-      .reverse();
+    const files = (await readdir(this.directory)).filter(file => file.endsWith(".json"));
+    const sessions: StoredSession[] = [];
     for (const file of files) {
       const session = parseSession(await readFile(join(this.directory, file), "utf8"));
-      if (session.provider === provider && session.model === model) return session;
+      if (session.provider === provider && session.model === model) sessions.push(session);
     }
-    return undefined;
+    return sessions.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  async loadLatest(provider: string, model: string): Promise<StoredSession | undefined> {
+    return (await this.list(provider, model))[0];
   }
 
   async create(provider: string, model: string, messages: readonly Message[]): Promise<StoredSession> {

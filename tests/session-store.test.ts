@@ -19,6 +19,9 @@ describe("JSON session store", () => {
     await store.save(first, [{ role: "user", content: "u1" }]);
     await store.create("deepseek", "m2", []);
 
+    await expect(store.list("deepseek", "m1")).resolves.toMatchObject([
+      { id: first.id, messages: [{ role: "user", content: "u1" }] },
+    ]);
     await expect(store.loadLatest("deepseek", "m1")).resolves.toMatchObject({
       id: first.id,
       messages: [{ role: "user", content: "u1" }],

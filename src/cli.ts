@@ -3,6 +3,8 @@ import { createInterface } from 'node:readline';
 import { performance } from 'node:perf_hooks';
 import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { isInteractiveInput } from './cli/command.js';
+import { findCliCommand } from './cli/commands.js';
 import { DEFAULT_MAX_CONTEXT_TURNS } from './core/session.js';
 import { loadRuntime } from './main.js';
 import { JsonSessionStore, type SessionStore, type StoredSession } from './session-store.js';
@@ -28,47 +30,76 @@ export async function runCli(
     );
   }
   let session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns);
-  const rl = createInterface({ input, crlfDelay: Infinity });
-  for await (const line of rl) {
-    if (line === '/exit') {
-      rl.close();
-      break;
-    }
-    if (line === '/new') {
-      storedSession = await sessionStore.create(
-        providerId,
-        model,
-        systemPrompt ? [{ role: 'system', content: systemPrompt }] : [],
-      );
-      session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns);
-      output.write('\x1b[2J\x1b[3J\x1b[H');
-      writeHeader(output, providerId, model);
-      continue;
-    }
-    if (!line.trim()) continue;
-    const startedAt = performance.now();
-    const stopLoading = startLoading(output, startedAt);
-    try {
-      const response = await session.send(line);
-      stopLoading();
-      output.write(`isla> ${response.text}\n耗时 ${formatElapsed(startedAt)}\n\n`);
-    } catch (error) {
-      stopLoading();
-      if (debug) {
-        const name = error instanceof Error ? error.name : 'UnknownError';
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        const category = /timeout|timed out/i.test(message) || /timeout/i.test(name)
-          ? 'timeout'
-          : /network|connection|fetch/i.test(message) || /connection/i.test(name)
-            ? 'network'
-            : 'provider';
-        errorOutput.write(`[debug] provider=${providerId} model=${model} error=${name} category=${category}\n`);
+  let shouldExit = false;
+  while (!shouldExit) {
+    const rl = createInterface({ input, crlfDelay: Infinity });
+    let reopenInput = false;
+    for await (const line of rl) {
+      const command = findCliCommand(line);
+      if (command) {
+        const takesOverInput = command.inputMode === 'raw' && isInteractiveInput(input);
+        if (takesOverInput) rl.close();
+        const result = await command.execute({
+          input,
+          output,
+          providerId,
+          model,
+          systemPrompt,
+          sessionStore,
+          currentSession: storedSession,
+        });
+        if (result.type === 'exit') {
+          rl.close();
+          shouldExit = true;
+          break;
+        }
+        if (result.type === 'switch-session') {
+          storedSession = result.session;
+          session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns);
+          output.write('\x1b[2J\x1b[3J\x1b[H');
+          writeHeader(output, providerId, model);
+          if (result.replayHistory) writeSessionHistory(output, storedSession);
+        }
+        if (takesOverInput) {
+          reopenInput = true;
+          break;
+        }
+        continue;
       }
-      errorOutput.write(
-        `Error: ${error instanceof Error ? error.message : 'Unknown error'}\n耗时 ${formatElapsed(startedAt)}\n`,
-      );
+      if (!line.trim()) continue;
+      const startedAt = performance.now();
+      const stopLoading = startLoading(output, startedAt);
+      try {
+        const response = await session.send(line);
+        stopLoading();
+        output.write(`isla> ${response.text}\n耗时 ${formatElapsed(startedAt)}\n\n`);
+      } catch (error) {
+        stopLoading();
+        if (debug) {
+          const name = error instanceof Error ? error.name : 'UnknownError';
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          const category = /timeout|timed out/i.test(message) || /timeout/i.test(name)
+            ? 'timeout'
+            : /network|connection|fetch/i.test(message) || /connection/i.test(name)
+              ? 'network'
+              : 'provider';
+          errorOutput.write(`[debug] provider=${providerId} model=${model} error=${name} category=${category}\n`);
+        }
+        errorOutput.write(
+          `Error: ${error instanceof Error ? error.message : 'Unknown error'}\n耗时 ${formatElapsed(startedAt)}\n`,
+        );
+      }
     }
+    if (!reopenInput) break;
   }
+}
+
+function writeSessionHistory(output: Writable, session: StoredSession): void {
+  for (const message of session.messages) {
+    if (message.role === 'system') continue;
+    output.write(`${message.role === 'user' ? 'you' : 'isla'}> ${message.content}\n`);
+  }
+  output.write('\n');
 }
 
 function startLoading(output: Writable, startedAt: number): () => void {
@@ -80,7 +111,7 @@ function startLoading(output: Writable, startedAt: number): () => void {
     frame += 1;
   };
   render();
-  const timer = setInterval(render, 100);
+  const timer = setInterval(render, 1000);
   timer.unref();
   return () => {
     clearInterval(timer);
@@ -89,12 +120,20 @@ function startLoading(output: Writable, startedAt: number): () => void {
 }
 
 function formatElapsed(startedAt: number): string {
-  return `${((performance.now() - startedAt) / 1000).toFixed(1)}s`;
+  const totalSeconds = Math.floor((performance.now() - startedAt) / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) {
+    return minutes > 0 ? `${minutes}m${seconds}s` : `${seconds}s`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h${minutes % 60}m`;
 }
 
 function writeHeader(output: Writable, providerId: string, model: string): void {
   output.write(
-    `Isla v0 · provider=${providerId} · model=${model}\n输入 /new 开启新对话，输入 /exit 或按 Ctrl+C 退出。\n\n`,
+    `Isla v0 · provider=${providerId} · model=${model}\n输入 /new 开启新对话，输入 /sessions 选择会话，输入 /exit 或按 Ctrl+C 退出。\n\n`,
   );
 }
 
