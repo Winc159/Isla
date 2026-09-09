@@ -64,10 +64,7 @@ function selectSession(
       resolve(result);
     };
     const onKeypress = (_text: string, key: Key) => {
-      if (key.ctrl && key.name === 'c') {
-        finish('exit');
-        return;
-      }
+      if (key.ctrl && key.name === 'c') return;
       if (key.name === 'escape') {
         finish(undefined);
         return;

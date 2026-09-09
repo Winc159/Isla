@@ -5,6 +5,7 @@ import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { isInteractiveInput } from './cli/command.js';
 import { findCliCommand } from './cli/commands.js';
+import { readInteractiveMessage } from './cli/input-editor.js';
 import { DEFAULT_MAX_CONTEXT_TURNS } from './core/session.js';
 import { loadRuntime } from './main.js';
 import { JsonSessionStore, type SessionStore, type StoredSession } from './session-store.js';
@@ -21,8 +22,11 @@ export async function runCli(
   sessionStore: SessionStore = new JsonSessionStore(),
 ): Promise<void> {
   writeHeader(output, providerId, model);
-  let storedSession = await sessionStore.loadLatest(providerId, model);
-  if (!storedSession) {
+  const latestSession = await sessionStore.loadLatest(providerId, model);
+  let storedSession: StoredSession;
+  if (latestSession) {
+    storedSession = latestSession;
+  } else {
     storedSession = await sessionStore.create(
       providerId,
       model,
@@ -30,16 +34,14 @@ export async function runCli(
     );
   }
   let session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns);
-  let shouldExit = false;
-  while (!shouldExit) {
-    const rl = createInterface({ input, crlfDelay: Infinity });
-    let reopenInput = false;
-    for await (const line of rl) {
-      const command = findCliCommand(line);
-      if (command) {
-        const takesOverInput = command.inputMode === 'raw' && isInteractiveInput(input);
-        if (takesOverInput) rl.close();
-        const result = await command.execute({
+  const interactive = isInteractiveInput(input);
+  const history: string[] = [];
+  let draft = '';
+
+  const handleLine = async (line: string): Promise<'continue' | 'exit'> => {
+    const command = findCliCommand(line);
+    if (command) {
+      const result = await command.execute({
           input,
           output,
           providerId,
@@ -47,50 +49,62 @@ export async function runCli(
           systemPrompt,
           sessionStore,
           currentSession: storedSession,
-        });
-        if (result.type === 'exit') {
-          rl.close();
-          shouldExit = true;
-          break;
-        }
-        if (result.type === 'switch-session') {
-          storedSession = result.session;
-          session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns);
-          output.write('\x1b[2J\x1b[3J\x1b[H');
-          writeHeader(output, providerId, model);
-          if (result.replayHistory) writeSessionHistory(output, storedSession);
-        }
-        if (takesOverInput) {
-          reopenInput = true;
-          break;
-        }
-        continue;
+      });
+      if (result.type === 'exit') {
+        return 'exit';
       }
-      if (!line.trim()) continue;
-      const startedAt = performance.now();
-      const stopLoading = startLoading(output, startedAt);
-      try {
-        const response = await session.send(line);
-        stopLoading();
-        output.write(`isla> ${response.text}\n耗时 ${formatElapsed(startedAt)}\n\n`);
-      } catch (error) {
-        stopLoading();
-        if (debug) {
-          const name = error instanceof Error ? error.name : 'UnknownError';
-          const message = error instanceof Error ? error.message : 'Unknown error';
-          const category = /timeout|timed out/i.test(message) || /timeout/i.test(name)
-            ? 'timeout'
-            : /network|connection|fetch/i.test(message) || /connection/i.test(name)
-              ? 'network'
-              : 'provider';
-          errorOutput.write(`[debug] provider=${providerId} model=${model} error=${name} category=${category}\n`);
-        }
-        errorOutput.write(
-          `Error: ${error instanceof Error ? error.message : 'Unknown error'}\n耗时 ${formatElapsed(startedAt)}\n`,
-        );
+      if (result.type === 'switch-session') {
+        storedSession = result.session;
+        session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns);
+        output.write('\x1b[2J\x1b[3J\x1b[H');
+        writeHeader(output, providerId, model);
+        if (result.replayHistory) writeSessionHistory(output, storedSession);
+        draft = '';
+      } else if (interactive && command.inputMode === 'raw') {
+        draft = line;
       }
+      return 'continue';
     }
-    if (!reopenInput) break;
+    if (!line.trim()) return 'continue';
+    draft = '';
+    history.push(line);
+    const startedAt = performance.now();
+    const stopLoading = startLoading(output, startedAt);
+    try {
+      const response = await session.send(line);
+      stopLoading();
+      output.write(`isla> ${response.text}\n耗时 ${formatElapsed(startedAt)}\n\n`);
+    } catch (error) {
+      stopLoading();
+      if (debug) {
+        const name = error instanceof Error ? error.name : 'UnknownError';
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        const category = /timeout|timed out/i.test(message) || /timeout/i.test(name)
+          ? 'timeout'
+          : /network|connection|fetch/i.test(message) || /connection/i.test(name)
+            ? 'network'
+            : 'provider';
+        errorOutput.write(`[debug] provider=${providerId} model=${model} error=${name} category=${category}\n`);
+      }
+      errorOutput.write(
+        `Error: ${error instanceof Error ? error.message : 'Unknown error'}\n耗时 ${formatElapsed(startedAt)}\n`,
+      );
+    }
+    return 'continue';
+  };
+
+  if (interactive) {
+    while (true) {
+      const result = await readInteractiveMessage(input, output, history, draft);
+      if (result.type === 'exit') break;
+      if (await handleLine(result.value) === 'exit') break;
+    }
+    return;
+  }
+
+  const rl = createInterface({ input, crlfDelay: Infinity });
+  for await (const line of rl) {
+    if (await handleLine(line) === 'exit') break;
   }
 }
 
@@ -133,7 +147,7 @@ function formatElapsed(startedAt: number): string {
 
 function writeHeader(output: Writable, providerId: string, model: string): void {
   output.write(
-    `Isla v0 · provider=${providerId} · model=${model}\n输入 /new 开启新对话，输入 /sessions 选择会话，输入 /exit 或按 Ctrl+C 退出。\n\n`,
+    `Isla v0 · provider=${providerId} · model=${model}\n输入 /new 开启新对话，输入 /sessions 选择会话，输入 /exit 或按 Esc 退出。\n\n`,
   );
 }
 

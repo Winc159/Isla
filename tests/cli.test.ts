@@ -92,7 +92,7 @@ describe("cli", () => {
     input.end("/exit\n");
     await running;
 
-    expect(input.rawModes).toEqual([true, false]);
+    expect(input.rawModes).toEqual([true, false, true, false, true, false]);
     expect(out).toContain("选择会话");
     expect(out).toContain("\x1b[?1049h");
     expect(out).toContain("\x1b[?1049l");
@@ -114,10 +114,10 @@ describe("cli", () => {
     await new Promise(resolve => setTimeout(resolve, 10));
     input.write("\r");
     await new Promise(resolve => setTimeout(resolve, 10));
-    input.end("/exit\n");
+    input.write("\x1b");
     await running;
 
-    expect(input.rawModes).toEqual([true, false]);
+    expect(input.rawModes).toEqual([true, false, true, false, true, false]);
     expect(out).not.toContain("\x1b[2J\x1b[3J\x1b[H");
     expect(p.requests).toHaveLength(0);
   });

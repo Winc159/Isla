@@ -20,6 +20,9 @@ v0.1 将当前进程内会话保存为用户级 JSON 文件，使 CLI 重启后�
 - `ISLA_MAX_CONTEXT_TURNS` 默认为 20，必须是正整数。一轮从 user 消息开始，包含其后的 assistant 消息；失败后没有 assistant 的 user 消息也算一轮。
 - DeepSeek 请求显式设置 `thinking.type=disabled`，普通对话不使用默认 high 思考模式。
 - 交互式 CLI 等待期间显示无依赖 spinner；成功或失败后显示单次请求耗时。耗时不写入会话 JSON。
+- 交互式 TTY 使用最小 raw 输入编辑器：Enter 发送，Shift+Enter 在终端可区分时换行，Alt+Enter 作为备用换行键；支持多行粘贴、光标移动、Home/End、删除、按 grapheme 编辑中文与 emoji，以及单行输入历史。
+- Ctrl+C 不由 Isla 绑定；独立 Esc 或 `/exit` 退出。会话选择取消后恢复原草稿，成功切换或 `/new` 后清空草稿。
+- 非 TTY 和管道输入继续使用逐行模式。输入编辑器只向 CLI 返回完整消息，不进入 Runtime、Session 或 Provider。
 
 ## 暂缓
 
@@ -27,6 +30,7 @@ v0.1 将当前进程内会话保存为用户级 JSON 文件，使 CLI 重启后�
 - 摘要、基于重要性的选择、精确 token 计算、长期记忆和跨设备同步。
 - SQLite、数据库迁移和 Repository 层。
 - 加密与操作系统密钥管理。
+- 自动补全、语法高亮、鼠标、撤销/重做、输入历史搜索和第三方终端输入依赖。
 
 ## JSON 格式
 
