@@ -8,4 +8,10 @@ export class FakeProvider implements ModelProvider {
     if (!result) throw new Error("No fake response configured");
     if (result instanceof Error) throw result; return result;
   }
+  async *generateStream(request: ModelRequest): AsyncIterable<{ text: string }> {
+    this.requests.push(request); const result = this.responses[this.index++];
+    if (!result) throw new Error("No fake response configured");
+    if (result instanceof Error) throw result;
+    for (const text of result.text.match(/.{1,2}/gs) ?? []) yield { text };
+  }
 }

@@ -70,13 +70,11 @@ export async function runCli(
     draft = '';
     history.push(line);
     const startedAt = performance.now();
-    const stopLoading = startLoading(output, startedAt);
     try {
-      const response = await session.send(line);
-      stopLoading();
-      output.write(`isla> ${response.text}\n耗时 ${formatElapsed(startedAt)}\n\n`);
+      output.write('isla> ');
+      const response = await session.sendStream(line, text => output.write(text));
+      output.write(`\n耗时 ${formatElapsed(startedAt)}\n\n`);
     } catch (error) {
-      stopLoading();
       if (debug) {
         const name = error instanceof Error ? error.name : 'UnknownError';
         const message = error instanceof Error ? error.message : 'Unknown error';

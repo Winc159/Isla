@@ -48,4 +48,13 @@ class DeepSeekProvider implements ModelProvider {
         : {}),
     };
   }
+  async *generateStream(request: ModelRequest): AsyncIterable<{ text: string }> {
+    const stream = await this.client.chat.completions.create({
+      model: this.model, messages: [...request.messages], thinking: { type: 'disabled' }, stream: true,
+    } as never) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null } }> }>;
+    for await (const chunk of stream) {
+      const text = chunk.choices?.[0]?.delta?.content;
+      if (text) yield { text };
+    }
+  }
 }

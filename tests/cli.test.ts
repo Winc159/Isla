@@ -45,8 +45,6 @@ describe("cli", () => {
     let err = "";
     await runCli(Readable.from(["你好\n", "/exit\n"]), writable(text => { out += text; }, true), writable(text => { err += text; }), r, "fake", "fake-model", undefined, false, 20, store);
     expect(out).toContain("isla> ok");
-    expect(out).toContain("生成中");
-    expect(out).toContain("\x1b[2K");
     expect(out).toMatch(/耗时 \d+s/);
     expect(out).not.toContain("you> 你好");
     expect(err).toBe("");

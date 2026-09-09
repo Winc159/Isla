@@ -11,11 +11,13 @@
 
 完成信号：三种 Provider 契约一致，至少两个云 Provider 可真实对话，全部自动测试通过。
 
-## 候选阶段：流式输出
+## v0.1.4：流式输出
 
-触发条件：等待完整回答明显影响日常使用。
-
-研究问题：是否扩展 ModelProvider 返回 AsyncIterable，还是增加独立 streaming 方法；不得让 CLI 流式事件泄漏进核心响应协议。
+- Provider 原生流式响应统一为 `generateStream()`。
+- OpenAI、DeepSeek、Local Provider 在适配层转换为文本增量。
+- CLI 边接收边输出；流完成后才保存完整 assistant 消息。
+- 流式失败或中断时保留 user 消息，不保存不完整 assistant 消息。
+- 保留一次性 `generate()`，不让 CLI 事件格式进入 Runtime 消息协议。
 
 ## 候选阶段：会话持久化
 
@@ -58,4 +60,3 @@
 触发条件：已有稳定测试、评测集、回滚机制和人工审查流程。
 
 研究 Stable、Candidate、Reviewer、Challenge 与 Human Promotion。在此之前禁止让 Isla 自动修改并部署自身。
-

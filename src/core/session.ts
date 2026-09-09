@@ -37,6 +37,24 @@ export class ChatSession {
     }
     return response;
   }
+  async sendStream(input: string, onChunk: (text: string) => void): Promise<ModelResponse> {
+    this.messages.push({ role: "user", content: input });
+    await this.onMessagesChanged?.([...this.messages]);
+    let text = "";
+    try {
+      for await (const chunk of this.provider.generateStream({ messages: selectRecentTurns(this.messages, this.maxContextTurns) })) {
+        if (chunk.text) { text += chunk.text; onChunk(chunk.text); }
+      }
+    } catch (error) {
+      throw error;
+    }
+    if (!text.trim()) throw new Error("Provider returned empty text");
+    const response = { text, model: this.provider.model } satisfies ModelResponse;
+    this.messages.push({ role: "assistant", content: text });
+    try { await this.onMessagesChanged?.([...this.messages]); }
+    catch (error) { this.messages.pop(); throw error; }
+    return response;
+  }
 }
 
 function selectRecentTurns(messages: readonly Message[], maxTurns: number): Message[] {
