@@ -5,6 +5,7 @@ import type { Tool } from "./types.js";
 export function createReadTextFileTool(rootDirectory: string): Tool {
   const root = resolve(rootDirectory);
   return {
+    permission: { kind: "filesystem-read" },
     definition: {
       name: "read_text_file",
       description: "读取项目目录内的文本文件。需要查看项目文档或源码内容时使用。",

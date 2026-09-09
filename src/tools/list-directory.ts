@@ -5,6 +5,7 @@ import type { Tool } from "./types.js";
 export function createListDirectoryTool(rootDirectory: string): Tool {
   const root = resolve(rootDirectory);
   return {
+    permission: { kind: "filesystem-read" },
     definition: {
       name: "list_directory",
       description: "列出项目目录内指定目录的直接子项。需要定位项目文件时使用，不递归列出。",

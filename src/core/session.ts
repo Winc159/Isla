@@ -2,6 +2,10 @@ import type { ModelProvider, Message, ModelResponse, ToolDefinition } from "./ty
 import { composeRequestMessages } from "../prompts/compose.js";
 import { createProjectFilesCapability } from "../tools/project-files.js";
 import type { ToolCapability } from "../tools/types.js";
+import { ToolRegistry } from "../tools/registry.js";
+import { ToolRuntime } from "../tools/runtime.js";
+import type { ApprovalPolicy, ApprovalService } from "../approval/types.js";
+import type { PermissionPreset } from "../approval/presets.js";
 export const DEFAULT_MAX_CONTEXT_TURNS = 20;
 export interface ChatSessionOptions {
   readonly systemPrompt?: string;
@@ -13,6 +17,9 @@ export interface ChatSessionOptions {
   readonly onToolStarted?: (tool: string) => void;
   readonly onToolFinished?: (tool: string) => void;
   readonly enableTools?: boolean;
+  readonly approvalPolicy?: ApprovalPolicy;
+  readonly approvalService?: ApprovalService;
+  readonly permissionPreset?: PermissionPreset;
 }
 export class ChatSession {
   private readonly messages: Message[];
@@ -35,6 +42,13 @@ export class ChatSession {
     this.capabilities = this.enableTools && this.provider.generateWithTools
       ? [createProjectFilesCapability(this.projectRoot ?? process.cwd())]
       : [];
+    this.toolRegistry = new ToolRegistry();
+    for (const capability of this.capabilities) this.toolRegistry.registerCapability(capability);
+    this.toolRuntime = new ToolRuntime(this.toolRegistry, {
+      approvalPolicy: options.approvalPolicy,
+      approvalService: options.approvalService,
+      permissionPreset: options.permissionPreset,
+    });
   }
   private readonly onMessagesChanged: ((messages: readonly Message[]) => Promise<void>) | undefined;
   private readonly projectRoot: string | undefined;
@@ -43,6 +57,8 @@ export class ChatSession {
   private readonly onToolFinished: ((tool: string) => void) | undefined;
   private readonly enableTools: boolean;
   private readonly capabilities: readonly ToolCapability[];
+  private readonly toolRegistry: ToolRegistry;
+  private readonly toolRuntime: ToolRuntime;
   async send(input: string): Promise<ModelResponse> {
     this.messages.push({ role: "user", content: input });
     await this.onMessagesChanged?.([...this.messages]);
@@ -66,19 +82,17 @@ export class ChatSession {
     const provider = this.provider;
     if (!this.enableTools || !provider.generateWithTools) return provider.generate(request);
     let current = request.messages;
-    const tools: readonly ToolDefinition[] = this.capabilities.flatMap(capability => capability.tools.map(tool => tool.definition));
-    const implementations = new Map(this.capabilities.flatMap(capability => capability.tools).map(tool => [tool.definition.name, tool]));
+    const tools: readonly ToolDefinition[] = this.toolRegistry.definitions();
     for (let round = 0; round < 3; round += 1) {
       const response = await provider.generateWithTools({ messages: current, tools });
       if (!response.toolCalls?.length) return response;
       const next = [...current, { role: "assistant" as const, content: "", toolCalls: response.toolCalls }];
       for (const call of response.toolCalls) {
-        const tool = implementations.get(call.name);
-        if (!tool) throw new Error(`Unknown tool: ${call.name}`);
         this.onToolStarted?.(call.name);
         let result: string;
         try {
-          result = await tool.execute(call.arguments);
+          const execution = await this.toolRuntime.execute(call);
+          result = execution.ok ? execution.content : `[${execution.code}] ${execution.message}`;
         } finally {
           this.onToolFinished?.(call.name);
         }

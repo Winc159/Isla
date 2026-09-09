@@ -1,6 +1,8 @@
 import { ChatSession } from "./session.js";
 import type { PluginContext, RuntimePlugin } from "./plugin.js";
 import type { Message, ModelProvider } from "./types.js";
+import type { ApprovalPolicy, ApprovalService } from "../approval/types.js";
+import type { PermissionPreset } from "../approval/presets.js";
 export interface CreateSessionOptions {
   readonly providerId: string;
   readonly systemPrompt?: string;
@@ -12,6 +14,9 @@ export interface CreateSessionOptions {
   readonly onToolStarted?: (tool: string) => void;
   readonly onToolFinished?: (tool: string) => void;
   readonly enableTools?: boolean;
+  readonly approvalPolicy?: ApprovalPolicy;
+  readonly approvalService?: ApprovalService;
+  readonly permissionPreset?: PermissionPreset;
 }
 export class IslaRuntime {
   private readonly plugins = new Set<string>();
