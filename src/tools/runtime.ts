@@ -7,7 +7,7 @@ import { allowsWithoutApproval, type PermissionPreset } from "../approval/preset
 export class ToolRuntime {
   constructor(
     private readonly registry: ToolRegistry,
-    private readonly options: { readonly approvalPolicy?: ApprovalPolicy | undefined; readonly approvalService?: ApprovalService | undefined; readonly permissionPreset?: PermissionPreset | undefined } = {},
+    private readonly options: { readonly approvalPolicy?: ApprovalPolicy | undefined; readonly approvalService?: ApprovalService | undefined; readonly permissionPreset?: PermissionPreset | undefined; readonly onApproved?: ((toolName: string) => void) | undefined } = {},
   ) {}
   async execute(call: ToolCall): Promise<ToolExecutionResult> {
     const tool = this.registry.get(call.name);
@@ -23,6 +23,7 @@ export class ToolRuntime {
         if (!decision.approved) return { ok: false, code: "USER_REJECTED", message: decision.reason ?? "User rejected the tool call" };
       }
     }
+    this.options.onApproved?.(call.name);
     try {
       return { ok: true, content: await tool.execute(call.arguments) };
     } catch (error) {

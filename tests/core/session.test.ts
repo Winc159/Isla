@@ -16,7 +16,7 @@ describe("session", () => {
     const p = new ToolProvider([{ text: "最终回答" }]);
     const s = new ChatSession(p, { projectRoot: process.cwd(), enableTools: true });
     await expect(s.send("读取 README")).resolves.toMatchObject({ text: "最终回答" });
-    expect(p.requests[0]?.tools?.map(tool => tool.name)).toEqual(["list_directory", "read_text_file"]);
+    expect(p.requests[0]?.tools?.map(tool => tool.name)).toEqual(["list_directory", "read_text_file", "write_text_file"]);
   });
   it("supports tools on the streaming session path", async () => {
     class ToolProvider extends FakeProvider {

@@ -1,9 +1,9 @@
 import { readdir } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
 import type { Tool } from "./types.js";
+import { SandboxPolicy } from "../sandbox/policy.js";
 
 export function createListDirectoryTool(rootDirectory: string): Tool {
-  const root = resolve(rootDirectory);
+  const sandbox = new SandboxPolicy(rootDirectory);
   return {
     permission: { kind: "filesystem-read" },
     definition: {
@@ -20,10 +20,8 @@ export function createListDirectoryTool(rootDirectory: string): Tool {
       let args: unknown;
       try { args = JSON.parse(argumentsJson); } catch { throw new Error("list_directory arguments must be valid JSON"); }
       const path = typeof args === "object" && args !== null && "path" in args ? (args as { path?: unknown }).path : undefined;
-      if (typeof path !== "string" || isAbsolute(path)) throw new Error("list_directory path must be relative");
-      const target = resolve(root, path);
-      const relativePath = relative(root, target);
-      if (relativePath.startsWith("..") || isAbsolute(relativePath)) throw new Error("list_directory path must stay inside the project directory");
+      if (typeof path !== "string") throw new Error("list_directory path must be relative");
+      const target = await sandbox.resolveRootOrDirectory(path);
       return (await readdir(target, { withFileTypes: true })).map(entry => `${entry.isDirectory() ? "dir" : "file"}\t${entry.name}`).join("\n");
     },
   };

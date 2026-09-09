@@ -25,4 +25,10 @@ describe("ToolRuntime", () => {
     await expect(runtime.execute({ id: "1", name: "write", arguments: "{}" })).resolves.toMatchObject({ ok: false, code: "USER_REJECTED" });
     expect(executed).toBe(false);
   });
+
+  it("allows reads without approval in workspace preset", async () => {
+    const registry = new ToolRegistry();
+    registry.register({ definition: { name: "read", description: "", parameters: {} }, permission: { kind: "filesystem-read" }, execute: async () => "read" });
+    await expect(new ToolRuntime(registry, { approvalPolicy: "ask", permissionPreset: "workspace" }).execute({ id: "1", name: "read", arguments: "{}" })).resolves.toEqual({ ok: true, content: "read" });
+  });
 });

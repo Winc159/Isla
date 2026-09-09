@@ -55,6 +55,7 @@ class DeepSeekProvider implements ModelProvider {
       model: this.model,
       messages: request.messages.map(toChatMessage) as never,
       ...(request.tools ? { tools: request.tools.map(toChatTool) } : {}),
+      ...(request.toolChoice ? { tool_choice: request.toolChoice === 'auto' || request.toolChoice === 'required' ? request.toolChoice : { type: 'function', function: { name: request.toolChoice.name } } } : {}),
       thinking: { type: 'disabled' as const },
     } as never);
     const message = r.choices[0]?.message as { content?: string | null; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } | undefined;

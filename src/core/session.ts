@@ -7,6 +7,7 @@ import { ToolRuntime } from "../tools/runtime.js";
 import type { ApprovalPolicy, ApprovalService } from "../approval/types.js";
 import type { PermissionPreset } from "../approval/presets.js";
 export const DEFAULT_MAX_CONTEXT_TURNS = 20;
+export const DEFAULT_MAX_TOOL_ROUNDS = 8;
 export interface ChatSessionOptions {
   readonly systemPrompt?: string;
   readonly messages?: readonly Message[];
@@ -48,6 +49,7 @@ export class ChatSession {
       approvalPolicy: options.approvalPolicy,
       approvalService: options.approvalService,
       permissionPreset: options.permissionPreset,
+      onApproved: tool => this.onToolStarted?.(tool),
     });
   }
   private readonly onMessagesChanged: ((messages: readonly Message[]) => Promise<void>) | undefined;
@@ -65,7 +67,7 @@ export class ChatSession {
     const history = selectRecentTurns(this.messages, this.maxContextTurns);
     const request = { messages: composeRequestMessages(history, this.capabilities) };
     const response = this.capabilities.length
-      ? await this.generateWithAvailableTools(request)
+      ? await this.generateWithAvailableTools(request, requiresWriteTool(input))
       : await this.provider.generate(request);
     if (!response.text.trim()) throw new Error("Provider returned empty text");
     this.messages.push({ role: "assistant", content: response.text });
@@ -78,17 +80,19 @@ export class ChatSession {
     return response;
   }
 
-  private async generateWithAvailableTools(request: { messages: Message[] }): Promise<ModelResponse> {
+  private async generateWithAvailableTools(request: { messages: Message[] }, requireWriteTool = false): Promise<ModelResponse> {
     const provider = this.provider;
     if (!this.enableTools || !provider.generateWithTools) return provider.generate(request);
     let current = request.messages;
     const tools: readonly ToolDefinition[] = this.toolRegistry.definitions();
-    for (let round = 0; round < 3; round += 1) {
-      const response = await provider.generateWithTools({ messages: current, tools });
-      if (!response.toolCalls?.length) return response;
+    for (let round = 0; round < DEFAULT_MAX_TOOL_ROUNDS; round += 1) {
+      const response = await provider.generateWithTools({ messages: current, tools, ...(requireWriteTool ? { toolChoice: { name: "write_text_file" } } : {}) });
+      if (!response.toolCalls?.length) {
+        if (requireWriteTool) return { text: "未执行写入：模型没有调用 write_text_file，因此没有创建或修改文件。", ...(response.model ? { model: response.model } : {}) };
+        return response;
+      }
       const next = [...current, { role: "assistant" as const, content: "", toolCalls: response.toolCalls }];
       for (const call of response.toolCalls) {
-        this.onToolStarted?.(call.name);
         let result: string;
         try {
           const execution = await this.toolRuntime.execute(call);
@@ -110,7 +114,7 @@ export class ChatSession {
     const request = { messages: composeRequestMessages(history, this.capabilities) };
     let response: ModelResponse;
     if (this.capabilities.length && this.provider.generateWithTools) {
-      response = await this.generateWithAvailableTools(request);
+      response = await this.generateWithAvailableTools(request, requiresWriteTool(input));
       onChunk(response.text);
     } else {
       let streamedText = "";
@@ -126,6 +130,10 @@ export class ChatSession {
     catch (error) { this.messages.pop(); throw error; }
     return response;
   }
+}
+
+function requiresWriteTool(input: string): boolean {
+  return /(?:创建|新建|写入|写一下|写下|保存|修改|编辑|覆盖|删除)\s*(?:一个|一份|文件|文本|内容)?|write_text_file|write file|create (?:a )?file|edit (?:the )?file/i.test(input);
 }
 
 function selectRecentTurns(messages: readonly Message[], maxTurns: number): Message[] {

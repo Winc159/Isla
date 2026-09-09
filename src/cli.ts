@@ -9,6 +9,7 @@ import { readInteractiveMessage } from './cli/input-editor.js';
 import { DEFAULT_MAX_CONTEXT_TURNS } from './core/session.js';
 import { loadRuntime } from './main.js';
 import { JsonSessionStore, type SessionStore, type StoredSession } from './session-store.js';
+import { CliApprovalService } from './approval/cli-approval.js';
 export async function runCli(
   input: Readable,
   output: Writable,
@@ -33,8 +34,8 @@ export async function runCli(
       systemPrompt ? [{ role: 'system', content: systemPrompt }] : [],
     );
   }
-  let session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns, output);
   const interactive = isInteractiveInput(input);
+  let session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns, output, input, interactive);
   const history: string[] = [];
   let draft = '';
 
@@ -56,7 +57,7 @@ export async function runCli(
       }
       if (result.type === 'switch-session') {
         storedSession = result.session;
-        session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns, output);
+        session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns, output, input, interactive);
         output.write('\x1b[2J\x1b[3J\x1b[H');
         writeHeader(output, providerId, model);
         if (result.replayHistory) writeSessionHistory(output, storedSession);
@@ -157,6 +158,8 @@ function createPersistentSession(
   sessionStore: SessionStore,
   maxContextTurns: number,
   output: Writable,
+  input: Readable,
+  interactive: boolean,
 ) {
   let current = storedSession;
   let stopToolLoading: (() => void) | undefined;
@@ -166,6 +169,9 @@ function createPersistentSession(
     maxContextTurns,
     enableTools: true,
     projectRoot: process.cwd(),
+    permissionPreset: 'workspace',
+    approvalPolicy: interactive ? 'ask' : 'never',
+    ...(interactive ? { approvalService: new CliApprovalService(input, output) } : {}),
     onToolStarted: tool => {
       stopToolLoading?.();
       stopToolLoading = startLoading(output, performance.now(), `使用工具 ${tool}`);

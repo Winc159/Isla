@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createListDirectoryTool } from "../../src/tools/list-directory.js";
 import { createReadTextFileTool } from "../../src/tools/read-text-file.js";
+import { createWriteTextFileTool } from "../../src/tools/write-text-file.js";
 
 const root = join(process.cwd(), ".tmp-tool-test");
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
@@ -22,5 +23,11 @@ describe("read_text_file", () => {
     await mkdir(join(root, "docs"), { recursive: true });
     await writeFile(join(root, "docs", "note.md"), "hello", "utf8");
     await expect(createListDirectoryTool(root).execute(JSON.stringify({ path: "docs" }))).resolves.toContain("file\tnote.md");
+  });
+  it("rejects writing protected files and allows files inside the root", async () => {
+    const write = createWriteTextFileTool(root);
+    await expect(write.execute(JSON.stringify({ path: ".env", content: "SECRET" }))).rejects.toThrow("protected");
+    await expect(write.execute(JSON.stringify({ path: "docs/new.md", content: "new" }))).resolves.toContain("docs/new.md");
+    await expect(write.execute(JSON.stringify({ path: "docs/new.md", content: "updated" }))).resolves.toContain("docs/new.md");
   });
 });
