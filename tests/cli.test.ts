@@ -52,6 +52,31 @@ describe("cli", () => {
     expect(err).toBe("");
   });
 
+  it("prints command metadata and input shortcuts with /help", async () => {
+    const p = new FakeProvider([]);
+    const r = new IslaRuntime().use({ name: "fake", setup: c => c.registerProvider(p) });
+    const store = new MemorySessionStore();
+    let out = "";
+
+    await runCli(
+      Readable.from(["/help\n", "/exit\n"]),
+      writable(text => { out += text; }),
+      writable(() => {}),
+      r,
+      "fake",
+      "fake-model",
+      undefined,
+      false,
+      20,
+      store,
+    );
+
+    expect(out).toContain("/sessions   选择历史会话");
+    expect(out).toContain("Alt+Enter   插入换行");
+    expect(out).toContain("Ctrl+C      Isla 不绑定");
+    expect(p.requests).toHaveLength(0);
+  });
+
   it("resumes the latest session and starts isolated context with /new", async () => {
     const p = new FakeProvider([{ text: "a1" }, { text: "a2" }, { text: "a3" }]);
     const r = new IslaRuntime().use({ name: "fake", setup: c => c.registerProvider(p) });

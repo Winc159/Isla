@@ -14,6 +14,7 @@ export interface CliCommandContext {
   readonly systemPrompt: string | undefined;
   readonly sessionStore: SessionStore;
   readonly currentSession: StoredSession;
+  readonly availableCommands: readonly CliCommandInfo[];
 }
 
 export type CliCommandResult =
@@ -25,8 +26,13 @@ export type CliCommandResult =
       readonly replayHistory: boolean;
     };
 
-export interface CliCommand {
+export interface CliCommandInfo {
   readonly name: string;
+  readonly description: string;
+  readonly usage?: string;
+}
+
+export interface CliCommand extends CliCommandInfo {
   readonly inputMode: 'line' | 'raw';
   execute(context: CliCommandContext): Promise<CliCommandResult>;
 }

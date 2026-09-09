@@ -9,6 +9,7 @@ import {
 
 export const sessionsCommand: CliCommand = {
   name: '/sessions',
+  description: '选择历史会话',
   inputMode: 'raw',
   async execute(context) {
     const sessions = await context.sessionStore.list(context.providerId, context.model);

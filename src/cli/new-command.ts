@@ -2,6 +2,7 @@ import type { CliCommand } from './command.js';
 
 export const newCommand: CliCommand = {
   name: '/new',
+  description: '开启新会话',
   inputMode: 'line',
   async execute(context) {
     const messages = context.systemPrompt

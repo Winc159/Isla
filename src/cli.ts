@@ -4,7 +4,7 @@ import { performance } from 'node:perf_hooks';
 import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { isInteractiveInput } from './cli/command.js';
-import { findCliCommand, listCliCommandNames } from './cli/commands.js';
+import { findCliCommand, listCliCommands } from './cli/commands.js';
 import { readInteractiveMessage } from './cli/input-editor.js';
 import { DEFAULT_MAX_CONTEXT_TURNS } from './core/session.js';
 import { loadRuntime } from './main.js';
@@ -49,6 +49,7 @@ export async function runCli(
           systemPrompt,
           sessionStore,
           currentSession: storedSession,
+          availableCommands: listCliCommands(),
       });
       if (result.type === 'exit') {
         return 'exit';
@@ -95,7 +96,7 @@ export async function runCli(
 
   if (interactive) {
     while (true) {
-      const result = await readInteractiveMessage(input, output, history, draft, listCliCommandNames());
+      const result = await readInteractiveMessage(input, output, history, draft, listCliCommands());
       if (result.type === 'exit') break;
       if (await handleLine(result.value) === 'exit') break;
     }

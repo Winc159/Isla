@@ -6,6 +6,11 @@ export type InputEditorResult =
   | { readonly type: 'submit'; readonly value: string }
   | { readonly type: 'exit' };
 
+export interface CommandSuggestion {
+  readonly name: string;
+  readonly description: string;
+}
+
 const prompt = 'you> ';
 const defaultColumns = 80;
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
@@ -15,7 +20,7 @@ export function readInteractiveMessage(
   output: Writable,
   history: readonly string[],
   initialValue = '',
-  commandNames: readonly string[] = [],
+  commands: readonly CommandSuggestion[] = [],
 ): Promise<InputEditorResult> {
   let buffer = splitGraphemes(initialValue);
   let cursor = buffer.length;
@@ -39,9 +44,9 @@ export function readInteractiveMessage(
     const columns = getOutputColumns(output);
     const cursorPosition = getVisualPosition(buffer, cursor, columns);
     const endPosition = getVisualPosition(buffer, buffer.length, columns);
-    const suggestions = getCommandSuggestions(buffer, cursor, commandNames);
+    const suggestions = getCommandSuggestions(buffer, cursor, commands);
     if (suggestions.length > 0) {
-      output.write(`\n${suggestions.join('\n')}`);
+      output.write(`\n${suggestions.map(suggestion => `${suggestion.name}  ${suggestion.description}`).join('\n')}`);
     }
     const renderedEndRow = endPosition.row + suggestions.length;
     if (renderedEndRow > cursorPosition.row) {
@@ -122,9 +127,9 @@ export function readInteractiveMessage(
       }
       if (key.name === 'tab') {
         const token = findSlashToken(buffer, cursor);
-        const suggestions = getCommandSuggestions(buffer, cursor, commandNames);
+        const suggestions = getCommandSuggestions(buffer, cursor, commands);
         if (suggestions.length === 1) {
-          const completion = splitGraphemes(suggestions[0] ?? '');
+          const completion = splitGraphemes(suggestions[0]?.name ?? '');
           buffer.splice(token?.start ?? cursor, (token?.end ?? cursor) - (token?.start ?? cursor), ...completion);
           cursor = (token?.start ?? cursor) + completion.length;
           preferredColumn = undefined;
@@ -178,11 +183,11 @@ export function readInteractiveMessage(
 function getCommandSuggestions(
   buffer: readonly string[],
   cursor: number,
-  commandNames: readonly string[],
-): string[] {
+  commands: readonly CommandSuggestion[],
+): CommandSuggestion[] {
   const token = findSlashToken(buffer, cursor);
-  if (!token || commandNames.includes(token.prefix)) return [];
-  return commandNames.filter(name => name.startsWith(token.prefix));
+  if (!token || commands.some(command => command.name === token.prefix)) return [];
+  return commands.filter(command => command.name.startsWith(token.prefix));
 }
 
 function findSlashToken(

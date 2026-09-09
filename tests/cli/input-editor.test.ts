@@ -2,6 +2,12 @@ import { PassThrough, Writable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { readInteractiveMessage } from '../../src/cli/input-editor.js';
 
+const commandSuggestions = [
+  { name: '/new', description: '开启新会话' },
+  { name: '/sessions', description: '选择历史会话' },
+  { name: '/exit', description: '退出 Isla' },
+];
+
 function interactiveInput() {
   return Object.assign(new PassThrough(), {
     isTTY: true as const,
@@ -51,14 +57,14 @@ describe('interactive input editor', () => {
       target.stream,
       [],
       '',
-      ['/new', '/sessions', '/exit'],
+      commandSuggestions,
     );
 
     input.write('/s\t\r');
 
     await expect(reading).resolves.toEqual({ type: 'submit', value: '/sessions' });
-    expect(target.read()).toContain('you> /\n/new\n/sessions\n/exit');
-    expect(target.read()).toContain('you> /s\n/sessions');
+    expect(target.read()).toContain('you> /\n/new  开启新会话\n/sessions  选择历史会话\n/exit  退出 Isla');
+    expect(target.read()).toContain('you> /s\n/sessions  选择历史会话');
     expect(target.read()).toContain('/sessions');
   });
 
@@ -69,7 +75,7 @@ describe('interactive input editor', () => {
       output().stream,
       [],
       '',
-      ['/new', '/sessions', '/exit'],
+      commandSuggestions,
     );
     inlineInput.write('请使用 /s\t 继续\r');
     await expect(inline).resolves.toEqual({ type: 'submit', value: '请使用 /sessions 继续' });
@@ -80,7 +86,7 @@ describe('interactive input editor', () => {
       output().stream,
       [],
       '',
-      ['/new', '/sessions', '/exit'],
+      commandSuggestions,
     );
     multilineInput.write('下一行\x1b\r/e\t\r');
     await expect(multiline).resolves.toEqual({ type: 'submit', value: '下一行\n/exit' });
@@ -94,7 +100,7 @@ describe('interactive input editor', () => {
       target.stream,
       [],
       '',
-      ['/new', '/sessions', '/exit'],
+      commandSuggestions,
     );
     input.write('https://example.test/s\t\r');
     await expect(reading).resolves.toEqual({ type: 'submit', value: 'https://example.test/s' });
