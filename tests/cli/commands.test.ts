@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findCliCommand } from "../../src/cli/commands.js";
+import { findCliCommand, listCliCommandNames } from "../../src/cli/commands.js";
 
 describe("CLI command registry", () => {
   it("finds registered commands and ignores regular messages", () => {
@@ -7,5 +7,9 @@ describe("CLI command registry", () => {
     expect(findCliCommand("/new")?.inputMode).toBe("line");
     expect(findCliCommand("/sessions")?.inputMode).toBe("raw");
     expect(findCliCommand("你好")).toBeUndefined();
+  });
+
+  it("lists command names in display order", () => {
+    expect(listCliCommandNames()).toEqual(["/new", "/sessions", "/exit"]);
   });
 });

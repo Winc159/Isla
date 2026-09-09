@@ -43,6 +43,63 @@ describe('interactive input editor', () => {
     await expect(reading).resolves.toEqual({ type: 'submit', value: '第一行\n第二行' });
   });
 
+  it('shows matching commands and completes a unique match with Tab', async () => {
+    const input = interactiveInput();
+    const target = output();
+    const reading = readInteractiveMessage(
+      input,
+      target.stream,
+      [],
+      '',
+      ['/new', '/sessions', '/exit'],
+    );
+
+    input.write('/s\t\r');
+
+    await expect(reading).resolves.toEqual({ type: 'submit', value: '/sessions' });
+    expect(target.read()).toContain('you> /\n/new\n/sessions\n/exit');
+    expect(target.read()).toContain('you> /s\n/sessions');
+    expect(target.read()).toContain('/sessions');
+  });
+
+  it('completes a slash token after whitespace or a newline without replacing the message', async () => {
+    const inlineInput = interactiveInput();
+    const inline = readInteractiveMessage(
+      inlineInput,
+      output().stream,
+      [],
+      '',
+      ['/new', '/sessions', '/exit'],
+    );
+    inlineInput.write('请使用 /s\t 继续\r');
+    await expect(inline).resolves.toEqual({ type: 'submit', value: '请使用 /sessions 继续' });
+
+    const multilineInput = interactiveInput();
+    const multiline = readInteractiveMessage(
+      multilineInput,
+      output().stream,
+      [],
+      '',
+      ['/new', '/sessions', '/exit'],
+    );
+    multilineInput.write('下一行\x1b\r/e\t\r');
+    await expect(multiline).resolves.toEqual({ type: 'submit', value: '下一行\n/exit' });
+  });
+
+  it('does not treat a slash inside another token as a completion trigger', async () => {
+    const input = interactiveInput();
+    const target = output();
+    const reading = readInteractiveMessage(
+      input,
+      target.stream,
+      [],
+      '',
+      ['/new', '/sessions', '/exit'],
+    );
+    input.write('https://example.test/s\t\r');
+    await expect(reading).resolves.toEqual({ type: 'submit', value: 'https://example.test/s' });
+  });
+
   it('keeps bracketed and same-chunk multiline paste in one message', async () => {
     const bracketedInput = interactiveInput();
     const bracketed = readInteractiveMessage(bracketedInput, output().stream, []);

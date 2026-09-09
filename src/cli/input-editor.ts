@@ -15,6 +15,7 @@ export function readInteractiveMessage(
   output: Writable,
   history: readonly string[],
   initialValue = '',
+  commandNames: readonly string[] = [],
 ): Promise<InputEditorResult> {
   let buffer = splitGraphemes(initialValue);
   let cursor = buffer.length;
@@ -38,8 +39,13 @@ export function readInteractiveMessage(
     const columns = getOutputColumns(output);
     const cursorPosition = getVisualPosition(buffer, cursor, columns);
     const endPosition = getVisualPosition(buffer, buffer.length, columns);
-    if (endPosition.row > cursorPosition.row) {
-      output.write(`\x1b[${endPosition.row - cursorPosition.row}A`);
+    const suggestions = getCommandSuggestions(buffer, cursor, commandNames);
+    if (suggestions.length > 0) {
+      output.write(`\n${suggestions.join('\n')}`);
+    }
+    const renderedEndRow = endPosition.row + suggestions.length;
+    if (renderedEndRow > cursorPosition.row) {
+      output.write(`\x1b[${renderedEndRow - cursorPosition.row}A`);
     }
     output.write(`\r${cursorPosition.column > 0 ? `\x1b[${cursorPosition.column}C` : ''}`);
     renderedCursorRow = cursorPosition.row;
@@ -114,6 +120,18 @@ export function readInteractiveMessage(
         });
         return;
       }
+      if (key.name === 'tab') {
+        const token = findSlashToken(buffer, cursor);
+        const suggestions = getCommandSuggestions(buffer, cursor, commandNames);
+        if (suggestions.length === 1) {
+          const completion = splitGraphemes(suggestions[0] ?? '');
+          buffer.splice(token?.start ?? cursor, (token?.end ?? cursor) - (token?.start ?? cursor), ...completion);
+          cursor = (token?.start ?? cursor) + completion.length;
+          preferredColumn = undefined;
+          render();
+        }
+        return;
+      }
       if (key.name === 'left') {
         cursor = Math.max(0, cursor - 1);
         preferredColumn = undefined;
@@ -155,6 +173,29 @@ export function readInteractiveMessage(
     input.on('keypress', onKeypress);
     input.once('end', onEnd);
   });
+}
+
+function getCommandSuggestions(
+  buffer: readonly string[],
+  cursor: number,
+  commandNames: readonly string[],
+): string[] {
+  const token = findSlashToken(buffer, cursor);
+  if (!token || commandNames.includes(token.prefix)) return [];
+  return commandNames.filter(name => name.startsWith(token.prefix));
+}
+
+function findSlashToken(
+  buffer: readonly string[],
+  cursor: number,
+): { start: number; end: number; prefix: string } | undefined {
+  let start = cursor;
+  while (start > 0 && !/\s/u.test(buffer[start - 1] ?? '')) start -= 1;
+  if (buffer[start] !== '/') return undefined;
+
+  let end = cursor;
+  while (end < buffer.length && !/\s/u.test(buffer[end] ?? '')) end += 1;
+  return { start, end, prefix: buffer.slice(start, cursor).join('') };
 }
 
 function isNewlineShortcut(key: Key): boolean {
