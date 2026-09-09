@@ -29,7 +29,12 @@ export class ChatSession {
     });
     if (!response.text.trim()) throw new Error("Provider returned empty text");
     this.messages.push({ role: "assistant", content: response.text });
-    await this.onMessagesChanged?.([...this.messages]);
+    try {
+      await this.onMessagesChanged?.([...this.messages]);
+    } catch (error) {
+      this.messages.pop();
+      throw error;
+    }
     return response;
   }
 }

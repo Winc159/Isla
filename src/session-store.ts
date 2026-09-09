@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile, type FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Message } from "./core/types.js";
@@ -22,15 +22,23 @@ export interface SessionStore {
 }
 
 export class JsonSessionStore implements SessionStore {
-  constructor(private readonly directory = join(homedir(), ".isla", "sessions")) {}
+  constructor(
+    private readonly directory = join(homedir(), ".isla", "sessions"),
+    private readonly onWarning: (message: string) => void = message => process.stderr.write(`${message}\n`),
+  ) {}
 
   async list(provider: string, model: string): Promise<StoredSession[]> {
     await mkdir(this.directory, { recursive: true });
     const files = (await readdir(this.directory)).filter(file => file.endsWith(".json"));
     const sessions: StoredSession[] = [];
     for (const file of files) {
-      const session = parseSession(await readFile(join(this.directory, file), "utf8"));
-      if (session.provider === provider && session.model === model) sessions.push(session);
+      try {
+        const session = parseSession(await readFile(join(this.directory, file), "utf8"));
+        if (session.provider === provider && session.model === model) sessions.push(session);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        this.onWarning(`Skipped invalid Isla session ${file}: ${message}`);
+      }
     }
     return sessions.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
@@ -54,17 +62,91 @@ export class JsonSessionStore implements SessionStore {
   }
 
   async save(session: StoredSession, messages: readonly Message[]): Promise<StoredSession> {
-    return this.write({ ...session, updatedAt: new Date().toISOString(), messages: [...messages] });
+    const updatedAt = nextUpdatedAt(session.updatedAt);
+    return this.write({ ...session, updatedAt, messages: [...messages] }, session.updatedAt);
   }
 
-  private async write(session: StoredSession): Promise<StoredSession> {
+  private async write(session: StoredSession, expectedUpdatedAt?: string): Promise<StoredSession> {
     await mkdir(this.directory, { recursive: true });
     const path = join(this.directory, `${session.id}.json`);
-    const temporaryPath = `${path}.tmp`;
-    await writeFile(temporaryPath, `${JSON.stringify(session, null, 2)}\n`, "utf8");
-    await rename(temporaryPath, path);
-    return session;
+    const temporaryPath = `${path}.${randomUUID()}.tmp`;
+    const lockPath = `${path}.lock`;
+    const lock = await acquireLock(lockPath);
+    try {
+      if (expectedUpdatedAt !== undefined) {
+        const current = parseSession(await readFile(path, "utf8"));
+        if (current.updatedAt !== expectedUpdatedAt) {
+          throw new Error(`Session ${session.id} was updated by another Isla process`);
+        }
+      }
+      await writeFile(temporaryPath, `${JSON.stringify(session, null, 2)}\n`, "utf8");
+      await rename(temporaryPath, path);
+      return session;
+    } finally {
+      await unlink(temporaryPath).catch(() => {});
+      try {
+        await lock.close();
+      } finally {
+        await unlink(lockPath).catch(() => {});
+      }
+    }
   }
+}
+
+const staleLockMs = 30_000;
+
+async function acquireLock(lockPath: string): Promise<FileHandle> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const handle = await open(lockPath, "wx");
+      try {
+        await handle.writeFile(String(process.pid), "utf8");
+        return handle;
+      } catch (error) {
+        await handle.close();
+        await unlink(lockPath).catch(() => {});
+        throw error;
+      }
+    } catch (error) {
+      if (!isFileExistsError(error) || !(await isStaleLock(lockPath))) throw lockError(lockPath, error);
+      await unlink(lockPath).catch(() => {});
+    }
+  }
+  throw new Error(`Unable to lock Isla session ${lockPath}`);
+}
+
+async function isStaleLock(lockPath: string): Promise<boolean> {
+  try {
+    const pid = Number(await readFile(lockPath, "utf8"));
+    if (Number.isInteger(pid) && pid > 0) return !isProcessRunning(pid);
+    return Date.now() - (await stat(lockPath)).mtimeMs > staleLockMs;
+  } catch {
+    return false;
+  }
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function isFileExistsError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "EEXIST";
+}
+
+function lockError(lockPath: string, cause: unknown): Error {
+  if (isFileExistsError(cause)) return new Error(`Isla session is being written by another process: ${lockPath}`);
+  return cause instanceof Error ? cause : new Error("Unable to lock Isla session");
+}
+
+function nextUpdatedAt(previous: string): string {
+  const now = Date.now();
+  const previousTime = Date.parse(previous);
+  return new Date(Number.isNaN(previousTime) ? now : Math.max(now, previousTime + 1)).toISOString();
 }
 
 function parseSession(source: string): StoredSession {

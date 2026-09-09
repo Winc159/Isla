@@ -25,6 +25,7 @@ export function readInteractiveMessage(
   let buffer = splitGraphemes(initialValue);
   let cursor = buffer.length;
   let renderedCursorRow = 0;
+  let renderedColumns = getOutputColumns(output);
   let historyIndex = history.length;
   let historyDraft = initialValue;
   let preferredColumn: number | undefined;
@@ -37,23 +38,31 @@ export function readInteractiveMessage(
   output.write('\x1b[?2004h');
 
   const render = () => {
-    clearRenderedInput(output, renderedCursorRow);
+    const columns = getOutputColumns(output);
+    const currentCursorRow = columns === renderedColumns
+      ? renderedCursorRow
+      : getVisualPosition(buffer, cursor, columns).row;
+    clearRenderedInput(output, currentCursorRow);
     const text = buffer.join('');
     output.write(`${prompt}${text}`);
 
-    const columns = getOutputColumns(output);
     const cursorPosition = getVisualPosition(buffer, cursor, columns);
     const endPosition = getVisualPosition(buffer, buffer.length, columns);
     const suggestions = getCommandSuggestions(buffer, cursor, commands);
     if (suggestions.length > 0) {
       output.write(`\n${suggestions.map(suggestion => `${suggestion.name}  ${suggestion.description}`).join('\n')}`);
     }
-    const renderedEndRow = endPosition.row + suggestions.length;
+    const suggestionRows = suggestions.reduce(
+      (rows, suggestion) => rows + getRenderedLineCount(`${suggestion.name}  ${suggestion.description}`, columns),
+      0,
+    );
+    const renderedEndRow = endPosition.row + suggestionRows;
     if (renderedEndRow > cursorPosition.row) {
       output.write(`\x1b[${renderedEndRow - cursorPosition.row}A`);
     }
     output.write(`\r${cursorPosition.column > 0 ? `\x1b[${cursorPosition.column}C` : ''}`);
     renderedCursorRow = cursorPosition.row;
+    renderedColumns = columns;
   };
 
   render();
@@ -63,9 +72,11 @@ export function readInteractiveMessage(
       input.removeListener('keypress', onKeypress);
       input.removeListener('end', onEnd);
       input.setRawMode(false);
+      input.pause();
       output.write('\x1b[?2004l');
       clearRenderedInput(output, renderedCursorRow);
       if (submittedValue !== undefined) output.write(`${prompt}${submittedValue}\n`);
+      else if (result.type === 'exit') output.write('\n');
       resolve(result);
     };
 
@@ -260,6 +271,10 @@ function clearRenderedInput(output: Writable, cursorRow: number): void {
 function getOutputColumns(output: Writable): number {
   const columns = (output as Writable & { columns?: number }).columns;
   return typeof columns === 'number' && columns > 0 ? columns : defaultColumns;
+}
+
+function getRenderedLineCount(value: string, columns: number): number {
+  return Math.max(1, Math.ceil(displayWidth(splitGraphemes(value)) / columns));
 }
 
 function getVisualPosition(

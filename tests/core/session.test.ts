@@ -14,6 +14,24 @@ describe("session", () => {
       [{ role: "user", content: "u1" }, { role: "assistant", content: "a1" }],
     ]);
   });
+  it("rolls back an assistant message when persisting it fails", async () => {
+    let saves = 0;
+    const p = new FakeProvider([{ text: "hidden" }, { text: "visible" }]);
+    const s = new ChatSession(p, {
+      onMessagesChanged: async () => {
+        saves += 1;
+        if (saves === 2) throw new Error("disk full");
+      },
+    });
+
+    await expect(s.send("u1")).rejects.toThrow("disk full");
+    await s.send("u2");
+
+    expect(p.requests[1]?.messages).toEqual([
+      { role: "user", content: "u1" },
+      { role: "user", content: "u2" },
+    ]);
+  });
   it("sends only the latest configured turns while retaining the full persisted history", async () => {
     const snapshots: (readonly unknown[])[] = [];
     const p = new FakeProvider(Array.from({ length: 22 }, (_, index) => ({ text: `a${index + 1}` })));

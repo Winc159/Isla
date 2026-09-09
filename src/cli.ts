@@ -148,7 +148,7 @@ function formatElapsed(startedAt: number): string {
 
 function writeHeader(output: Writable, providerId: string, model: string): void {
   output.write(
-    `Isla v0 · provider=${providerId} · model=${model}\n输入 /new 开启新对话，输入 /sessions 选择会话，输入 /exit 或按 Esc 退出。\n\n`,
+    `Isla v0 · provider=${providerId} · model=${model}\nmaster,你好，我叫（Error划掉）Isla，很高兴认识你\n输入 /new 开启新对话，输入 /sessions 选择会话，输入 /exit 或按 Esc 退出。\n\n`,
   );
 }
 

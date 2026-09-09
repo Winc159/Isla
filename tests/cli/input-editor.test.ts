@@ -16,14 +16,14 @@ function interactiveInput() {
   });
 }
 
-function output() {
+function output(columns = 80) {
   let text = '';
   const stream = Object.assign(new Writable({
     write(chunk, _encoding, callback) {
       text += chunk.toString();
       callback();
     },
-  }), { isTTY: true, columns: 80 });
+  }), { isTTY: true, columns });
   return { stream, read: () => text };
 }
 
@@ -66,6 +66,18 @@ describe('interactive input editor', () => {
     expect(target.read()).toContain('you> /\n/new  开启新会话\n/sessions  选择历史会话\n/exit  退出 Isla');
     expect(target.read()).toContain('you> /s\n/sessions  选择历史会话');
     expect(target.read()).toContain('/sessions');
+  });
+
+  it('counts wrapped command descriptions when restoring the cursor', async () => {
+    const input = interactiveInput();
+    const target = output(20);
+    const reading = readInteractiveMessage(input, target.stream, [], '', commandSuggestions);
+
+    input.write('/s');
+    expect(target.read()).toContain('\x1b[2A');
+    input.write('\t\r');
+
+    await expect(reading).resolves.toEqual({ type: 'submit', value: '/sessions' });
   });
 
   it('completes a slash token after whitespace or a newline without replacing the message', async () => {
@@ -144,8 +156,11 @@ describe('interactive input editor', () => {
 
   it('ignores Ctrl+C and exits on standalone Esc', async () => {
     const input = interactiveInput();
-    const reading = readInteractiveMessage(input, output().stream, []);
+    const target = output();
+    const reading = readInteractiveMessage(input, target.stream, []);
     input.write('\x03\x1b');
     await expect(reading).resolves.toEqual({ type: 'exit' });
+    expect(target.read().endsWith('\n')).toBe(true);
+    expect(input.isPaused()).toBe(true);
   });
 });
