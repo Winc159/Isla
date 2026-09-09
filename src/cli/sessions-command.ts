@@ -25,7 +25,7 @@ export const sessionsCommand: CliCommand = {
       context.currentSession.id,
     );
     if (selected === 'exit') return { type: 'exit' };
-    if (!selected || selected.id === context.currentSession.id) return { type: 'continue' };
+    if (!selected) return { type: 'continue' };
     return { type: 'switch-session', session: selected, replayHistory: true };
   },
 };

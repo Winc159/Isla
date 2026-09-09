@@ -33,7 +33,7 @@ export async function runCli(
       systemPrompt ? [{ role: 'system', content: systemPrompt }] : [],
     );
   }
-  let session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns);
+  let session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns, output);
   const interactive = isInteractiveInput(input);
   const history: string[] = [];
   let draft = '';
@@ -56,7 +56,7 @@ export async function runCli(
       }
       if (result.type === 'switch-session') {
         storedSession = result.session;
-        session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns);
+        session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns, output);
         output.write('\x1b[2J\x1b[3J\x1b[H');
         writeHeader(output, providerId, model);
         if (result.replayHistory) writeSessionHistory(output, storedSession);
@@ -115,12 +115,12 @@ function writeSessionHistory(output: Writable, session: StoredSession): void {
   output.write('\n');
 }
 
-function startLoading(output: Writable, startedAt: number): () => void {
+function startLoading(output: Writable, startedAt: number, label = '生成中'): () => void {
   if (!(output as Writable & { isTTY?: boolean }).isTTY) return () => {};
   const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let frame = 0;
   const render = () => {
-    output.write(`\risla> ${frames[frame % frames.length]} 生成中 ${formatElapsed(startedAt)}`);
+    output.write(`\risla> ${frames[frame % frames.length]} ${label} ${formatElapsed(startedAt)}`);
     frame += 1;
   };
   render();
@@ -156,12 +156,25 @@ function createPersistentSession(
   storedSession: StoredSession,
   sessionStore: SessionStore,
   maxContextTurns: number,
+  output: Writable,
 ) {
   let current = storedSession;
+  let stopToolLoading: (() => void) | undefined;
   return runtime.createSession({
     providerId,
     messages: current.messages,
     maxContextTurns,
+    enableTools: true,
+    projectRoot: process.cwd(),
+    onToolStarted: tool => {
+      stopToolLoading?.();
+      stopToolLoading = startLoading(output, performance.now(), `使用工具 ${tool}`);
+    },
+    onToolFinished: () => {
+      stopToolLoading?.();
+      stopToolLoading = undefined;
+      if ((output as Writable & { isTTY?: boolean }).isTTY) output.write('isla> ');
+    },
     onMessagesChanged: async messages => {
       current = await sessionStore.save(current, messages);
     },

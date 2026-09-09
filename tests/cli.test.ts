@@ -124,7 +124,7 @@ describe("cli", () => {
     expect(p.requests).toHaveLength(0);
   });
 
-  it("keeps the current session unchanged when it is selected", async () => {
+  it("replays the current session when it is selected", async () => {
     const p = new FakeProvider([]);
     const r = new IslaRuntime().use({ name: "fake", setup: c => c.registerProvider(p) });
     const store = new MemorySessionStore();
@@ -141,7 +141,7 @@ describe("cli", () => {
     await running;
 
     expect(input.rawModes).toEqual([true, false, true, false, true, false]);
-    expect(out).not.toContain("\x1b[2J\x1b[3J\x1b[H");
+    expect(out).toContain("\x1b[2J\x1b[3J\x1b[H");
     expect(p.requests).toHaveLength(0);
   });
 });

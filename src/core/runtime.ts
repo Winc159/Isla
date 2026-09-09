@@ -7,6 +7,11 @@ export interface CreateSessionOptions {
   readonly messages?: readonly Message[];
   readonly maxContextTurns?: number;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
+  readonly projectRoot?: string;
+  readonly onToolsUsed?: (tools: readonly string[]) => void;
+  readonly onToolStarted?: (tool: string) => void;
+  readonly onToolFinished?: (tool: string) => void;
+  readonly enableTools?: boolean;
 }
 export class IslaRuntime {
   private readonly plugins = new Set<string>();

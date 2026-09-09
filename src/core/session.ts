@@ -1,10 +1,18 @@
-import type { ModelProvider, Message, ModelResponse } from "./types.js";
+import type { ModelProvider, Message, ModelResponse, ToolDefinition } from "./types.js";
+import { composeRequestMessages } from "../prompts/compose.js";
+import { createProjectFilesCapability } from "../tools/project-files.js";
+import type { ToolCapability } from "../tools/types.js";
 export const DEFAULT_MAX_CONTEXT_TURNS = 20;
 export interface ChatSessionOptions {
   readonly systemPrompt?: string;
   readonly messages?: readonly Message[];
   readonly maxContextTurns?: number;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
+  readonly projectRoot?: string;
+  readonly onToolsUsed?: (tools: readonly string[]) => void;
+  readonly onToolStarted?: (tool: string) => void;
+  readonly onToolFinished?: (tool: string) => void;
+  readonly enableTools?: boolean;
 }
 export class ChatSession {
   private readonly messages: Message[];
@@ -19,14 +27,30 @@ export class ChatSession {
     if (!Number.isInteger(this.maxContextTurns) || this.maxContextTurns <= 0)
       throw new Error("maxContextTurns must be a positive integer");
     this.onMessagesChanged = options.onMessagesChanged;
+    this.projectRoot = options.projectRoot;
+    this.onToolsUsed = options.onToolsUsed;
+    this.onToolStarted = options.onToolStarted;
+    this.onToolFinished = options.onToolFinished;
+    this.enableTools = options.enableTools ?? false;
+    this.capabilities = this.enableTools && this.provider.generateWithTools
+      ? [createProjectFilesCapability(this.projectRoot ?? process.cwd())]
+      : [];
   }
   private readonly onMessagesChanged: ((messages: readonly Message[]) => Promise<void>) | undefined;
+  private readonly projectRoot: string | undefined;
+  private readonly onToolsUsed: ((tools: readonly string[]) => void) | undefined;
+  private readonly onToolStarted: ((tool: string) => void) | undefined;
+  private readonly onToolFinished: ((tool: string) => void) | undefined;
+  private readonly enableTools: boolean;
+  private readonly capabilities: readonly ToolCapability[];
   async send(input: string): Promise<ModelResponse> {
     this.messages.push({ role: "user", content: input });
     await this.onMessagesChanged?.([...this.messages]);
-    const response = await this.provider.generate({
-      messages: selectRecentTurns(this.messages, this.maxContextTurns),
-    });
+    const history = selectRecentTurns(this.messages, this.maxContextTurns);
+    const request = { messages: composeRequestMessages(history, this.capabilities) };
+    const response = this.capabilities.length
+      ? await this.generateWithAvailableTools(request)
+      : await this.provider.generate(request);
     if (!response.text.trim()) throw new Error("Provider returned empty text");
     this.messages.push({ role: "assistant", content: response.text });
     try {
@@ -37,19 +61,52 @@ export class ChatSession {
     }
     return response;
   }
+
+  private async generateWithAvailableTools(request: { messages: Message[] }): Promise<ModelResponse> {
+    const provider = this.provider;
+    if (!this.enableTools || !provider.generateWithTools) return provider.generate(request);
+    let current = request.messages;
+    const tools: readonly ToolDefinition[] = this.capabilities.flatMap(capability => capability.tools.map(tool => tool.definition));
+    const implementations = new Map(this.capabilities.flatMap(capability => capability.tools).map(tool => [tool.definition.name, tool]));
+    for (let round = 0; round < 3; round += 1) {
+      const response = await provider.generateWithTools({ messages: current, tools });
+      if (!response.toolCalls?.length) return response;
+      const next = [...current, { role: "assistant" as const, content: "", toolCalls: response.toolCalls }];
+      for (const call of response.toolCalls) {
+        const tool = implementations.get(call.name);
+        if (!tool) throw new Error(`Unknown tool: ${call.name}`);
+        this.onToolStarted?.(call.name);
+        let result: string;
+        try {
+          result = await tool.execute(call.arguments);
+        } finally {
+          this.onToolFinished?.(call.name);
+        }
+        this.onToolsUsed?.([call.name]);
+        next.push({ role: "tool", toolCallId: call.id, content: result });
+      }
+      current = next;
+    }
+    throw new Error("Tool call limit exceeded");
+  }
   async sendStream(input: string, onChunk: (text: string) => void): Promise<ModelResponse> {
     this.messages.push({ role: "user", content: input });
     await this.onMessagesChanged?.([...this.messages]);
-    let text = "";
-    try {
-      for await (const chunk of this.provider.generateStream({ messages: selectRecentTurns(this.messages, this.maxContextTurns) })) {
-        if (chunk.text) { text += chunk.text; onChunk(chunk.text); }
+    const history = selectRecentTurns(this.messages, this.maxContextTurns);
+    const request = { messages: composeRequestMessages(history, this.capabilities) };
+    let response: ModelResponse;
+    if (this.capabilities.length && this.provider.generateWithTools) {
+      response = await this.generateWithAvailableTools(request);
+      onChunk(response.text);
+    } else {
+      let streamedText = "";
+      for await (const chunk of this.provider.generateStream(request)) {
+        if (chunk.text) { streamedText += chunk.text; onChunk(chunk.text); }
       }
-    } catch (error) {
-      throw error;
+      response = { text: streamedText, model: this.provider.model };
     }
+    const text = response.text;
     if (!text.trim()) throw new Error("Provider returned empty text");
-    const response = { text, model: this.provider.model } satisfies ModelResponse;
     this.messages.push({ role: "assistant", content: text });
     try { await this.onMessagesChanged?.([...this.messages]); }
     catch (error) { this.messages.pop(); throw error; }

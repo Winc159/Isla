@@ -17,6 +17,22 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe('DeepSeek provider contract', () => {
+  it('converts textual DSML tool calls into the normal tool loop', async () => {
+    const requests: Array<{ messages?: Array<{ role: string; tool_call_id?: string; content?: string }> }> = [];
+    server.use(http.post(endpoint, async ({ request }) => {
+      requests.push(await request.json() as typeof requests[number]);
+      if (requests.length === 1) {
+        return HttpResponse.json({ model: 'deepseek-v4-flash', choices: [{ message: { role: 'assistant', content: '<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="read_file">\n<｜｜DSML｜｜parameter name="path" string="true">AGENTS.md</｜｜DSML｜｜parameter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>' } }] });
+      }
+      return HttpResponse.json({ model: 'deepseek-v4-flash', choices: [{ message: { role: 'assistant', content: '总结完成' } }] });
+    }));
+    const runtime = new IslaRuntime();
+    runtime.use(createDeepSeekPlugin({ provider: 'deepseek', model: 'deepseek-v4-flash', apiKey: 'test-only-key', timeoutMs: 100, debug: false, maxContextTurns: 20 }));
+    const session = runtime.createSession({ providerId: 'deepseek', enableTools: true, projectRoot: process.cwd() });
+    await expect(session.send('读取 AGENTS.md')).resolves.toMatchObject({ text: '总结完成' });
+    expect(requests[1]?.messages?.at(-1)).toMatchObject({ role: 'tool', content: expect.stringContaining('Isla 项目约束') });
+    expect(requests[1]?.messages?.at(-1)?.tool_call_id).toMatch(/^dsml-/);
+  });
   it('sends the model, ordered messages, and authorization', async () => {
     let body: unknown;
     let authorization = '';
