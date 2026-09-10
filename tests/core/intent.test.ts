@@ -10,9 +10,27 @@ describe("IntentClassifier", () => {
     expect(provider.requests[0]?.messages.map(message => message.content).join("\n")).not.toContain("个人助理");
   });
 
-  it("falls back to unknown when the provider returns invalid JSON", async () => {
+  it("uses the input to safely recover a discussion intent when the provider returns invalid JSON", async () => {
     const result = await new IntentClassifier(new FakeProvider([{ text: "我认为这是执行" }])).classify("讨论如何修改");
-    expect(result.kind).toBe("unknown");
-    expect(result.requiresUserConfirmation).toBe(true);
+    expect(result.kind).toBe("discuss");
+    expect(result.requiresUserConfirmation).toBe(false);
+  });
+
+  it("corrects a valid but overly cautious unknown for an ordinary greeting", async () => {
+    const result = await new IntentClassifier(new FakeProvider([{ text: '{"kind":"unknown","goal":"你好呀","needsHistory":false,"needsTools":false,"requiresUserConfirmation":true,"missingInformation":[]}' }])).classify("你好呀");
+    expect(result.kind).toBe("answer");
+    expect(result.requiresUserConfirmation).toBe(false);
+  });
+
+  it.each([
+    ["你好", "answer"],
+    ["你是谁", "answer"],
+    ["查看项目", "inspect"],
+    ["讨论如何修改", "discuss"],
+    ["修改文件", "execute"],
+    ["帮我处理一下", "unknown"],
+  ] as const)("uses a safe fallback for %s", async (input, kind) => {
+    const result = await new IntentClassifier(new FakeProvider([{ text: "invalid" }])).classify(input);
+    expect(result.kind).toBe(kind);
   });
 });
