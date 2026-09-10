@@ -48,6 +48,27 @@
 
 仍未完成：Session Event 持久化、OpenAI/Local Tool API、Shell、网络和容器级沙盒。
 
+## v0.1.8：分阶段对话与 Agent Loop
+
+计划内容：
+
+- 每轮普通用户输入先由 `IntentClassifier` 结构化分类；
+- 区分回答、检查、讨论、执行和未知意图；
+- 讨论转执行前保留明确的用户确认状态；
+- `ContextResolver` 根据轮次摘要按需选择历史；
+- `PromptRegistry` 按 intent、context、discussion、tool-loop、completion、final 和 summary 阶段装配；
+- Agent Loop 显式返回 continue、completed、needs_user 或 blocked；
+- 完成状态同时经过模型判断和 Runtime 硬性条件；
+- Tool 失败按是否可恢复分类，禁止绕过 Approval、权限和 Sandbox；
+- 必要时从成功 Tool 结果生成简短来源列表；
+- 补齐 Session Event 和模型请求重建测试。
+
+实施依据：`docs/architecture-v0.1.8.md` 与 `docs/luna-implementation-v0.1.8.md`。
+
+完成信号：检查任务不会因一次无 Tool Call 提前结束，讨论意图不会直接写入，执行任务只有在确认、审批和可验证 Tool 结果均满足后才标记完成；阶段 Prompt、历史选择、失败恢复和旧会话兼容均有自动测试。
+
+暂不包括：SQLite Session Query、长期记忆、Shell、网络、删除、并行 Tool、子 Agent 和完整思维链。
+
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。

@@ -57,6 +57,32 @@ v0 不依赖 DSH、不复制 DSH 源码、不引入 Cordis，也不把 Isla 设�
 4. 用 Isla 自己的核心契约实现，并增加能证明该语义的测试。
 5. 不复制完整模块，不让参考项目成为隐式依赖。
 
+## v0.1.8 补充评审
+
+Isla 已出现新的真实问题：固定历史窗口、单一 Prompt 和“无 Tool Call 即结束”不能稳定支持检查、讨论、执行和失败恢复。因此 v0.1.8 再参考 DSH 中 Agent Loop、System Prompt、Retry 与 Session Query 的职责划分。
+
+本轮采用：
+
+- 将意图解析、上下文选择、工具循环、完成检查和最终回答拆成 Runtime 阶段；
+- 不同阶段装配不同 Prompt，工具阶段不携带性格修辞；
+- 历史通过受限选择进入上下文，不默认传入全部最近消息；
+- Tool 失败区分可恢复错误、用户拒绝、权限拒绝和 Sandbox 边界；
+- Loop 用结构化状态表示继续、完成、询问用户或阻塞。
+
+本轮暂缓：
+
+- DSH 的 SQLite Session Query、全文索引和跨会话检索；
+- 通用 retry middleware、复杂事件投影和插件组合；
+- Plan Mode、Todo、Goal、子 Agent 和后台任务。
+
+本轮继续拒绝：
+
+- 复制 DSH 源码、目录、Cordis 生命周期或 monorepo 分包；
+- 让 DSH 成为 Isla 的运行时依赖；
+- 在没有现实需求前引入完整平台能力。
+
+具体契约和实施顺序分别记录在 `architecture-v0.1.8.md` 与 `luna-implementation-v0.1.8.md`。
+
 ## 对 Luna 的约束
 
 Luna 实现 v0 时不需要继续通读 DSH，也不应从 DSH 复制代码。只需遵守 `architecture-v0.md` 中已吸收的语义；如果发现必须引入本文件“暂缓”或“拒绝”的能力，应先停止扩展并更新设计决策。

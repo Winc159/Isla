@@ -16,7 +16,7 @@ describe("session", () => {
     const p = new ToolProvider([{ text: "最终回答" }]);
     const s = new ChatSession(p, { projectRoot: process.cwd(), enableTools: true });
     await expect(s.send("读取 README")).resolves.toMatchObject({ text: "最终回答" });
-    expect(p.requests[0]?.tools?.map(tool => tool.name)).toEqual(["list_directory", "read_text_file", "write_text_file"]);
+    expect(p.requests.find(request => request.tools)?.tools?.map(tool => tool.name)).toEqual(["list_directory", "read_text_file", "write_text_file"]);
   });
   it("supports tools on the streaming session path", async () => {
     class ToolProvider extends FakeProvider {
@@ -32,6 +32,13 @@ describe("session", () => {
     const chunks: string[] = [];
     await new ChatSession(p, { projectRoot: process.cwd(), enableTools: true }).sendStream("读取 README", chunk => chunks.push(chunk));
     expect(chunks.join("")).toBe("流式最终回答");
+  });
+  it("does not complete an inspect request without a successful read", async () => {
+    class InspectProvider extends FakeProvider {
+      async generateWithTools(): Promise<ToolResponse> { return { text: "我已经查看完了" }; }
+    }
+    const provider = new InspectProvider([{ text: '{"kind":"inspect","goal":"查看项目","needsHistory":false,"needsTools":true,"requiresUserConfirmation":false,"missingInformation":[]}' }]);
+    await expect(new ChatSession(provider, { projectRoot: process.cwd(), enableTools: true }).send("查看项目")).resolves.toMatchObject({ text: "未完成检查：尚未获得相关文件或目录的成功读取结果。" });
   });
   it("maintains ordered context", async () => { const p = new FakeProvider([{ text: "a1" }, { text: "a2" }]); const s = new ChatSession(p, { systemPrompt: "system" }); await s.send("u1"); await s.send("u2"); expect(p.requests[1]?.messages).toEqual([{ role: "system", content: "system" }, { role: "user", content: "u1" }, { role: "assistant", content: "a1" }, { role: "user", content: "u2" }]); });
   it("keeps failed user input", async () => { const p = new FakeProvider([new Error("no") , { text: "retry" }]); const s = new ChatSession(p); await expect(s.send("u1")).rejects.toThrow(); await s.send("retry"); expect(p.requests[1]?.messages).toEqual([{ role: "user", content: "u1" }, { role: "user", content: "retry" }]); });

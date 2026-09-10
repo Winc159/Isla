@@ -16,6 +16,15 @@ describe("PromptRegistry", () => {
     registry.register({ id: "same", order: 0, render: () => "one" });
     expect(() => registry.register({ id: "same", order: 1, render: () => "two" })).toThrow();
   });
+
+  it("filters sections by phase without changing legacy sections", () => {
+    const registry = new PromptRegistry();
+    registry.register({ id: "personality", order: 0, phases: ["discussion"], render: () => "personality" });
+    registry.register({ id: "tools", order: 1, phases: ["tool-loop"], render: () => "tools" });
+    registry.register({ id: "legacy", order: 2, render: () => "legacy" });
+    expect(registry.render({ capabilities: [], phase: "discussion" })).toEqual(["personality", "legacy"]);
+    expect(registry.render({ capabilities: [], phase: "tool-loop" })).toEqual(["tools", "legacy"]);
+  });
 });
 
 describe("ToolRegistry", () => {
