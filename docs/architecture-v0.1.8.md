@@ -51,6 +51,7 @@ interface IntentResult {
   readonly needsTools: boolean;
   readonly requiresUserConfirmation: boolean;
   readonly missingInformation: readonly string[];
+  readonly requiredEvidence: readonly string[];
 }
 ```
 
@@ -61,6 +62,8 @@ interface IntentResult {
 - `discuss`：分析、解释、比较或制定方案，不执行写入；
 - `execute`：用户已明确要求执行会改变状态的工作；
 - `unknown`：分类失败或意图不足以安全决定下一阶段。
+
+`requiredEvidence` 描述完成当前任务需要确认的信息类别或建议路径，不授予额外权限。Runtime 只能读取当前 Tool 和 Sandbox 允许的路径，并根据实际目录修正不存在的候选路径。
 
 讨论中的“怎么修改”“如果删除”“设计一个写入流程”仍属于 `discuss`，不能因为出现写入关键词而强制调用写工具。现有 `requiresWriteTool()` 正则由结构化意图代替。
 
@@ -76,6 +79,32 @@ Isla 遵守“先讨论并确认设计，再开始实现”：
 
 Runtime 保存最小的待确认状态，不能仅靠模型从自然语言历史猜测用户是否已经确认。
 
+讨论阶段可以返回可选的执行提案：
+
+```ts
+interface DiscussionResult {
+  readonly answer: string;
+  readonly proposedExecution?: {
+    readonly goal: string;
+    readonly operations: readonly string[];
+  };
+}
+```
+
+待确认状态必须保存原任务，而不是只保存一段目标文本：
+
+```ts
+interface PendingExecution {
+  readonly originalInput: string;
+  readonly intent: IntentResult;
+  readonly proposedOperations: readonly string[];
+}
+```
+
+用户确认后，Runtime 恢复 `PendingExecution` 并直接进入对应执行流程；不得把“确认”重新当作一个独立的普通问答，也不得在清空状态后丢失原任务。用户拒绝、开始不相关的新任务或执行完成后清除该状态。
+
+`unknown` 是安全停止状态：Runtime 只能向用户询问缺失信息，不得把它默认路由到 Tool Loop。
+
 ## ContextResolver 与历史信息
 
 不再默认把固定最近 20 轮全部交给每个模型阶段。Runtime 持有原始会话消息和派生的轮次摘要，ContextResolver 根据当前意图选择最小上下文。
@@ -87,6 +116,8 @@ interface TurnSummary {
   readonly summary: string;
   readonly decisions: readonly string[];
   readonly pending: readonly string[];
+  readonly evidence: readonly string[];
+  readonly outcome: "completed" | "needs_user" | "blocked";
 }
 
 interface ContextSelection {
@@ -111,7 +142,7 @@ v0.1.8 只在当前会话的摘要列表上做选择，不引入 SQLite、Embedd
 
 ### 摘要的状态归属
 
-每轮最终回答成功后生成一份 `TurnSummary`。摘要是可丢弃、可重建的派生状态，不替代原始 user/assistant 消息。
+每轮最终回答成功后生成一份 `TurnSummary`。摘要是可丢弃、可重建的派生状态，不替代原始 user/assistant 消息。摘要必须依据 user 输入、结构化意图、最终状态和成功 Tool 证据生成，不能只截断 assistant 最终回答。
 
 所有实际发送给模型的内容必须可由以下会话状态重建：
 
@@ -217,11 +248,37 @@ Tool 失败先由 Runtime 分类，再交给 Agent Loop 选择恢复动作：
 
 同一 Tool、同一参数、同一失败连续出现时不得无限重试。v0.1.8 先采用简单重复检测；复杂 retry middleware 暂缓。
 
+达到重复阈值后 Runtime 必须真正返回 `blocked` 或选择允许的替代动作；不能只向 Tool Result 追加“停止重试”文字后仍允许相同调用继续运行。失败计数键至少包含 Tool 名称、规范化参数和错误代码。
+
 ## 来源
 
 不强制模型逐项报告 Tool 调用。Runtime 记录本轮成功使用的文件路径；最终回答在用户需要验证事实或模型引用当前项目状态时，可以显示简短的“参考”列表。
 
 来源只能来自成功 Tool 结果，不能由模型自行编造。普通对话不附来源。
+
+## 自省与项目检查
+
+“查看自己”“检查 Isla 的能力”等请求属于 `inspect`。Runtime 需要区分：
+
+- 当前进程实际注入的配置；
+- Isla 源码定义的默认运行机制；
+- 项目开发约束；
+- 当前可见 Tool 能力。
+
+模型无法确认动态配置时，仍应继续检查源码中可确认的实现，不能把“不知道当前配置”误解为整个任务已阻塞。对于审批、沙盒和 Tool Loop 自省，最小证据通常包括：
+
+```text
+package.json
+src/core/session.ts
+src/tools/runtime.ts
+src/approval/presets.ts
+src/sandbox/policy.ts
+src/prompts/compose.ts
+```
+
+具体路径以实际目录结果为准，不能硬编码为不存在也必须读取。用户已经明确要求检查时，读取属于任务本身，不应在读完一个入口文件后再次询问是否继续。
+
+最终回答应区分“源码确认的默认机制”和“当前进程无法确认的动态值”，并可列出本轮成功读取的相对路径。
 
 ## Provider 契约
 
@@ -288,4 +345,3 @@ v0.1.8 需要为以下信息确定权威状态：
 - 8 个 Tool 步骤不足以完成已出现的真实任务时，评估可配置上限和任务预算；
 - 出现第二类可恢复外部故障时，再抽象统一 Retry Policy；
 - 需要恢复中断中的 Loop 时，升级持久化事件和重放协议。
-

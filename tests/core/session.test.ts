@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ChatSession } from "../../src/core/session.js";
 import { FakeProvider } from "../support/fake-provider.js";
-import type { ModelRequest, ToolResponse } from "../../src/core/types.js";
+import type { ModelRequest, ModelResponse, ToolResponse } from "../../src/core/types.js";
 describe("session", () => {
   it("loads a requested project file and continues with the tool result", async () => {
     class ToolProvider extends FakeProvider {
       private toolRequestCount = 0;
+      async generate(): Promise<ModelResponse> { return { text: '{"kind":"inspect","goal":"读取 README","needsHistory":false,"needsTools":true,"requiresUserConfirmation":false,"missingInformation":[]}' }; }
       async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
         this.requests.push(request);
         this.toolRequestCount += 1;
@@ -21,6 +22,7 @@ describe("session", () => {
   it("supports tools on the streaming session path", async () => {
     class ToolProvider extends FakeProvider {
       private calls = 0;
+      async generate(): Promise<ModelResponse> { return { text: '{"kind":"inspect","goal":"读取 README","needsHistory":false,"needsTools":true,"requiresUserConfirmation":false,"missingInformation":[]}' }; }
       async generateWithTools(): Promise<ToolResponse> {
         this.calls += 1;
         if (this.calls === 1) return { text: "", toolCalls: [{ id: "1", name: "list_directory", arguments: JSON.stringify({ path: "" }) }] };

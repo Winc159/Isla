@@ -26,6 +26,36 @@ npm run check
 npm run build
 ```
 
+## 当前实现审计
+
+开始实施前先把现有部分实现视为待修正代码，不把“已有类名”当作完成信号。当前已知问题：
+
+1. `PendingExecution` 只保存目标字符串；用户确认后状态被清空，但原任务没有恢复执行。
+2. `unknown` 仍可能落入带 Tool 的默认路径。
+3. 重复失败只向结果追加提示，没有真正终止相同调用。
+4. `TurnSummary` 只是 `response.text.slice(...)`，不包含用户目标、决定、待办、结果和 Tool 证据。
+5. 摘要只存在于进程内，重启后丢失。
+6. `inspect` 只验证“至少一次读取”，不能证明读取结果覆盖用户目标。
+7. Tool 调用和结果没有成为可持久化的 Session Event。
+8. `IntentClassifier` 只在存在 Tool Capability 时创建，不符合“每次普通输入先分类”的设计。
+9. 分类、上下文选择、最终回答与摘要的 Provider 调用没有统一的结构化响应重试边界。
+
+Luna 应先为这些缺陷补充失败测试，再修改实现。不得通过删除现有测试或放宽安全断言获得绿色结果。
+
+## 实施批次与停点
+
+按以下批次执行；每一批全部测试通过后再进入下一批：
+
+```text
+批次 A：修正意图与确认状态
+批次 B：重构 Agent Loop 和完成检查
+批次 C：失败恢复与来源证据
+批次 D：摘要、ContextResolver 和持久化
+批次 E：Session Event、请求重建和完整回归
+```
+
+同一批次内可以修改多个紧密相关文件，但不要跨批次提前引入后续抽象。
+
 ## Step 0：建立行为样例
 
 目标：先把当前问题写成可观察的测试样例，不修改生产行为。
@@ -121,6 +151,8 @@ npm run typecheck
 - 替换 `requiresWriteTool()` 正则路由；
 - CLI 命令不进入分类器；
 - 分类失败安全退回 `unknown`；
+- 每条普通用户输入都经过分类，不以是否启用 Tool 为条件；
+- `unknown` 只进入澄清流程，不得调用 Tool；
 - 分类器不接收 Tool schema，不执行 Tool。
 
 测试：
@@ -146,17 +178,20 @@ npm run typecheck
 
 实现：
 
-- 保存最小 `PendingExecution`；
+- 保存包含原始输入、完整 IntentResult 和拟执行操作的 `PendingExecution`；
 - discussion 结束时可产生待确认目标；
 - 后续明确确认才能进入 execute；
 - 用户当前消息已经明确批准已讨论方案时不重复询问；
 - 确认目标不等于批准每个敏感 Tool；
 - `/new` 清除待确认状态。
+- 用户确认后恢复原任务并进入 execute，不重新分类“确认”文本；
+- 用户拒绝或发起不相关新任务时清除旧状态；
 
 测试：
 
 - 讨论后未确认不写文件；
 - 确认后进入执行；
+- 确认后执行的是原始任务，不是“确认”这条消息；
 - 用户否决后清除待确认状态；
 - 新话题不会误确认旧任务；
 - Approval 仍在执行阶段独立触发。
@@ -176,7 +211,7 @@ npm run typecheck
 
 实现：
 
-- 每个成功回答后生成 `TurnSummary`；
+- 每个成功回答后依据 user、intent、outcome 和 Tool evidence 生成 `TurnSummary`；
 - 摘要失败不撤销已完成回答；
 - ContextResolver 只查看当前意图和摘要目录；
 - 选择有限原始轮次与摘要；
@@ -189,6 +224,7 @@ npm run typecheck
 - 如增加新版本，测试兼容读取和保存；
 - 摘要是派生状态，不替代原始消息；
 - 不记录 secrets 或未确认 Tool 事实。
+- 禁止使用 `response.text.slice(...)` 作为正式摘要实现；
 
 测试：
 
@@ -225,6 +261,7 @@ npm run typecheck
 Runtime 硬性检查：
 
 - inspect 至少有相关读取成功；
+- inspect 的成功证据必须覆盖分类器给出的 requiredEvidence 或 CompletionChecker 确认的任务范围；
 - create 至少有目标写入成功；
 - modify 先读后写；
 - discussion/answer 不得声称状态已改变；
@@ -262,6 +299,7 @@ npm run typecheck
 - UNKNOWN_TOOL 只能选择已注册 Tool；
 - USER_REJECTED、PERMISSION_DENIED、Sandbox 拒绝禁止绕过；
 - 检测相同 Tool、参数和失败的重复调用。
+- 达到重复阈值后 Runtime 真正返回 blocked；只追加提示文字不算停止；
 
 测试：
 
@@ -352,6 +390,11 @@ npm run typecheck
 5. 历史问题：ContextResolver 只选中相关摘要；
 6. 阶段输出无效：重试一次 → blocked；
 7. Tool 步骤达到上限：安全结束并保留真实状态。
+8. 自省审批/沙盒：连续读取相关源码，区分源码默认机制和当前动态配置，不在读完入口文件后询问是否继续；
+9. 确认恢复：讨论产生待执行任务，用户确认后执行原任务；
+10. unknown：分类失败后只询问用户，零 Tool Call；
+11. 重复失败：第二次相同失败后进入 blocked，第三次 Tool Call 不发生；
+12. 摘要恢复：重启 Session 后仍能按摘要定位相关历史。
 
 最终验证：
 
@@ -377,3 +420,23 @@ npm run pack:check
 - 不让分类器获得执行 Tool 的能力；
 - 不用 Prompt 代替 Approval 或 Sandbox；
 - 不因测试困难删除现有安全检查或降低断言。
+
+## Luna 最终交付格式
+
+实现结束后必须报告：
+
+```text
+完成的步骤：
+核心行为变化：
+新增或升级的持久化版本：
+旧会话兼容方式：
+测试文件数量：
+测试通过/跳过/失败数量：
+typecheck：
+build：
+pack:check：
+未完成项：
+Git 操作：
+```
+
+只有 Step 0–10 的完成信号全部满足且最终验证通过，才能声明 v0.1.8 完成。若 `pack:check` 因环境缺失无法运行，应明确记录“未验证”和错误原因，不能写成通过。

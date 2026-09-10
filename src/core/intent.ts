@@ -10,6 +10,7 @@ export interface IntentResult {
   readonly needsTools: boolean;
   readonly requiresUserConfirmation: boolean;
   readonly missingInformation: readonly string[];
+  readonly requiredEvidence?: readonly string[];
 }
 
 export interface IntentClassifierOptions {
@@ -27,7 +28,7 @@ export class IntentClassifier {
         { role: "user", content: [
           "判断下面的用户输入属于 answer、inspect、discuss、execute 或 unknown。",
           "讨论如何做不等于要求执行；只有明确要求改变外部状态才是 execute。",
-          "返回字段：kind、goal、needsHistory、needsTools、requiresUserConfirmation、missingInformation。",
+          "返回字段：kind、goal、needsHistory、needsTools、requiresUserConfirmation、missingInformation、requiredEvidence。",
           `用户输入：${input}`,
         ].join("\n") },
       ], this.options.capabilities ?? [], "intent"),
@@ -49,4 +50,3 @@ function parseIntent(text: string): IntentResult {
   if (typeof value.goal !== "string" || typeof value.needsHistory !== "boolean" || typeof value.needsTools !== "boolean" || typeof value.requiresUserConfirmation !== "boolean" || !Array.isArray(value.missingInformation) || !value.missingInformation.every(item => typeof item === "string")) throw new Error("Invalid intent result");
   return value as IntentResult;
 }
-

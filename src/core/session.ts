@@ -10,6 +10,7 @@ import { IntentClassifier } from "./intent.js";
 import { ContextResolver, type TurnSummary } from "./context.js";
 export const DEFAULT_MAX_CONTEXT_TURNS = 20;
 export const DEFAULT_MAX_TOOL_ROUNDS = 8;
+interface PendingExecution { readonly originalInput: string; readonly intent: import("./intent.js").IntentResult; }
 export interface ChatSessionOptions {
   readonly systemPrompt?: string;
   readonly messages?: readonly Message[];
@@ -67,17 +68,22 @@ export class ChatSession {
   private readonly intentClassifier: IntentClassifier | undefined;
   private readonly summaries: TurnSummary[] = [];
   private readonly contextResolver = new ContextResolver();
-  private pendingConfirmation: string | undefined;
+  private pendingConfirmation: PendingExecution | undefined;
   async send(input: string): Promise<ModelResponse> {
     this.messages.push({ role: "user", content: input });
     await this.onMessagesChanged?.([...this.messages]);
     const history = selectRecentTurns(this.messages, this.maxContextTurns);
-    const intent = this.intentClassifier ? await this.intentClassifier.classify(input) : undefined;
-    if (intent?.kind === "execute" && intent.requiresUserConfirmation && !isConfirmation(input)) {
-      this.pendingConfirmation = intent.goal;
+    let intent = this.intentClassifier ? await this.intentClassifier.classify(input) : undefined;
+    if (this.pendingConfirmation && isConfirmation(input)) {
+      intent = this.pendingConfirmation.intent;
+      input = this.pendingConfirmation.originalInput;
+      this.pendingConfirmation = undefined;
+    }
+    if (intent?.kind === "unknown") return await this.commitAssistant("我还不能安全判断你的目标。请说明是要查看、讨论，还是执行具体修改。");
+    if (intent?.kind === "execute" && intent.requiresUserConfirmation) {
+      this.pendingConfirmation = { originalInput: input, intent };
       return await this.commitAssistant("执行前需要你的确认：" + intent.goal);
     }
-    if (this.pendingConfirmation && isConfirmation(input)) this.pendingConfirmation = undefined;
     const selectedSummaries = intent ? this.contextResolver.select(intent, this.summaries).summaryTurns : [];
     const summaryMessages = this.summaries.filter(summary => selectedSummaries.includes(summary.turn)).map(summary => ({ role: "system" as const, content: `历史摘要（第 ${summary.turn} 轮，${summary.category}）：${summary.summary}` }));
     const phase = intent?.kind === "discuss" ? "discussion" as const : this.capabilities.length ? "tool-loop" as const : "legacy" as const;
@@ -116,7 +122,7 @@ export class ChatSession {
             const key = `${call.name}:${call.arguments}:${execution.code}`;
             const count = (failures.get(key) ?? 0) + 1;
             failures.set(key, count);
-            if (count >= 2) result += "\n[Isla] 相同失败已重复，停止自动重试。";
+            if (count >= 2) return { text: "工具调用连续失败，已停止自动重试。", ...(response.model ? { model: response.model } : {}) };
           }
         } finally {
           this.onToolFinished?.(call.name);
@@ -132,9 +138,19 @@ export class ChatSession {
     this.messages.push({ role: "user", content: input });
     await this.onMessagesChanged?.([...this.messages]);
     const history = selectRecentTurns(this.messages, this.maxContextTurns);
-    const intent = this.intentClassifier ? await this.intentClassifier.classify(input) : undefined;
-    if (intent?.kind === "execute" && intent.requiresUserConfirmation && !isConfirmation(input)) {
-      this.pendingConfirmation = intent.goal;
+    let intent = this.intentClassifier ? await this.intentClassifier.classify(input) : undefined;
+    if (this.pendingConfirmation && isConfirmation(input)) {
+      intent = this.pendingConfirmation.intent;
+      input = this.pendingConfirmation.originalInput;
+      this.pendingConfirmation = undefined;
+    }
+    if (intent?.kind === "unknown") {
+      const response = await this.commitAssistant("我还不能安全判断你的目标。请说明是要查看、讨论，还是执行具体修改。");
+      onChunk(response.text);
+      return response;
+    }
+    if (intent?.kind === "execute" && intent.requiresUserConfirmation) {
+      this.pendingConfirmation = { originalInput: input, intent };
       const response = await this.commitAssistant("执行前需要你的确认：" + intent.goal);
       onChunk(response.text);
       return response;
