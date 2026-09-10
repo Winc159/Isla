@@ -10,6 +10,7 @@ import { DEFAULT_MAX_CONTEXT_TURNS } from './core/session.js';
 import { loadRuntime } from './main.js';
 import { JsonSessionStore, type SessionStore, type StoredSession } from './session-store.js';
 import { CliApprovalService } from './approval/cli-approval.js';
+import { runProtocol } from './protocol/runner.js';
 export async function runCli(
   input: Readable,
   output: Writable,
@@ -189,6 +190,13 @@ function createPersistentSession(
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
     const { runtime, config } = loadRuntime();
+    if (process.argv.includes('--protocol')) {
+      const protocol = process.argv[process.argv.indexOf('--protocol') + 1];
+      if (protocol !== 'ndjson') throw new Error('Unsupported protocol');
+      const session = runtime.createSession({ providerId: config.provider, ...(config.systemPrompt ? { systemPrompt: config.systemPrompt } : {}), enableTools: true, projectRoot: process.cwd(), permissionPreset: 'readonly', approvalPolicy: 'never' });
+      await runProtocol(process.stdin, process.stdout, session, config.provider, config.model);
+      process.exit(0);
+    }
     await runCli(
       process.stdin,
       process.stdout,

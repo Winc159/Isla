@@ -71,6 +71,24 @@
 
 暂不包括：SQLite Session Query、长期记忆、Shell、网络、删除、并行 Tool、子 Agent 和完整思维链。
 
+## v0.1.9：本地 NDJSON 测试协议
+
+计划内容：
+
+- 增加 `--protocol ndjson` 本地机器可读入口；
+- 外部测试进程可连续发送 prompt 并读取流式响应；
+- Tool、Approval、错误、会话切换和退出使用结构化事件；
+- stdout 只输出 NDJSON，诊断只输出 stderr；
+- 保持 Permission、Approval 和 Sandbox 边界；
+- 使用 FakeProvider 完成离线协议与子进程回归；
+- 真实 Provider smoke test 只显式运行。
+
+实施依据：`docs/architecture-v0.1.9.md` 与 `docs/luna-implementation-v0.1.9.md`。
+
+完成信号：外部控制方可以稳定启动 Isla、完成多轮对话、处理审批、观察 Tool 生命周期并正常退出，且现有交互式 CLI 无回归。
+
+协议稳定并完成至少两轮真实回归后，再评估把测试编排沉淀为 `isla-runtime-testing` Skill；v0.1.9 不把 Runtime 协议实现放进 Skill。
+
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。
