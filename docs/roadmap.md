@@ -31,11 +31,28 @@
 
 研究方向：最近窗口、摘要、重要信息保留、重新搜索、遗忘。必须保存实验数据，比较正确率、成本与信息损失。
 
+## v0.1.6：Tool Runtime、Approval 与最小文件沙盒
+
+完成内容：
+
+- PromptRegistry 与 ToolRegistry；
+- ToolRuntime 统一查找、执行和失败结果；
+- `readonly` / `workspace` 权限预设；
+- CLI raw 单键审批：本次批准、拒绝、当前进程内持续批准；
+- 文件级 SandboxPolicy：项目根目录、目录穿越、符号链接和敏感文件边界；
+- `list_directory`、`read_text_file`、`write_text_file`；
+- 写入意图强制路由和 Provider `tool_choice`；
+- Tool Loop 上限 8 轮。
+
+完成信号：读写文件、审批拒绝、沙盒越界、符号链接逃逸和工具失败均有自动测试。
+
+仍未完成：Session Event 持久化、OpenAI/Local Tool API、Shell、网络和容器级沙盒。
+
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。
 
-先只实现一个工具和完整调用闭环，再抽象 ToolRegistry、权限确认和结果回填。不要先建设通用 MCP 平台。
+继续以真实能力为驱动扩展 Tool；先完成 Session Event 审计与重放，再考虑 Shell 或网络能力。不要先建设通用 MCP 平台。
 
 ## 候选阶段：文档与知识检索
 
