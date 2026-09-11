@@ -4,7 +4,8 @@ export interface ToolDefinition { readonly name: string; readonly description: s
 export interface ToolCall { readonly id: string; readonly name: string; readonly arguments: string; }
 export interface ModelRequest { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[]; readonly toolChoice?: "auto" | "required" | { readonly name: string }; }
 export interface TokenUsage { readonly input?: number; readonly output?: number; readonly total?: number; }
-export interface ModelResponse { readonly text: string; readonly model?: string; readonly usage?: TokenUsage; }
+export type TurnOutcome = "completed" | "needs_user" | "blocked";
+export interface ModelResponse { readonly text: string; readonly model?: string; readonly usage?: TokenUsage; readonly outcome?: TurnOutcome; readonly evidence?: readonly string[]; }
 export interface ToolResponse extends ModelResponse { readonly toolCalls?: readonly ToolCall[]; }
 export interface ModelChunk { readonly text: string; }
 export interface ModelProvider {

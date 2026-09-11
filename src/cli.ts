@@ -193,8 +193,22 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     if (process.argv.includes('--protocol')) {
       const protocol = process.argv[process.argv.indexOf('--protocol') + 1];
       if (protocol !== 'ndjson') throw new Error('Unsupported protocol');
-      const session = runtime.createSession({ providerId: config.provider, ...(config.systemPrompt ? { systemPrompt: config.systemPrompt } : {}), enableTools: true, projectRoot: process.cwd(), permissionPreset: 'readonly', approvalPolicy: 'never' });
-      await runProtocol(process.stdin, process.stdout, session, config.provider, config.model);
+      const protocolStore = new JsonSessionStore(config.sessionDirectory);
+      let protocolStored = await protocolStore.loadLatest(config.provider, config.model);
+      if (!protocolStored) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []);
+      let useExistingProtocolSession = true;
+      let protocolEvents = protocolStored.events ? [...protocolStored.events] : [];
+      let protocolMessages = protocolStored.messages;
+      await runProtocol(process.stdin, process.stdout, undefined, config.provider, config.model, {
+        createSession: async (approvalService, events) => {
+          if (!useExistingProtocolSession) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []);
+          useExistingProtocolSession = false;
+          protocolEvents = protocolStored?.events ? [...protocolStored.events] : [];
+          protocolMessages = protocolStored?.messages ?? [];
+          return runtime.createSession({ providerId: config.provider, ...(protocolStored ? { messages: protocolStored.messages, events: protocolEvents } : {}), ...(config.systemPrompt ? { systemPrompt: config.systemPrompt } : {}), enableTools: true, projectRoot: process.cwd(), permissionPreset: 'workspace', approvalPolicy: 'ask', approvalService, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished, onSessionEvent: async event => { protocolEvents.push(event); if (protocolStored) protocolStored = await protocolStore.save(protocolStored, protocolMessages, protocolEvents); }, onMessagesChanged: async messages => { protocolMessages = messages; if (protocolStored) protocolStored = await protocolStore.save(protocolStored, messages, protocolEvents); } });
+        },
+        sessionId: () => protocolStored?.id ?? 'unknown',
+      });
       process.exit(0);
     }
     await runCli(
@@ -207,6 +221,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       config.systemPrompt,
       config.debug,
       config.maxContextTurns,
+      new JsonSessionStore(config.sessionDirectory),
     );
   } catch (error) {
     process.stderr.write(

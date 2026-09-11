@@ -25,6 +25,12 @@ describe("PromptRegistry", () => {
     expect(registry.render({ capabilities: [], phase: "discussion" })).toEqual(["personality", "legacy"]);
     expect(registry.render({ capabilities: [], phase: "tool-loop" })).toEqual(["tools", "legacy"]);
   });
+
+  it("supports a dedicated execution phase", () => {
+    const registry = new PromptRegistry();
+    registry.register({ id: "execution", order: 0, phases: ["execution"], render: () => "must use tool" });
+    expect(registry.render({ capabilities: [], phase: "execution" })).toEqual(["must use tool"]);
+  });
 });
 
 describe("ToolRegistry", () => {

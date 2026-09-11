@@ -6,6 +6,8 @@ export interface TurnSummary {
   readonly summary: string;
   readonly decisions: readonly string[];
   readonly pending: readonly string[];
+  readonly evidence: readonly string[];
+  readonly outcome: "completed" | "needs_user" | "blocked";
 }
 
 export interface ContextSelection {
@@ -42,4 +44,3 @@ function scoreSummary(summary: TurnSummary, terms: readonly string[]): number {
   const text = [summary.category, summary.summary, ...summary.decisions, ...summary.pending].join(" ").toLowerCase();
   return terms.reduce((score, term) => score + (text.includes(term) ? 1 : 0), 0);
 }
-

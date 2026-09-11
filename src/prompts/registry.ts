@@ -11,6 +11,7 @@ export type PromptPhase =
   | "context"
   | "discussion"
   | "tool-loop"
+  | "execution"
   | "completion"
   | "final"
   | "summary";

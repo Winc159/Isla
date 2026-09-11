@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { ContextResolver, type TurnSummary } from "../../src/core/context.js";
 
 const summaries: TurnSummary[] = [
-  { turn: 1, category: "runtime", summary: "讨论 Tool Loop 完成判定", decisions: ["保留 8 轮上限"], pending: [] },
-  { turn: 2, category: "ui", summary: "讨论 CLI 输入", decisions: [], pending: [] },
+  { turn: 1, category: "runtime", summary: "讨论 Tool Loop 完成判定", decisions: ["保留 8 轮上限"], pending: [], evidence: [], outcome: "completed" },
+  { turn: 2, category: "ui", summary: "讨论 CLI 输入", decisions: [], pending: [], evidence: [], outcome: "completed" },
 ];
 
 describe("ContextResolver", () => {
@@ -21,4 +21,3 @@ describe("ContextResolver", () => {
     expect(result.recentTurns).toBe(2);
   });
 });
-

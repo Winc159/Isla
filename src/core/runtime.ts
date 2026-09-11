@@ -1,6 +1,8 @@
 import { ChatSession } from "./session.js";
 import type { PluginContext, RuntimePlugin } from "./plugin.js";
 import type { Message, ModelProvider } from "./types.js";
+import type { ToolExecutionResult } from "../tools/types.js";
+import type { SessionEvent } from "./events.js";
 import type { ApprovalPolicy, ApprovalService } from "../approval/types.js";
 import type { PermissionPreset } from "../approval/presets.js";
 export interface CreateSessionOptions {
@@ -9,10 +11,12 @@ export interface CreateSessionOptions {
   readonly messages?: readonly Message[];
   readonly maxContextTurns?: number;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
+  readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
+  readonly events?: readonly SessionEvent[];
   readonly projectRoot?: string;
   readonly onToolsUsed?: (tools: readonly string[]) => void;
-  readonly onToolStarted?: (tool: string) => void;
-  readonly onToolFinished?: (tool: string) => void;
+  readonly onToolStarted?: (tool: string, callId: string) => void;
+  readonly onToolFinished?: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly enableTools?: boolean;
   readonly approvalPolicy?: ApprovalPolicy;
   readonly approvalService?: ApprovalService;

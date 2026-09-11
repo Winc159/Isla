@@ -58,4 +58,22 @@ describe("JSON session store", () => {
     await expect(store.list("deepseek", "m1")).resolves.toMatchObject([{ id: valid.id }]);
     expect(warnings).toEqual([expect.stringContaining("broken.json")]);
   });
+
+  it("keeps persisted tool messages readable", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "isla-session-"));
+    directories.push(directory);
+    const store = new JsonSessionStore(directory);
+    const session = await store.create("deepseek", "m1", []);
+    await store.save(session, [{ role: "assistant", content: "", toolCalls: [{ id: "call-1", name: "read_text_file", arguments: "{}" }] }, { role: "tool", toolCallId: "call-1", content: "ok" }]);
+    await expect(store.loadLatest("deepseek", "m1")).resolves.toMatchObject({ messages: [{ role: "assistant" }, { role: "tool", toolCallId: "call-1" }] });
+  });
+
+  it("keeps optional session events while reading version 1 sessions", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "isla-session-"));
+    directories.push(directory);
+    const store = new JsonSessionStore(directory);
+    const session = await store.create("deepseek", "m1", []);
+    await store.save(session, [{ role: "user", content: "你好" }], [{ type: "user", input: "你好" }]);
+    await expect(store.loadLatest("deepseek", "m1")).resolves.toMatchObject({ events: [{ type: "user", input: "你好" }] });
+  });
 });

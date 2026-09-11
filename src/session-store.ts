@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile, type FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Message } from "./core/types.js";
+import type { SessionEvent } from "./core/events.js";
 
 export interface StoredSession {
   readonly version: 1;
@@ -12,13 +14,14 @@ export interface StoredSession {
   readonly provider: string;
   readonly model: string;
   readonly messages: readonly Message[];
+  readonly events?: readonly SessionEvent[];
 }
 
 export interface SessionStore {
   list(provider: string, model: string): Promise<StoredSession[]>;
   loadLatest(provider: string, model: string): Promise<StoredSession | undefined>;
   create(provider: string, model: string, messages: readonly Message[]): Promise<StoredSession>;
-  save(session: StoredSession, messages: readonly Message[]): Promise<StoredSession>;
+  save(session: StoredSession, messages: readonly Message[], events?: readonly SessionEvent[]): Promise<StoredSession>;
 }
 
 export class JsonSessionStore implements SessionStore {
@@ -61,9 +64,9 @@ export class JsonSessionStore implements SessionStore {
     return this.write(session);
   }
 
-  async save(session: StoredSession, messages: readonly Message[]): Promise<StoredSession> {
+  async save(session: StoredSession, messages: readonly Message[], events?: readonly SessionEvent[]): Promise<StoredSession> {
     const updatedAt = nextUpdatedAt(session.updatedAt);
-    return this.write({ ...session, updatedAt, messages: [...messages] }, session.updatedAt);
+    return this.write({ ...session, updatedAt, messages: [...messages], ...(events ? { events: [...events] } : {}) }, session.updatedAt);
   }
 
   private async write(session: StoredSession, expectedUpdatedAt?: string): Promise<StoredSession> {
@@ -96,7 +99,7 @@ export class JsonSessionStore implements SessionStore {
 const staleLockMs = 30_000;
 
 async function acquireLock(lockPath: string): Promise<FileHandle> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const handle = await open(lockPath, "wx");
       try {
@@ -108,8 +111,14 @@ async function acquireLock(lockPath: string): Promise<FileHandle> {
         throw error;
       }
     } catch (error) {
-      if (!isFileExistsError(error) || !(await isStaleLock(lockPath))) throw lockError(lockPath, error);
-      await unlink(lockPath).catch(() => {});
+      if (!isLockConflict(lockPath, error)) throw lockError(lockPath, error);
+      if (await isStaleLock(lockPath)) {
+        await unlink(lockPath).catch(() => {});
+      } else if (attempt < 2) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      } else {
+        throw lockError(lockPath, error);
+      }
     }
   }
   throw new Error(`Unable to lock Isla session ${lockPath}`);
@@ -136,6 +145,11 @@ function isProcessRunning(pid: number): boolean {
 
 function isFileExistsError(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "EEXIST";
+}
+
+function isLockConflict(lockPath: string, error: unknown): boolean {
+  if (isFileExistsError(error)) return true;
+  return (error as NodeJS.ErrnoException).code === "EPERM" && existsSync(lockPath);
 }
 
 function lockError(lockPath: string, cause: unknown): Error {
@@ -165,12 +179,13 @@ function isStoredSession(value: unknown): value is StoredSession {
     && typeof session.provider === "string"
     && typeof session.model === "string"
     && Array.isArray(session.messages)
-    && session.messages.every(isMessage);
+    && session.messages.every(isMessage)
+    && (session.events === undefined || Array.isArray(session.events));
 }
 
 function isMessage(value: unknown): value is Message {
   if (!value || typeof value !== "object") return false;
   const message = value as Record<string, unknown>;
-  return (message.role === "system" || message.role === "user" || message.role === "assistant")
+  return (message.role === "system" || message.role === "user" || message.role === "assistant" || message.role === "tool")
     && typeof message.content === "string";
 }

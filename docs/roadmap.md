@@ -85,6 +85,8 @@
 
 实施依据：`docs/architecture-v0.1.9.md` 与 `docs/luna-implementation-v0.1.9.md`。
 
+进入 v0.2.0 前的最终收口以 `docs/luna-closeout-v0.1.9.md` 为唯一准入清单。该清单按当前源码重新审计了 v0.1.8/v0.1.9 遗留缺陷，并要求 Tool、Approval、Session、持久化、子进程协议和两轮真实 Provider 日志全部达到逐场景门槛；旧实施文档只保留为设计和历史执行顺序参考。
+
 完成信号：外部控制方可以稳定启动 Isla、完成多轮对话、处理审批、观察 Tool 生命周期并正常退出，且现有交互式 CLI 无回归。
 
 协议稳定并完成至少两轮真实回归后，再评估把测试编排沉淀为 `isla-runtime-testing` Skill；v0.1.9 不把 Runtime 协议实现放进 Skill。

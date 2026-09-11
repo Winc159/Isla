@@ -66,6 +66,22 @@ describe('DeepSeek provider contract', () => {
     ] });
   });
 
+  it('serializes a forced write tool choice for a confirmed execution', async () => {
+    const bodies: Array<{ tool_choice?: unknown; tools?: unknown[] }> = [];
+    server.use(http.post(endpoint, async ({ request }) => {
+      const body = await request.json() as { tool_choice?: unknown; tools?: unknown[] };
+      bodies.push(body);
+      if (!body.tools) return HttpResponse.json({ model: 'deepseek-v4-flash', choices: [{ message: { role: 'assistant', content: '{"kind":"execute","goal":"创建文件","needsHistory":false,"needsTools":true,"requiresUserConfirmation":true,"missingInformation":[]}' } }] });
+      return HttpResponse.json({ model: 'deepseek-v4-flash', choices: [{ message: { role: 'assistant', content: '未调用工具' } }] });
+    }));
+    const session = new IslaRuntime().use(createDeepSeekPlugin({ provider: 'deepseek', model: 'deepseek-v4-flash', apiKey: 'test-only-key', timeoutMs: 100, debug: false, maxContextTurns: 20 })).createSession({ providerId: 'deepseek', enableTools: true, projectRoot: process.cwd() });
+    await session.send('创建文件');
+    await session.send('确认执行');
+    const forced = bodies.find(body => body.tool_choice);
+    expect(forced?.tool_choice).toEqual({ type: 'function', function: { name: 'write_text_file' } });
+    expect(forced?.tools).toBeTruthy();
+  });
+
   it('rejects non-2xx, empty text, network errors, and timeout', async () => {
     server.use(http.post(endpoint, () => HttpResponse.json({ error: { message: 'bad request' } }, { status: 401 })));
     await expect(provider().send('test')).rejects.toThrow();

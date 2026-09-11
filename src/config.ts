@@ -8,6 +8,7 @@ export type OpenAIConfig = {
   readonly debug: boolean;
   readonly maxContextTurns: number;
   readonly apiKey: string;
+  readonly sessionDirectory?: string;
 };
 export type DeepSeekConfig = {
   readonly provider: 'deepseek';
@@ -17,6 +18,7 @@ export type DeepSeekConfig = {
   readonly debug: boolean;
   readonly maxContextTurns: number;
   readonly apiKey: string;
+  readonly sessionDirectory?: string;
 };
 export type LocalConfig = {
   readonly provider: 'local';
@@ -27,6 +29,7 @@ export type LocalConfig = {
   readonly maxContextTurns: number;
   readonly baseURL: string;
   readonly apiKey?: string;
+  readonly sessionDirectory?: string;
 };
 export type AppConfig = OpenAIConfig | DeepSeekConfig | LocalConfig;
 type Env = Record<string, string | undefined>;
@@ -51,6 +54,7 @@ export function readConfig(env: Env = process.env): AppConfig {
     debug,
     maxContextTurns,
     ...(env.ISLA_SYSTEM_PROMPT ? { systemPrompt: env.ISLA_SYSTEM_PROMPT } : {}),
+    ...(env.ISLA_SESSION_DIR ? { sessionDirectory: env.ISLA_SESSION_DIR } : {}),
   };
   if (provider === 'openai') {
     if (!env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is required');

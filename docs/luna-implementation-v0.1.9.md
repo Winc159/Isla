@@ -179,7 +179,17 @@ npm run pack:check
 
 最终报告实际测试文件数、通过/跳过/失败数量，以及是否运行真实 Provider smoke test。
 
+## 补充修复：确认后的 execution phase
+
+参考 DSH 的 step/tool pipeline 不变量：每个模型 step 接收当前会话历史与可见工具 schema；模型产生具体 Tool Call 后，Tool Runtime 才执行权限判断和 Approval。Isla 保留现有 IntentClassifier 与执行前用户确认，但确认后的步骤必须满足以下契约：
+
+1. `execute + confirmed` 使用独立 `execution` Prompt phase，并继续暴露当前能力的工具 schema。
+2. execution Prompt 明确要求通过目标写工具完成原任务，不允许只返回说明文字。
+3. 若模型没有产生要求的写 Tool Call，追加一次只对当前 step 生效的纠偏指令并重试。
+4. 第二次仍无目标 Tool Call 时返回结构化 `blocked`；不得声称写入成功。
+5. Approval 只处理已经生成的具体 Tool Call，不负责重新判断是否应调用工具。
+6. FakeProvider 测试证明 phase Prompt、单次纠偏和有界失败；真实 NDJSON 驱动验证模型、协议、Approval 与文件结果。
+
 ## Skill 后续步骤
 
 本版本不要同时创建 Skill。NDJSON 协议稳定且完成至少两轮真实回归后，单独设计 `isla-runtime-testing` Skill。Skill 只编排协议，不复制 parser、Approval 或 Runtime 逻辑。
-
