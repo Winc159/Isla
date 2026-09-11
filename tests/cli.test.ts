@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { IslaRuntime } from "../src/core/runtime.js";
 import type { Message } from "../src/core/types.js";
-import type { SessionStore, StoredSession } from "../src/session-store.js";
+import type { SessionState, SessionStore, StoredSession } from "../src/session-store.js";
 import { FakeProvider } from "./support/fake-provider.js";
 
 class MemorySessionStore implements SessionStore {
@@ -15,8 +15,8 @@ class MemorySessionStore implements SessionStore {
     this.sessions.push(session);
     return session;
   }
-  async save(session: StoredSession, messages: readonly Message[]) {
-    const updated = { ...session, messages: [...messages] };
+  async save(session: StoredSession, state: SessionState) {
+    const updated = { ...session, version: 2 as const, messages: [...state.messages], ...(state.context ? { context: state.context } : {}) };
     this.sessions[this.sessions.findIndex(item => item.id === session.id)] = updated;
     return updated;
   }
@@ -99,10 +99,10 @@ describe("cli", () => {
     const r = new IslaRuntime().use({ name: "fake", setup: c => c.registerProvider(p) });
     const store = new MemorySessionStore();
     const oldSession = await store.create("fake", "fake-model", []);
-    await store.save(oldSession, [
+    await store.save(oldSession, { messages: [
       { role: "user", content: "旧问题" },
       { role: "assistant", content: "旧回答" },
-    ]);
+    ] });
     await store.create("fake", "fake-model", []);
     const input = interactiveInput();
     let out = "";

@@ -24,6 +24,19 @@
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — 用于审查插件边界、Provider 适配、会话日志和模型历史不变量；不作为 Isla 的依赖或脚手架。
 - [本次审查的 DSH 提交](https://github.com/deepseek-ai/deepseek-harness/commit/76fda729799fe9b3848dbe2c211d4b231032b81e) — `0.1.2-rc.1`，查看日期 2026-09-08；具体采用、暂缓和拒绝项见 [DSH 参考评审](dsh-reference-review.md)。
+- [DSH Session](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session.md) — 事实日志与模型消息投影，影响 v0.2.1 的“原始事实与上下文视图分离”；查看日期 2026-09-11。
+- [DSH Compaction](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/compaction.md) — 持久化压缩检查点、Tool 配对边界和失败语义；采用原则，拒绝完整事件框架；查看日期 2026-09-11。
+- [DSH Session Query](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session-query.md) — 确定性读取、过滤和全文检索；v0.2.1 采用职责分离，暂缓完整 Query 服务；查看日期 2026-09-11。
+- [OpenHands Condenser](https://docs.openhands.dev/sdk/arch/condenser) — 压力触发、保留尾部和 View 投影；采用最小语义，不引入通用 Pipeline；查看日期 2026-09-11。
+- [LangGraph Memory](https://langchain-ai.github.io/langgraph/how-tos/memory/manage-conversation-history/) — Thread 持久化、裁剪和滚动摘要；采用派生摘要，拒绝 Graph 编排和删除原文；查看日期 2026-09-11。
+- [Letta Memory Architecture](https://github.com/letta-ai/skills/blob/main/letta/letta-api-client/memory-architecture.md) — Core Memory、消息窗口、归档和语义检索分层；直接影响 v0.2.1 的四层记忆模型；查看日期 2026-09-11。
+
+## SQLite 与 Embedding
+
+- [Node.js 24 SQLite](https://nodejs.org/download/release/latest-v24.x/docs/api/sqlite.html) — 内置 SQLite、foreign keys、busy timeout、defensive mode 和扩展加载边界；采用，查看日期 2026-09-11。
+- [OpenAI Embeddings](https://developers.openai.com/api/reference/ruby/resources/embeddings/methods/create) — 批量 Embedding 请求与 dimensions；用于独立 Embedding Provider，查看日期 2026-09-11。
+- [Ollama Embeddings](https://docs.ollama.com/capabilities/embeddings) — 本地 Embedding、批量输入和归一化向量；用于 Local Provider 设计参考，查看日期 2026-09-11。
+- [sqlite-vec](https://github.com/asg017/sqlite-vec) — SQLite 向量扩展；当前 pre-v1 且 Node 跨平台打包仍有风险，v0.2.1 暂缓依赖，达到规模阈值后重新评估；查看日期 2026-09-11。
 
 ## 部署
 

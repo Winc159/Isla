@@ -17,7 +17,7 @@ npm run build
 npm start
 ```
 
-输入 `/new` 开启新对话，输入 `/sessions` 通过方向键选择历史会话，输入 `/exit` 或按 `Ctrl+C` 退出。
+输入 `/new` 开启新对话，输入 `/sessions` 通过方向键选择历史会话，输入 `/memory` 查看长期记忆，输入 `/exit` 或按 `Ctrl+C` 退出。
 
 等待模型返回时，交互式终端会显示生成状态和本次请求耗时。DeepSeek 默认使用非思考模式，以降低普通对话的等待时间。
 
@@ -29,9 +29,15 @@ npm start
 
 `/sessions` 会列出当前 Provider 和模型对应的历史会话。使用上下方向键或 PageUp/PageDown 移动，按 Enter 切换，按 Esc 取消。切换后会清屏并回放所选会话的历史消息。
 
-会话文件保留完整历史，但每次请求默认只向模型发送最近 20 轮对话。可以通过 `ISLA_MAX_CONTEXT_TURNS` 调整轮数。
+会话文件保留完整历史，但每次请求默认最多向模型发送最近 20 个完整对话轮次，并使用 60000 字符预算；Tool Call 与 Tool Result 不会被拆开。达到压力后，较早轮次会压缩为可恢复的 Working Memory 检查点，默认保留最近 6 轮原文。可以通过 `ISLA_MAX_CONTEXT_TURNS`、`ISLA_MAX_CONTEXT_CHARS` 和 `ISLA_CONTEXT_RETAIN_TURNS` 调整边界。
 
 会话文件包含完整对话内容，属于用户私人数据，不应提交到 Git 仓库或公开分享。
+
+## 分层记忆
+
+v0.2.1 提供 Working Memory 检查点、SQLite 长期记忆、Core Memory Block、关键词检索以及可选 Embedding 基础层。长期记忆默认保存在 `~/.isla/memory.sqlite`，包含来源和可恢复的修订历史；Candidate、停用记忆和其他工作区的私有记忆不会进入默认召回。
+
+`/memory` 当前支持 `list [status]`、`show <id>` 和 `disable <id>`。Embedding Provider 与聊天 Provider 独立；没有配置或调用失败时退回关键词检索。SQLite、会话、索引和向量均属于私人数据，不进入 npm 包或日志。
 
 ## NDJSON 协议
 

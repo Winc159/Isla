@@ -4,8 +4,11 @@ import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile, type F
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Message } from "./core/types.js";
+import type { ContextCheckpoint, SessionContext } from "./core/context.js";
 
-export interface StoredSession {
+export type { ContextCheckpoint, SessionContext } from "./core/context.js";
+
+export interface StoredSessionV1 {
   readonly version: 1;
   readonly id: string;
   readonly createdAt: string;
@@ -15,11 +18,29 @@ export interface StoredSession {
   readonly messages: readonly Message[];
 }
 
+export interface StoredSessionV2 {
+  readonly version: 2;
+  readonly id: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly messages: readonly Message[];
+  readonly context?: SessionContext;
+}
+
+export type StoredSession = StoredSessionV1 | StoredSessionV2;
+
+export interface SessionState {
+  readonly messages: readonly Message[];
+  readonly context?: SessionContext;
+}
+
 export interface SessionStore {
   list(provider: string, model: string): Promise<StoredSession[]>;
   loadLatest(provider: string, model: string): Promise<StoredSession | undefined>;
   create(provider: string, model: string, messages: readonly Message[]): Promise<StoredSession>;
-  save(session: StoredSession, messages: readonly Message[]): Promise<StoredSession>;
+  save(session: StoredSession, state: SessionState): Promise<StoredSession>;
 }
 
 export class JsonSessionStore implements SessionStore {
@@ -48,10 +69,10 @@ export class JsonSessionStore implements SessionStore {
     return (await this.list(provider, model))[0];
   }
 
-  async create(provider: string, model: string, messages: readonly Message[]): Promise<StoredSession> {
+  async create(provider: string, model: string, messages: readonly Message[]): Promise<StoredSessionV2> {
     const now = new Date().toISOString();
     const session: StoredSession = {
-      version: 1,
+      version: 2,
       id: `${now.replaceAll(":", "-")}-${randomUUID()}`,
       createdAt: now,
       updatedAt: now,
@@ -62,20 +83,21 @@ export class JsonSessionStore implements SessionStore {
     return this.write(session);
   }
 
-  async save(session: StoredSession, messages: readonly Message[]): Promise<StoredSession> {
+  async save(session: StoredSession, state: SessionState): Promise<StoredSessionV2> {
     const updatedAt = nextUpdatedAt(session.updatedAt);
     return this.write({
-      version: session.version,
+      version: 2,
       id: session.id,
       createdAt: session.createdAt,
       updatedAt,
       provider: session.provider,
       model: session.model,
-      messages: [...messages],
+      messages: [...state.messages],
+      ...(state.context ? { context: state.context } : {}),
     }, session.updatedAt);
   }
 
-  private async write(session: StoredSession, expectedUpdatedAt?: string): Promise<StoredSession> {
+  private async write(session: StoredSessionV2, expectedUpdatedAt?: string): Promise<StoredSessionV2> {
     await mkdir(this.directory, { recursive: true });
     const path = join(this.directory, `${session.id}.json`);
     const temporaryPath = `${path}.${randomUUID()}.tmp`;
@@ -172,6 +194,17 @@ function nextUpdatedAt(previous: string): string {
 function parseSession(source: string): StoredSession {
   const value: unknown = JSON.parse(source);
   if (!isStoredSession(value)) throw new Error("Invalid Isla session file");
+  if (value.version === 1) {
+    return {
+      version: 1,
+      id: value.id,
+      createdAt: value.createdAt,
+      updatedAt: value.updatedAt,
+      provider: value.provider,
+      model: value.model,
+      messages: value.messages,
+    };
+  }
   return {
     version: value.version,
     id: value.id,
@@ -180,20 +213,38 @@ function parseSession(source: string): StoredSession {
     provider: value.provider,
     model: value.model,
     messages: value.messages,
+    ...(value.context ? { context: value.context } : {}),
   };
 }
 
 function isStoredSession(value: unknown): value is StoredSession {
   if (!value || typeof value !== "object") return false;
   const session = value as Record<string, unknown>;
-  return session.version === 1
+  return (session.version === 1 || session.version === 2)
     && typeof session.id === "string"
     && typeof session.createdAt === "string"
     && typeof session.updatedAt === "string"
     && typeof session.provider === "string"
     && typeof session.model === "string"
     && Array.isArray(session.messages)
-    && session.messages.every(isMessage);
+    && session.messages.every(isMessage)
+    && (session.version === 1 || session.context === undefined || isSessionContext(session.context));
+}
+
+function isSessionContext(value: unknown): value is SessionContext {
+  if (!value || typeof value !== "object") return false;
+  const context = value as Record<string, unknown>;
+  if (context.version !== 1) return false;
+  if (context.checkpoint === undefined) return true;
+  const checkpoint = context.checkpoint;
+  if (!checkpoint || typeof checkpoint !== "object") return false;
+  const record = checkpoint as Record<string, unknown>;
+  return Number.isInteger(record.throughMessageIndex)
+    && (record.throughMessageIndex as number) >= 0
+    && typeof record.createdAt === "string"
+    && typeof record.provider === "string"
+    && typeof record.model === "string"
+    && typeof record.content === "string";
 }
 
 function isMessage(value: unknown): value is Message {

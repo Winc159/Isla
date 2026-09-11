@@ -6,11 +6,12 @@ describe("CLI command registry", () => {
     expect(findCliCommand("/exit")?.inputMode).toBe("line");
     expect(findCliCommand("/new")?.inputMode).toBe("line");
     expect(findCliCommand("/sessions")?.inputMode).toBe("raw");
+    expect(findCliCommand("/memory")?.inputMode).toBe("raw");
     expect(findCliCommand("/help")?.inputMode).toBe("line");
     expect(findCliCommand("你好")).toBeUndefined();
   });
 
   it("lists command names in display order", () => {
-    expect(listCliCommands().map(command => command.name)).toEqual(["/new", "/sessions", "/help", "/exit"]);
+    expect(listCliCommands().map(command => command.name)).toEqual(["/new", "/sessions", "/memory", "/help", "/exit"]);
   });
 });

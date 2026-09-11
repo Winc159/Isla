@@ -11,6 +11,9 @@ import { loadRuntime } from './main.js';
 import { JsonSessionStore, type SessionStore, type StoredSession } from './session-store.js';
 import { CliApprovalService } from './approval/cli-approval.js';
 import { runProtocol } from './protocol/runner.js';
+import type { MemoryRuntime } from './memory/runtime.js';
+import { MemoryRuntime as DefaultMemoryRuntime } from './memory/runtime.js';
+import { LocalEmbeddingProvider, OpenAIEmbeddingProvider } from './memory/embeddings.js';
 export async function runCli(
   input: Readable,
   output: Writable,
@@ -22,6 +25,9 @@ export async function runCli(
   debug = false,
   maxContextTurns = DEFAULT_MAX_CONTEXT_TURNS,
   sessionStore: SessionStore = new JsonSessionStore(),
+  maxContextChars = 60000,
+  contextRetainTurns = 6,
+  memoryRuntime?: MemoryRuntime,
 ): Promise<void> {
   writeHeader(output, providerId, model);
   const latestSession = await sessionStore.loadLatest(providerId, model);
@@ -36,7 +42,7 @@ export async function runCli(
     );
   }
   const interactive = isInteractiveInput(input);
-  let session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns, output, input, interactive);
+  let session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime);
   const history: string[] = [];
   let draft = '';
 
@@ -50,6 +56,9 @@ export async function runCli(
           model,
           systemPrompt,
           sessionStore,
+          commandLine: line,
+          ...(memoryRuntime?.store ? { memoryStore: memoryRuntime.store } : {}),
+          ...(memoryRuntime ? { memoryRuntime } : {}),
           currentSession: storedSession,
           availableCommands: listCliCommands(),
       });
@@ -58,7 +67,7 @@ export async function runCli(
       }
       if (result.type === 'switch-session') {
         storedSession = result.session;
-        session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns, output, input, interactive);
+        session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime);
         output.write('\x1b[2J\x1b[3J\x1b[H');
         writeHeader(output, providerId, model);
         if (result.replayHistory) writeSessionHistory(output, storedSession);
@@ -158,20 +167,31 @@ function createPersistentSession(
   storedSession: StoredSession,
   sessionStore: SessionStore,
   maxContextTurns: number,
+  maxContextChars: number,
+  contextRetainTurns: number,
   output: Writable,
   input: Readable,
   interactive: boolean,
+  memoryRuntime?: MemoryRuntime,
 ) {
   let current = storedSession;
   let stopToolLoading: (() => void) | undefined;
   return runtime.createSession({
     providerId,
     messages: current.messages,
+    ...(current.version === 2 && current.context ? { context: current.context } : {}),
     maxContextTurns,
+    maxContextChars,
+    contextRetainTurns,
     enableTools: true,
     projectRoot: process.cwd(),
     permissionPreset: 'workspace',
     approvalPolicy: interactive ? 'ask' : 'never',
+    ...(memoryRuntime?.enabled ? {
+      retrieveContext: async (query: string) => memoryRuntime.buildRequestContext(query, process.cwd(), current.id),
+      onTurnCommitted: async (messages: readonly import('./core/types.js').Message[]) => { await memoryRuntime.indexConversation(current.id, messages, process.cwd()); await memoryRuntime.captureExplicitMemory(current.id, messages, process.cwd()); },
+      onContextCompacted: async (checkpoint: import('./core/context.js').ContextCheckpoint) => { memoryRuntime.captureCheckpointCandidates(current.id, checkpoint, process.cwd()); },
+    } : {}),
     ...(interactive ? { approvalService: new CliApprovalService(input, output) } : {}),
     onToolStarted: tool => {
       stopToolLoading?.();
@@ -182,14 +202,21 @@ function createPersistentSession(
       stopToolLoading = undefined;
       if ((output as Writable & { isTTY?: boolean }).isTTY) output.write('isla> ');
     },
-    onMessagesChanged: async messages => {
-      current = await sessionStore.save(current, messages);
+    onSessionStateChanged: async state => {
+      current = await sessionStore.save(current, state);
     },
   });
 }
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
     const { runtime, config } = loadRuntime();
+    const embeddingProvider = config.embeddingProvider === 'openai' && config.embeddingModel && config.embeddingApiKey
+      ? new OpenAIEmbeddingProvider(config.embeddingModel, config.embeddingApiKey, config.embeddingBaseURL, config.timeoutMs)
+      : config.embeddingProvider === 'local' && config.embeddingModel && config.embeddingBaseURL
+        ? new LocalEmbeddingProvider(config.embeddingModel, config.embeddingBaseURL, config.timeoutMs)
+        : undefined;
+    const memoryRuntime = DefaultMemoryRuntime.open({ enabled: config.memoryEnabled, ...(config.memoryDatabase ? { path: config.memoryDatabase } : {}), ...(embeddingProvider ? { embeddingProvider } : {}), onWarning: message => process.stderr.write(`${message}\n`) });
+    try {
     if (process.argv.includes('--protocol')) {
       const protocol = process.argv[process.argv.indexOf('--protocol') + 1];
       if (protocol !== 'ndjson') throw new Error('Unsupported protocol');
@@ -201,13 +228,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
         createSession: async (approvalService, events) => {
           if (!useExistingProtocolSession) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []);
           useExistingProtocolSession = false;
-          return runtime.createSession({ providerId: config.provider, ...(protocolStored ? { messages: protocolStored.messages } : {}), ...(config.systemPrompt ? { systemPrompt: config.systemPrompt } : {}), enableTools: true, projectRoot: process.cwd(), permissionPreset: 'workspace', approvalPolicy: 'ask', approvalService, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished, onMessagesChanged: async messages => { if (protocolStored) protocolStored = await protocolStore.save(protocolStored, messages); } });
+          return runtime.createSession({ providerId: config.provider, ...(protocolStored ? { messages: protocolStored.messages } : {}), ...(protocolStored?.version === 2 && protocolStored.context ? { context: protocolStored.context } : {}), ...(config.systemPrompt ? { systemPrompt: config.systemPrompt } : {}), maxContextTurns: config.maxContextTurns, maxContextChars: config.maxContextChars, contextRetainTurns: config.contextRetainTurns, enableTools: true, projectRoot: process.cwd(), permissionPreset: 'workspace', approvalPolicy: 'ask', approvalService, ...(memoryRuntime.enabled && protocolStored ? { retrieveContext: async (query: string) => memoryRuntime.buildRequestContext(query, process.cwd(), protocolStored?.id), onTurnCommitted: async (messages: readonly import('./core/types.js').Message[]) => { if (protocolStored) { await memoryRuntime.indexConversation(protocolStored.id, messages, process.cwd()); await memoryRuntime.captureExplicitMemory(protocolStored.id, messages, process.cwd()); } }, onContextCompacted: async (checkpoint: import('./core/context.js').ContextCheckpoint) => { if (protocolStored) memoryRuntime.captureCheckpointCandidates(protocolStored.id, checkpoint, process.cwd()); } } : {}), onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished, onSessionStateChanged: async state => { if (protocolStored) protocolStored = await protocolStore.save(protocolStored, state); } });
         },
         sessionId: () => protocolStored?.id ?? 'unknown',
       });
+      memoryRuntime.close();
       process.exit(0);
-    }
-    await runCli(
+    } else await runCli(
       process.stdin,
       process.stdout,
       process.stderr,
@@ -218,7 +245,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       config.debug,
       config.maxContextTurns,
       new JsonSessionStore(config.sessionDirectory),
+      config.maxContextChars,
+      config.contextRetainTurns,
+      memoryRuntime,
     );
+    } finally { memoryRuntime.close(); }
   } catch (error) {
     process.stderr.write(
       `Error: ${error instanceof Error ? error.message : 'Unknown error'}\n`,

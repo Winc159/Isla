@@ -10,7 +10,11 @@ export interface CreateSessionOptions {
   readonly systemPrompt?: string;
   readonly messages?: readonly Message[];
   readonly maxContextTurns?: number;
+  readonly maxContextChars?: number;
+  readonly contextRetainTurns?: number;
+  readonly context?: import("./context.js").SessionContext;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
+  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: import("./context.js").SessionContext }) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
   readonly projectRoot?: string;
   readonly onToolsUsed?: (tools: readonly string[]) => void;
@@ -20,6 +24,8 @@ export interface CreateSessionOptions {
   readonly approvalPolicy?: ApprovalPolicy;
   readonly approvalService?: ApprovalService;
   readonly permissionPreset?: PermissionPreset;
+  readonly retrieveContext?: (input: string, visibleMessages: readonly Message[]) => Promise<string | undefined>;
+  readonly onTurnCommitted?: (messages: readonly Message[]) => Promise<void>;
 }
 export class IslaRuntime {
   private readonly plugins = new Set<string>();

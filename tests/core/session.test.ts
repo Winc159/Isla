@@ -12,6 +12,26 @@ beforeEach(async () => {
 });
 afterEach(async () => { await rm(sessionRoot, { recursive: true, force: true }); });
 describe("session", () => {
+  it("injects retrieved history as data and tolerates retrieval failure", async () => {
+    const provider = new FakeProvider([{ text: "回答" }, { text: "继续回答" }]);
+    const session = new ChatSession(provider, { retrieveContext: async input => input === "first" ? "不可信历史：偏好简洁" : Promise.reject(new Error("search unavailable")) });
+    await session.send("first");
+    expect(provider.requests[0]?.messages.some(message => message.content.includes("不可信历史：偏好简洁"))).toBe(true);
+    await expect(session.send("second")).resolves.toMatchObject({ text: "继续回答" });
+  });
+  it("keeps system policy before retrieved data and current input", async () => {
+    const provider = new FakeProvider([{ text: "ok" }]);
+    await new ChatSession(provider, { systemPrompt: "SYSTEM POLICY", retrieveContext: async () => "MEMORY DATA" }).send("CURRENT INPUT");
+    const contents = provider.requests[0]!.messages.map(message => message.content);
+    expect(contents.indexOf("SYSTEM POLICY")).toBeLessThan(contents.indexOf("MEMORY DATA"));
+    expect(contents.indexOf("MEMORY DATA")).toBeLessThan(contents.indexOf("CURRENT INPUT"));
+  });
+  it("indexes only after the final assistant message and ignores indexing failure", async () => {
+    const snapshots: readonly Message[][] = [];
+    const provider = new FakeProvider([{ text: "done" }]);
+    await expect(new ChatSession(provider, { onTurnCommitted: async messages => { (snapshots as Message[][]).push(messages); throw new Error("index failed"); } }).send("work")).resolves.toMatchObject({ text: "done" });
+    expect(snapshots[0]?.at(-1)).toEqual({ role: "assistant", content: "done" });
+  });
   it("emits transient observer events in order", async () => {
     const events: string[] = [];
     const provider = new FakeProvider([{ text: "回答" }]);
@@ -169,16 +189,71 @@ describe("session", () => {
   });
   it("sends only the latest configured turns while retaining the full persisted history", async () => {
     const snapshots: (readonly unknown[])[] = [];
-    const p = new FakeProvider(Array.from({ length: 22 }, (_, index) => ({ text: `a${index + 1}` })));
+    const p = new FakeProvider(Array.from({ length: 20 }, (_, index) => ({ text: `a${index + 1}` })));
     const s = new ChatSession(p, {
       systemPrompt: "system",
       maxContextTurns: 20,
       onMessagesChanged: async messages => { snapshots.push(messages); },
     });
-    for (let index = 1; index <= 22; index += 1) await s.send(`u${index}`);
-    expect(p.requests[21]?.messages[0]).toEqual({ role: "system", content: "system" });
-    expect(p.requests[21]?.messages[1]).toEqual({ role: "user", content: "u3" });
-    expect(p.requests[21]?.messages).toHaveLength(40);
-    expect(snapshots.at(-1)).toHaveLength(45);
+    for (let index = 1; index <= 20; index += 1) await s.send(`u${index}`);
+    expect(p.requests[19]?.messages[0]).toEqual({ role: "system", content: "system" });
+    expect(p.requests[19]?.messages[1]).toEqual({ role: "user", content: "u1" });
+    expect(p.requests[19]?.messages).toHaveLength(40);
+    expect(snapshots.at(-1)).toHaveLength(41);
+  });
+  it("creates and persists a checkpoint before the main request", async () => {
+    const summary = [
+      "## 当前目标\n继续任务",
+      "## 已完成事项\n完成旧轮次",
+      "## 已确认决策与约束\n保留事实源",
+      "## 待处理事项\n处理当前问题",
+      "## 可验证证据\n旧工具结果",
+      "## 话题关系\n主话题",
+      "## 不确定或缺失信息\n无",
+    ].join("\n");
+    class CompactingProvider extends FakeProvider {
+      private answers = 0;
+      override async generate(request: ModelRequest): Promise<ModelResponse> {
+        this.requests.push(request);
+        if (request.messages[0]?.content.includes("会话压缩器")) return { text: summary };
+        this.answers += 1;
+        return { text: `a${this.answers}` };
+      }
+    }
+    const states: Array<{ readonly messages: readonly Message[]; readonly context?: unknown }> = [];
+    const provider = new CompactingProvider([]);
+    const session = new ChatSession(provider, {
+      maxContextTurns: 2,
+      contextRetainTurns: 1,
+      onSessionStateChanged: async state => { states.push(state); },
+    });
+    await session.send("u1");
+    await session.send("u2");
+    await session.send("u3");
+
+    const mainRequest = provider.requests.at(-1)!;
+    expect(mainRequest.messages.some(message => message.content.includes("以下是较早会话的历史压缩检查点"))).toBe(true);
+    expect(mainRequest.messages).toContainEqual({ role: "user", content: "u3" });
+    expect(mainRequest.messages).not.toContainEqual({ role: "user", content: "u1" });
+    expect(states.at(-1)?.context).toMatchObject({ checkpoint: { throughMessageIndex: 3, content: summary } });
+    expect(states.at(-1)?.messages).toHaveLength(6);
+  });
+  it("falls back to raw context when compression output is invalid", async () => {
+    class InvalidCompactingProvider extends FakeProvider {
+      private calls = 0;
+      override async generate(request: ModelRequest): Promise<ModelResponse> {
+        this.requests.push(request);
+        this.calls += 1;
+        return { text: request.messages[0]?.content.includes("会话压缩器") ? "不是有效检查点" : `a${this.calls}` };
+      }
+    }
+    const provider = new InvalidCompactingProvider([]);
+    const session = new ChatSession(provider, { maxContextTurns: 2, contextRetainTurns: 1 });
+    await session.send("u1");
+    await session.send("u2");
+    await session.send("u3");
+    const mainRequest = provider.requests.at(-1)!;
+    expect(mainRequest.messages).toContainEqual({ role: "user", content: "u2" });
+    expect(mainRequest.messages).toContainEqual({ role: "user", content: "u3" });
   });
 });

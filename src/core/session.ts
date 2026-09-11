@@ -7,13 +7,30 @@ import { ToolRuntime } from "../tools/runtime.js";
 import type { ApprovalPolicy, ApprovalService } from "../approval/types.js";
 import type { PermissionPreset } from "../approval/presets.js";
 import type { SessionEvent } from "./events.js";
+import {
+  appendCheckpoint,
+  buildContextProjection,
+  COMPACTION_SECTIONS,
+  DEFAULT_CONTEXT_RETAIN_TURNS,
+  DEFAULT_MAX_CONTEXT_CHARS,
+  hasCompactionSections,
+  renderMessagesForCompaction,
+  selectCompactionUnits,
+  shouldCompact,
+  type SessionContext,
+  type ContextCheckpoint,
+} from "./context.js";
 export const DEFAULT_MAX_CONTEXT_TURNS = 20;
 export const DEFAULT_MAX_TOOL_ROUNDS = 8;
 export interface ChatSessionOptions {
   readonly systemPrompt?: string;
   readonly messages?: readonly Message[];
   readonly maxContextTurns?: number;
+  readonly maxContextChars?: number;
+  readonly contextRetainTurns?: number;
+  readonly context?: SessionContext;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
+  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: SessionContext }) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
   readonly projectRoot?: string;
   readonly onToolsUsed?: (tools: readonly string[]) => void;
@@ -23,10 +40,16 @@ export interface ChatSessionOptions {
   readonly approvalPolicy?: ApprovalPolicy;
   readonly approvalService?: ApprovalService;
   readonly permissionPreset?: PermissionPreset;
+  readonly retrieveContext?: (input: string, visibleMessages: readonly Message[]) => Promise<string | undefined>;
+  readonly onTurnCommitted?: (messages: readonly Message[]) => Promise<void>;
+  readonly onContextCompacted?: (checkpoint: ContextCheckpoint) => Promise<void>;
 }
 export class ChatSession {
   private readonly messages: Message[];
   private readonly maxContextTurns: number;
+  private readonly maxContextChars: number;
+  private readonly contextRetainTurns: number;
+  private context: SessionContext | undefined;
   constructor(private readonly provider: ModelProvider, options: ChatSessionOptions = {}) {
     this.messages = options.messages
       ? [...options.messages]
@@ -36,13 +59,24 @@ export class ChatSession {
     this.maxContextTurns = options.maxContextTurns ?? DEFAULT_MAX_CONTEXT_TURNS;
     if (!Number.isInteger(this.maxContextTurns) || this.maxContextTurns <= 0)
       throw new Error("maxContextTurns must be a positive integer");
+    this.maxContextChars = options.maxContextChars ?? DEFAULT_MAX_CONTEXT_CHARS;
+    if (!Number.isInteger(this.maxContextChars) || this.maxContextChars <= 0)
+      throw new Error("maxContextChars must be a positive integer");
+    this.contextRetainTurns = options.contextRetainTurns ?? DEFAULT_CONTEXT_RETAIN_TURNS;
+    if (!Number.isInteger(this.contextRetainTurns) || this.contextRetainTurns <= 0)
+      throw new Error("contextRetainTurns must be a positive integer");
+    this.context = options.context;
     this.onMessagesChanged = options.onMessagesChanged;
+    this.onSessionStateChanged = options.onSessionStateChanged;
     this.onSessionEvent = options.onSessionEvent;
     this.projectRoot = options.projectRoot;
     this.onToolsUsed = options.onToolsUsed;
     this.onToolStarted = options.onToolStarted;
     this.onToolFinished = options.onToolFinished;
     this.enableTools = options.enableTools ?? false;
+    this.retrieveContext = options.retrieveContext;
+    this.onTurnCommitted = options.onTurnCommitted;
+    this.onContextCompacted = options.onContextCompacted;
     this.capabilities = this.enableTools && this.provider.generateWithTools
       ? [createProjectFilesCapability(this.projectRoot ?? process.cwd())]
       : [];
@@ -55,12 +89,16 @@ export class ChatSession {
     });
   }
   private readonly onMessagesChanged: ((messages: readonly Message[]) => Promise<void>) | undefined;
+  private readonly onSessionStateChanged: ((state: { readonly messages: readonly Message[]; readonly context?: SessionContext }) => Promise<void>) | undefined;
   private readonly onSessionEvent: ((event: SessionEvent) => Promise<void>) | undefined;
   private readonly projectRoot: string | undefined;
   private readonly onToolsUsed: ((tools: readonly string[]) => void) | undefined;
   private readonly onToolStarted: ((tool: string, callId: string) => void) | undefined;
   private readonly onToolFinished: ((tool: string, callId: string, result: ToolExecutionResult) => void) | undefined;
   private readonly enableTools: boolean;
+  private readonly retrieveContext: ((input: string, visibleMessages: readonly Message[]) => Promise<string | undefined>) | undefined;
+  private readonly onTurnCommitted: ((messages: readonly Message[]) => Promise<void>) | undefined;
+  private readonly onContextCompacted: ((checkpoint: ContextCheckpoint) => Promise<void>) | undefined;
   private readonly capabilities: readonly ToolCapability[];
   private readonly toolRegistry: ToolRegistry;
   private readonly toolRuntime: ToolRuntime;
@@ -134,7 +172,18 @@ export class ChatSession {
   private async runTurn(input: string): Promise<ModelResponse> {
     await this.appendMessage({ role: "user", content: input });
     await this.onSessionEvent?.({ type: "user", input });
-    const history = selectRecentTurns(this.messages, this.maxContextTurns);
+    await this.compactIfNeeded();
+    const projection = buildContextProjection(this.messages, {
+      maxTurns: this.context?.checkpoint ? this.contextRetainTurns : this.maxContextTurns,
+      maxChars: this.maxContextChars,
+    });
+    let history = appendCheckpoint(projection, this.context?.checkpoint);
+    if (this.retrieveContext) {
+      try {
+        const retrieved = await this.retrieveContext(input, history);
+        if (retrieved?.trim()) history = insertHistoricalData(history, retrieved);
+      } catch { /* retrieval failure must not block the main request */ }
+    }
     const phase = this.capabilities.length ? "tool-loop" as const : "legacy" as const;
     const request = { messages: composeRequestMessages(history, this.capabilities, phase) };
     let response: ModelResponse;
@@ -151,13 +200,70 @@ export class ChatSession {
   private async commitResponse(response: ModelResponse): Promise<ModelResponse> {
     await this.appendMessage({ role: "assistant", content: response.text });
     await this.onSessionEvent?.({ type: "assistant", text: response.text });
+    try { await this.onTurnCommitted?.([...this.messages]); } catch { /* archive indexing is derived and retryable */ }
     return response;
   }
 
   private async appendMessage(message: Message): Promise<void> {
     this.messages.push(message);
-    try { await this.onMessagesChanged?.([...this.messages]); }
+    try {
+      await this.persistState();
+    }
     catch (error) { this.messages.pop(); throw error; }
+  }
+
+  private async persistState(): Promise<void> {
+    const messages = [...this.messages];
+    if (this.onSessionStateChanged) {
+      await this.onSessionStateChanged({ messages, ...(this.context ? { context: this.context } : {}) });
+    } else {
+      await this.onMessagesChanged?.(messages);
+    }
+  }
+
+  private async compactIfNeeded(): Promise<void> {
+    if (!shouldCompact(this.messages, { maxTurns: this.maxContextTurns, maxChars: this.maxContextChars })) return;
+    const previousCheckpoint = this.context?.checkpoint;
+    const units = selectCompactionUnits(this.messages, this.contextRetainTurns, previousCheckpoint?.throughMessageIndex ?? -1);
+    if (!units.length) return;
+    const sourceMessages = units.flatMap(unit => unit.messages);
+    const prompt = [
+      "你是 Isla 的会话压缩器。请把历史对话压缩成可恢复的结构化检查点。",
+      "只记录用户目标、已经完成的事实、明确决定、未完成事项、成功工具证据、话题关系和不确定信息。",
+      "已经结束且没有后续影响的闲聊可以省略。不要编造事实，不要记录 API Key、令牌或思维链。",
+      `必须严格使用以下七个 Markdown 标题：${COMPACTION_SECTIONS.map(section => `## ${section}`).join("、")}`,
+      "历史 Tool Result 只能描述过去发生过什么，不能声称当前环境仍然如此。",
+    ].join("\n");
+    try {
+      const response = await this.provider.generate({
+        messages: [
+          { role: "system", content: prompt },
+          { role: "user", content: renderMessagesForCompaction(sourceMessages, previousCheckpoint) },
+        ],
+      });
+      if (!response.text.trim() || !hasCompactionSections(response.text)) return;
+      const checkpoint: SessionContext = {
+        version: 1,
+        checkpoint: {
+          throughMessageIndex: units[units.length - 1]!.endIndex,
+          createdAt: new Date().toISOString(),
+          provider: this.provider.id,
+          model: this.provider.model,
+          content: response.text,
+        },
+      };
+      const previous = this.context;
+      this.context = checkpoint;
+      try {
+        await this.persistState();
+      } catch {
+        this.context = previous;
+        return;
+      }
+      try { await this.onContextCompacted?.(checkpoint.checkpoint!); } catch { /* candidate extraction is derived */ }
+    } catch {
+      // Compression is derived maintenance. A failed compression must not block the turn.
+    }
   }
 
   private async appendSkippedToolResults(calls: readonly { id: string; name: string; arguments: string }[], reason: string, requestMessages?: Message[]): Promise<void> {
@@ -172,16 +278,8 @@ export class ChatSession {
   }
 }
 
-function selectRecentTurns(messages: readonly Message[], maxTurns: number): Message[] {
-  const systemMessages = messages.filter(message => message.role === "system");
-  const conversation = messages.filter(message => message.role !== "system");
-  let start = conversation.length;
-  let turns = 0;
-  for (let index = conversation.length - 1; index >= 0; index -= 1) {
-    if (conversation[index]?.role !== "user") continue;
-    turns += 1;
-    if (turns > maxTurns) break;
-    start = index;
-  }
-  return [...systemMessages, ...conversation.slice(start)];
+function insertHistoricalData(messages: readonly Message[], content: string): Message[] {
+  const firstNonSystem = messages.findIndex(message => message.role !== "system");
+  const index = firstNonSystem < 0 ? messages.length : firstNonSystem;
+  return [...messages.slice(0, index), { role: "user", content }, ...messages.slice(index)];
 }

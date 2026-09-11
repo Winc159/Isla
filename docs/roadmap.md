@@ -95,13 +95,27 @@
 
 协议稳定并完成至少两轮真实回归后，再评估把测试编排沉淀为 `isla-runtime-testing` Skill；v0.1.9 不把 Runtime 协议实现放进 Skill。
 
-## v0.2.0：当前开发基线
+## v0.2.0：稳定基线
 
 - 保留统一 Agent Loop，不恢复前置意图分类或互斥能力分支。
 - 以 `StoredSession.messages` 为唯一持久化事实源。
 - 当前关闭文本流式接口，待 Tool Loop 与增量事件能够统一建模后重新评估。
 - 优先补齐个人 Agent 的真实能力；OpenAI/Local Tool 对齐和插件扩展重构按实际需求推进。
 - 延续完整离线门禁和真实 DeepSeek/NDJSON 连通性回归。
+
+## v0.2.1：分层记忆与检索基础（收口中）
+
+- 保持 `StoredSession.messages` 为唯一对话事实源，并将会话格式升级为兼容 version 1 的 version 2；
+- 引入 Core Memory、Working Memory、最近消息窗口和完整会话归档；
+- 以压力触发的可持久化检查点替代机械的固定历史窗口；
+- 使用 SQLite 保存长期记忆、来源和修订历史，并提供 `/memory` CLI 管理界面；
+- 增加关键词检索、可选 Embedding Provider、Float32 向量保存和精确余弦召回；
+- Embedding 和检索边界可供后续 RAG 复用，但本版不实现文档知识库；
+- Agent 可以按来源等级自主更新记忆，推断信息默认进入 Candidate，外部内容不能污染 Core Memory。
+
+实施依据：`docs/architecture-v0.2.1.md` 与 `docs/luna-implementation-v0.2.1.md`。
+
+完成信号：跨进程恢复、上下文压缩、记忆编辑、修订恢复、关键词/向量召回和安全降级均有离线测试；现有 CLI、NDJSON、Tool、Approval、Permission 和 Sandbox 无回归。
 
 ## 候选阶段：Tool 插件
 

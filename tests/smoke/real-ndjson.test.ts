@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { MemoryStore } from "../../src/memory/store.js";
 import { describe, expect, it } from "vitest";
 
 const enabled = process.env.ISLA_RUN_REAL_SMOKE === "1";
@@ -16,10 +17,10 @@ class Driver {
   readonly stderr: string[] = [];
   private readonly waiters = new Map<string, Array<(event: Event) => void>>();
   private readonly child: ChildProcessWithoutNullStreams;
-  constructor(cwd: string, sessionDir: string) {
+  constructor(cwd: string, sessionDir: string, memoryPath: string) {
     this.child = spawn(process.execPath, [resolve("dist/cli.js"), "--protocol", "ndjson"], {
       cwd,
-      env: { ...process.env, ISLA_PROVIDER: "deepseek", ISLA_SESSION_DIR: sessionDir },
+      env: { ...process.env, ISLA_PROVIDER: "deepseek", ISLA_SESSION_DIR: sessionDir, ISLA_MEMORY_DB: memoryPath, ISLA_MEMORY_ENABLED: "1" },
       stdio: ["pipe", "pipe", "pipe"],
     });
     const rl = createInterface({ input: this.child.stdout });
@@ -58,12 +59,17 @@ class Driver {
 async function runRound(round: number): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), `isla-real-ndjson-${randomUUID()}-`));
   const sessions = await mkdtemp(join(tmpdir(), `isla-real-sessions-${randomUUID()}-`));
+  const memory = await mkdtemp(join(tmpdir(), `isla-real-memory-${randomUUID()}-`));
+  const memoryPath = join(memory, "memory.sqlite");
   await writeFile(join(root, "README.md"), "# Acceptance fixture\n\nApproval uses one matching approvalId.\n", "utf8");
-  const driver = new Driver(root, sessions);
+  const driver = new Driver(root, sessions, memoryPath);
   try {
     await driver.wait("ready");
     driver.send({ type: "prompt", id: `answer-${round}`, text: "用一句话回答：你准备好了么？" });
     await driver.wait("response_end", `answer-${round}`);
+
+    driver.send({ type: "prompt", id: `remember-${round}`, text: "请记住：本次验收偏好是简洁回答。" });
+    await driver.wait("response_end", `remember-${round}`);
 
     driver.send({ type: "prompt", id: `inspect-${round}`, text: "查看当前目录并说明你能看到什么，只读取，不修改任何文件。" });
     await driver.wait("response_end", `inspect-${round}`);
@@ -81,6 +87,9 @@ async function runRound(round: number): Promise<void> {
     const changed = await driver.wait("session_changed");
     expect(changed.sessionId).toBeTruthy();
 
+    driver.send({ type: "prompt", id: `recall-${round}`, text: "本次验收记录的偏好是什么？请简洁回答。" });
+    await driver.wait("response_end", `recall-${round}`);
+
     driver.send({ type: "prompt", id: `approve-${round}`, text: "在当前项目目录创建 acceptance-approved.txt，写入精确内容 approved。" });
     const approvedApproval = await driver.wait("approval_request", undefined, 90_000, driver.events.length);
     expect(approvedApproval.approvalId).toBeTruthy();
@@ -97,8 +106,14 @@ async function runRound(round: number): Promise<void> {
     throw error;
   } finally {
     await driver.close();
+    const memoryStore = new MemoryStore(memoryPath);
+    try {
+      const records = memoryStore.list({ status: "active" });
+      expect(records.some(record => record.content.includes("简洁回答") && record.source?.sessionId)).toBe(true);
+    } finally { memoryStore.close(); }
     await rm(root, { recursive: true, force: true });
     await rm(sessions, { recursive: true, force: true });
+    await rm(memory, { recursive: true, force: true });
   }
 }
 
