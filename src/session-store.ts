@@ -4,7 +4,6 @@ import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile, type F
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Message } from "./core/types.js";
-import type { SessionEvent } from "./core/events.js";
 
 export interface StoredSession {
   readonly version: 1;
@@ -14,14 +13,13 @@ export interface StoredSession {
   readonly provider: string;
   readonly model: string;
   readonly messages: readonly Message[];
-  readonly events?: readonly SessionEvent[];
 }
 
 export interface SessionStore {
   list(provider: string, model: string): Promise<StoredSession[]>;
   loadLatest(provider: string, model: string): Promise<StoredSession | undefined>;
   create(provider: string, model: string, messages: readonly Message[]): Promise<StoredSession>;
-  save(session: StoredSession, messages: readonly Message[], events?: readonly SessionEvent[]): Promise<StoredSession>;
+  save(session: StoredSession, messages: readonly Message[]): Promise<StoredSession>;
 }
 
 export class JsonSessionStore implements SessionStore {
@@ -64,9 +62,17 @@ export class JsonSessionStore implements SessionStore {
     return this.write(session);
   }
 
-  async save(session: StoredSession, messages: readonly Message[], events?: readonly SessionEvent[]): Promise<StoredSession> {
+  async save(session: StoredSession, messages: readonly Message[]): Promise<StoredSession> {
     const updatedAt = nextUpdatedAt(session.updatedAt);
-    return this.write({ ...session, updatedAt, messages: [...messages], ...(events ? { events: [...events] } : {}) }, session.updatedAt);
+    return this.write({
+      version: session.version,
+      id: session.id,
+      createdAt: session.createdAt,
+      updatedAt,
+      provider: session.provider,
+      model: session.model,
+      messages: [...messages],
+    }, session.updatedAt);
   }
 
   private async write(session: StoredSession, expectedUpdatedAt?: string): Promise<StoredSession> {
@@ -166,7 +172,15 @@ function nextUpdatedAt(previous: string): string {
 function parseSession(source: string): StoredSession {
   const value: unknown = JSON.parse(source);
   if (!isStoredSession(value)) throw new Error("Invalid Isla session file");
-  return value;
+  return {
+    version: value.version,
+    id: value.id,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    provider: value.provider,
+    model: value.model,
+    messages: value.messages,
+  };
 }
 
 function isStoredSession(value: unknown): value is StoredSession {
@@ -179,8 +193,7 @@ function isStoredSession(value: unknown): value is StoredSession {
     && typeof session.provider === "string"
     && typeof session.model === "string"
     && Array.isArray(session.messages)
-    && session.messages.every(isMessage)
-    && (session.events === undefined || Array.isArray(session.events));
+    && session.messages.every(isMessage);
 }
 
 function isMessage(value: unknown): value is Message {

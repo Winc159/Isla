@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { randomUUID } from 'node:crypto';
 import type { RuntimePlugin } from '../core/plugin.js';
 import type {
   ModelProvider,
@@ -60,21 +61,13 @@ class DeepSeekProvider implements ModelProvider {
     } as never);
     const message = r.choices[0]?.message as { content?: string | null; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } | undefined;
     const structuredCalls = message?.tool_calls?.map(call => ({ id: call.id, name: call.function.name ?? '', arguments: call.function.arguments })) ?? [];
-    const textCall = parseDsmlToolCall(message?.content ?? '');
+    const textCalls = parseDsmlToolCalls(message?.content ?? '');
+    const toolCalls = [...structuredCalls, ...textCalls];
     return {
-      text: textCall ? '' : message?.content ?? '',
+      text: textCalls.length ? '' : message?.content ?? '',
       model: r.model,
-      ...((structuredCalls.length || textCall) ? { toolCalls: textCall ? [textCall] : structuredCalls } : {}),
+      ...(toolCalls.length ? { toolCalls } : {}),
     };
-  }
-  async *generateStream(request: ModelRequest): AsyncIterable<{ text: string }> {
-    const stream = await this.client.chat.completions.create({
-      model: this.model, messages: request.messages.map(toChatMessage), thinking: { type: 'disabled' }, stream: true,
-    } as never) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null } }> }>;
-    for await (const chunk of stream) {
-      const text = chunk.choices?.[0]?.delta?.content;
-      if (text) yield { text };
-    }
   }
 }
 function toChatTool(tool: ToolDefinition) {
@@ -85,12 +78,34 @@ function toChatMessage(message: ModelRequest['messages'][number]) {
   if (message.role === 'assistant' && message.toolCalls?.length) return { role: 'assistant', content: message.content || null, tool_calls: message.toolCalls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } })) };
   return { role: message.role, content: message.content };
 }
-function parseDsmlToolCall(content: string) {
-  const match = content.match(/invoke\s+name="([^"]+)"[\s\S]*?<[^>]*parameter\s+name="path"[^>]*>([\s\S]*?)<\/[^>]*parameter>/);
-  if (!match) return undefined;
-  const rawName = match[1];
-  const path = match[2];
-  if (!rawName || path === undefined) return undefined;
-  const name = rawName === 'read_file' ? 'read_text_file' : rawName;
-  return { id: `dsml-${Date.now()}`, name, arguments: JSON.stringify({ path: path.trim() }) };
+export function parseDsmlToolCalls(content: string) {
+  const calls: Array<{ id: string; name: string; arguments: string }> = [];
+  const invokePattern = /<[^>]*invoke\b[^>]*\bname=["']([^"']+)["'][^>]*>([\s\S]*?)<\/[^>]*invoke\s*>/gi;
+  for (const invoke of content.matchAll(invokePattern)) {
+    const rawName = invoke[1];
+    const body = invoke[2];
+    if (!rawName || body === undefined) continue;
+    const parameters: Record<string, string> = {};
+    const parameterPattern = /<[^>]*parameter\b[^>]*\bname=["']([^"']+)["'][^>]*>([\s\S]*?)<\/[^>]*parameter\s*>/gi;
+    for (const parameter of body.matchAll(parameterPattern)) {
+      const name = parameter[1];
+      const value = parameter[2];
+      if (name && value !== undefined) parameters[name] = decodeXml(value.trim());
+    }
+    calls.push({
+      id: `dsml-${randomUUID()}`,
+      name: rawName === 'read_file' ? 'read_text_file' : rawName,
+      arguments: JSON.stringify(parameters),
+    });
+  }
+  return calls;
+}
+
+function decodeXml(value: string): string {
+  return value
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'")
+    .replaceAll('&amp;', '&');
 }

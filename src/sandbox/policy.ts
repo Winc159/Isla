@@ -1,5 +1,6 @@
 import { access, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { sandboxDenied } from "../tools/errors.js";
 
 export type SandboxOperation = "read" | "write" | "list";
 
@@ -12,14 +13,14 @@ export class SandboxPolicy {
   }
 
   async resolvePath(path: string, operation: SandboxOperation): Promise<string> {
-    if (!path.trim() || isAbsolute(path)) throw new Error("sandbox path must be a non-empty relative path");
+    if (!path.trim() || isAbsolute(path)) throw sandboxDenied("sandbox path must be a non-empty relative path");
     const candidate = resolve(this.root, path);
     this.assertInsideRoot(candidate);
     const existing = await this.findExistingPath(candidate);
     const checked = existing ?? await this.resolveExistingParent(candidate);
     this.assertInsideRoot(checked);
-    if (this.isSensitive(candidate) || this.isSensitive(checked)) throw new Error("sandbox path refers to a protected secret file");
-    if (operation === "write" && existing && existing !== candidate) throw new Error("sandbox refuses writing through a symlink");
+    if (this.isSensitive(candidate) || this.isSensitive(checked)) throw sandboxDenied("sandbox path refers to a protected secret file");
+    if (operation === "write" && existing && existing !== candidate) throw sandboxDenied("sandbox refuses writing through a symlink");
     return candidate;
   }
 
@@ -42,7 +43,7 @@ export class SandboxPolicy {
 
   private assertInsideRoot(candidate: string): void {
     const relativePath = relative(this.root, candidate);
-    if (relativePath.startsWith("..") || isAbsolute(relativePath)) throw new Error("sandbox path must stay inside the project directory");
+    if (relativePath.startsWith("..") || isAbsolute(relativePath)) throw sandboxDenied("sandbox path must stay inside the project directory");
   }
 
   private isSensitive(path: string): boolean {

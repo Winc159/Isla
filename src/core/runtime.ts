@@ -12,7 +12,6 @@ export interface CreateSessionOptions {
   readonly maxContextTurns?: number;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
-  readonly events?: readonly SessionEvent[];
   readonly projectRoot?: string;
   readonly onToolsUsed?: (tools: readonly string[]) => void;
   readonly onToolStarted?: (tool: string, callId: string) => void;

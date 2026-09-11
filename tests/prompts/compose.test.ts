@@ -15,15 +15,17 @@ describe("prompt composition", () => {
     );
     expect(messages.map(message => message.role)).toEqual(["system", "system", "system", "system", "user"]);
     expect(messages[3]?.content).toContain("不得根据历史上下文猜测");
+    expect(messages[3]?.content).toContain("直接返回 write_text_file Tool Call");
+    expect(messages[3]?.content).toContain("批准由 Runtime 自动发起");
   });
 
-  it("does not include personality in the tool-loop phase", () => {
+  it("keeps identity and capabilities together in the tool-loop phase", () => {
     const messages = composeRequestMessages(
       [{ role: "user", content: "查看项目" }],
       [createProjectFilesCapability(process.cwd())],
       "tool-loop",
     );
-    expect(messages.map(message => message.content).join("\n")).not.toContain("简洁、可靠的个人助理");
+    expect(messages.map(message => message.content).join("\n")).toContain("简洁、可靠的个人助理");
     expect(messages.map(message => message.content).join("\n")).toContain("能力 project-files");
   });
 });

@@ -11,13 +11,15 @@
 
 完成信号：三种 Provider 契约一致，至少两个云 Provider 可真实对话，全部自动测试通过。
 
-## v0.1.4：流式输出
+## v0.1.4：流式输出（已暂时关闭）
 
 - Provider 原生流式响应统一为 `generateStream()`。
 - OpenAI、DeepSeek、Local Provider 在适配层转换为文本增量。
 - CLI 边接收边输出；流完成后才保存完整 assistant 消息。
 - 流式失败或中断时保留 user 消息，不保存不完整 assistant 消息。
 - 保留一次性 `generate()`，不让 CLI 事件格式进入 Runtime 消息协议。
+
+该能力在统一 Tool Loop 后无法保持一致语义，当前 Runtime 只保留一次性 `generate()`；待模型文本增量与 Tool 生命周期能够统一建模时再重新启用。
 
 ## 候选阶段：会话持久化
 
@@ -48,7 +50,7 @@
 
 仍未完成：Session Event 持久化、OpenAI/Local Tool API、Shell、网络和容器级沙盒。
 
-## v0.1.8：分阶段对话与 Agent Loop
+## v0.1.8：Agent Loop（原分阶段方案）
 
 计划内容：
 
@@ -69,6 +71,8 @@
 
 当前实现仍需修正后才能视为完成：确认后必须恢复原任务，`unknown` 必须零 Tool Call，重复失败必须真正进入 blocked，摘要必须包含结构化目标、结果和证据并可跨进程恢复。具体修复顺序以 `docs/luna-implementation-v0.1.8.md` 的“当前实现审计”和“实施批次与停点”为准。
 
+上述分阶段方案已被 v0.1.9 的统一 Agent Loop 修订取代：当前不做模型前意图分类，不按意图隐藏 Tool，也不做执行前二次确认。IntentClassifier、ContextResolver、CompletionChecker 和 execution phase 已删除；Permission、Approval、Sandbox 与有界失败仍在动作层生效。
+
 暂不包括：SQLite Session Query、长期记忆、Shell、网络、删除、并行 Tool、子 Agent 和完整思维链。
 
 ## v0.1.9：本地 NDJSON 测试协议
@@ -76,7 +80,7 @@
 计划内容：
 
 - 增加 `--protocol ndjson` 本地机器可读入口；
-- 外部测试进程可连续发送 prompt 并读取流式响应；
+- 外部测试进程可连续发送 prompt 并读取完整响应；
 - Tool、Approval、错误、会话切换和退出使用结构化事件；
 - stdout 只输出 NDJSON，诊断只输出 stderr；
 - 保持 Permission、Approval 和 Sandbox 边界；
@@ -85,11 +89,19 @@
 
 实施依据：`docs/architecture-v0.1.9.md` 与 `docs/luna-implementation-v0.1.9.md`。
 
-进入 v0.2.0 前的最终收口以 `docs/luna-closeout-v0.1.9.md` 为唯一准入清单。该清单按当前源码重新审计了 v0.1.8/v0.1.9 遗留缺陷，并要求 Tool、Approval、Session、持久化、子进程协议和两轮真实 Provider 日志全部达到逐场景门槛；旧实施文档只保留为设计和历史执行顺序参考。
+`docs/luna-closeout-v0.1.9.md` 已完成最终复核并转为历史收口记录。v0.1.9 核心验收通过，项目开发基线进入 v0.2.0；旧实施文档只保留为设计演变和历史执行顺序参考。
 
 完成信号：外部控制方可以稳定启动 Isla、完成多轮对话、处理审批、观察 Tool 生命周期并正常退出，且现有交互式 CLI 无回归。
 
 协议稳定并完成至少两轮真实回归后，再评估把测试编排沉淀为 `isla-runtime-testing` Skill；v0.1.9 不把 Runtime 协议实现放进 Skill。
+
+## v0.2.0：当前开发基线
+
+- 保留统一 Agent Loop，不恢复前置意图分类或互斥能力分支。
+- 以 `StoredSession.messages` 为唯一持久化事实源。
+- 当前关闭文本流式接口，待 Tool Loop 与增量事件能够统一建模后重新评估。
+- 优先补齐个人 Agent 的真实能力；OpenAI/Local Tool 对齐和插件扩展重构按实际需求推进。
+- 延续完整离线门禁和真实 DeepSeek/NDJSON 连通性回归。
 
 ## 候选阶段：Tool 插件
 

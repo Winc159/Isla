@@ -41,7 +41,7 @@ npm start
 npm run dev -- --protocol ndjson
 ```
 
-stdin 每行发送一个 JSON 请求，例如 `prompt`、`approval_response`、`new_session` 或 `exit`。stdout 每行都是 JSON 事件，常见事件包括 `ready`、`response_start`、`response_delta`、`response_end`、`tool_start`、`tool_end`、`approval_request`、`session_changed`、`error` 和 `bye`。诊断信息只写入 stderr；不要把 API Key、`.env` 或私人会话内容写入日志。
+stdin 每行发送一个 JSON 请求，例如 `prompt`、`approval_response`、`new_session` 或 `exit`。stdout 每行都是 JSON 事件，常见事件包括 `ready`、`response_start`、`response_end`、`tool_start`、`tool_end`、`approval_request`、`session_changed`、`error` 和 `bye`。当前版本不输出文本增量事件。诊断信息只写入 stderr；不要把 API Key、`.env` 或私人会话内容写入日志。
 
 协议同一时间只处理一个 prompt。处理期间发送另一个 prompt 会收到可恢复的 `BUSY` 错误。写入类 Tool 需要先收到匹配 `approvalId` 的批准。
 
@@ -66,7 +66,7 @@ npm run test:smoke:real
 
 该命令要求 `DEEPSEEK_API_KEY` 和 `ISLA_MODEL`。未满足条件时测试保持跳过，避免默认测试产生网络请求或费用。
 
-完整真实 NDJSON 场景（两轮问答、inspect、只读 discuss、执行确认、Approval 拒绝/批准、new_session 和退出）使用：
+完整真实 NDJSON 场景（两轮问答、inspect、只读 discuss、Approval 拒绝/批准、new_session 和退出）使用：
 
 ```powershell
 $env:ISLA_RUN_REAL_SMOKE = "1"

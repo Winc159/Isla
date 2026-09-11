@@ -68,12 +68,15 @@ describe("JSON session store", () => {
     await expect(store.loadLatest("deepseek", "m1")).resolves.toMatchObject({ messages: [{ role: "assistant" }, { role: "tool", toolCallId: "call-1" }] });
   });
 
-  it("keeps optional session events while reading version 1 sessions", async () => {
+  it("drops legacy event copies when loading a session", async () => {
     const directory = await mkdtemp(join(tmpdir(), "isla-session-"));
     directories.push(directory);
     const store = new JsonSessionStore(directory);
-    const session = await store.create("deepseek", "m1", []);
-    await store.save(session, [{ role: "user", content: "你好" }], [{ type: "user", input: "你好" }]);
-    await expect(store.loadLatest("deepseek", "m1")).resolves.toMatchObject({ events: [{ type: "user", input: "你好" }] });
+    const session = await store.create("deepseek", "m1", [{ role: "user", content: "你好" }]);
+    const path = join(directory, `${session.id}.json`);
+    const legacy = { ...session, events: [{ type: "user", input: "你好" }] };
+    await writeFile(path, `${JSON.stringify(legacy)}\n`, "utf8");
+    await expect(store.loadLatest("deepseek", "m1")).resolves.not.toHaveProperty("events");
   });
+
 });

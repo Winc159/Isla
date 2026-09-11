@@ -5,16 +5,7 @@ export interface PromptContext {
   readonly phase?: PromptPhase;
 }
 
-export type PromptPhase =
-  | "legacy"
-  | "intent"
-  | "context"
-  | "discussion"
-  | "tool-loop"
-  | "execution"
-  | "completion"
-  | "final"
-  | "summary";
+export type PromptPhase = "legacy" | "tool-loop";
 
 export interface PromptSection {
   readonly id: string;

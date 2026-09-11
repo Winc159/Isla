@@ -4,7 +4,7 @@
 
 v0.1.9 为 Isla 增加一个仅通过本地标准输入/输出工作的机器可读测试入口，使外部测试进程或开发可以连续向真实 Runtime 发送消息、处理审批并收集 Tool 与最终回答事件。
 
-该入口用于验证真实 Provider 下的意图分类、上下文、Agent Loop、Tool、Approval、Sandbox 和多轮对话，不替代现有交互式 CLI，也不开放网络服务。
+该入口用于验证真实 Provider 下的统一 Agent Loop、Tool、Approval、Sandbox、会话恢复和多轮对话，不替代现有交互式 CLI，也不开放网络服务。
 
 ## 设计原则
 
@@ -53,7 +53,6 @@ type ProtocolRequest =
 type ProtocolEvent =
   | { readonly type: "ready"; readonly provider: string; readonly model: string }
   | { readonly type: "response_start"; readonly id: string }
-  | { readonly type: "response_delta"; readonly id: string; readonly text: string }
   | { readonly type: "tool_start"; readonly id: string; readonly tool: string }
   | { readonly type: "tool_end"; readonly id: string; readonly tool: string; readonly ok: boolean }
   | { readonly type: "approval_request"; readonly id: string; readonly approvalId: string; readonly tool: string; readonly permission: string; readonly summary: string }
@@ -149,3 +148,19 @@ Skill 不持有密钥、不绕过审批，也不把测试 transcript 提交到 G
 - `npm run typecheck`、`npm test`、`npm run build` 和 `npm run pack:check` 全部通过；
 - 默认测试不需要网络或真实密钥。
 
+## 统一 Agent Loop 修订
+
+后续审查确认，`IntentClassifier` 不应位于普通 turn 的主控制路径。将 answer、inspect、discuss、execute 作为互斥分支并据此隐藏 Tool，会放大分类误差并导致能力组合膨胀。
+
+v0.1.9 的主链路修订为：保存 user → 组装统一 Prompt、历史与当前可用 Tool schemas → 模型生成 → 有 Tool Call 时经过 ToolRuntime、Sandbox 与 Approval → 保存 Tool Call/Result → 下一 step → 无 Tool Call 时提交最终回答。Runtime 不预先决定用户是在问答、讨论还是检查。
+
+硬边界保留在动作层：写操作必须经过 Approval；Sandbox 不可绕过；失败与重复调用有界；没有成功 Tool Result 不得声称外部动作完成；所有模型可见消息可由 Session 重建。当前没有消费方的 IntentClassifier、ContextResolver、CompletionChecker 和 execution phase 被删除；未来只有在出现可测量的独立需求时才重新引入辅助模块，且不得控制 Tool 可见性或建立互斥意图分支。
+
+## Runtime 收口修订
+
+- `StoredSession.messages` 是唯一持久化事实源；SessionEvent 只用于当前进程的观察和协议通知，不持久化、不参与恢复。
+- user、assistant、assistant tool call 与 tool result 都按实际模型消息顺序写入 messages，恢复时不再在 messages/events 之间选择。
+- 当前版本关闭文本流式接口；CLI 与 NDJSON 只在一次模型步骤完成后输出最终响应，Tool 生命周期仍使用独立事件通知。
+- Approval 必须在执行前展示目标与动作摘要；参数和 Sandbox 校验先于审批且不产生副作用。
+- Tool 错误使用明确错误码传递，Sandbox 拒绝不得降级成普通执行失败。
+- NDJSON Writer 在退出前必须 flush，禁止依赖进程退出时的隐式管道排空。

@@ -7,11 +7,9 @@ export interface TokenUsage { readonly input?: number; readonly output?: number;
 export type TurnOutcome = "completed" | "needs_user" | "blocked";
 export interface ModelResponse { readonly text: string; readonly model?: string; readonly usage?: TokenUsage; readonly outcome?: TurnOutcome; readonly evidence?: readonly string[]; }
 export interface ToolResponse extends ModelResponse { readonly toolCalls?: readonly ToolCall[]; }
-export interface ModelChunk { readonly text: string; }
 export interface ModelProvider {
   readonly id: string;
   readonly model: string;
   generate(request: ModelRequest): Promise<ModelResponse>;
   generateWithTools?(request: ModelRequest): Promise<ToolResponse>;
-  generateStream(request: ModelRequest): AsyncIterable<ModelChunk>;
 }

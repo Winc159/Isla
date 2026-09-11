@@ -74,8 +74,8 @@ export async function runCli(
     const startedAt = performance.now();
     try {
       output.write('isla> ');
-      const response = await session.sendStream(line, text => output.write(text));
-      output.write(`\n耗时 ${formatElapsed(startedAt)}\n\n`);
+      const response = await session.send(line);
+      output.write(`${response.text}\n耗时 ${formatElapsed(startedAt)}\n\n`);
     } catch (error) {
       if (debug) {
         const name = error instanceof Error ? error.name : 'UnknownError';
@@ -197,15 +197,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       let protocolStored = await protocolStore.loadLatest(config.provider, config.model);
       if (!protocolStored) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []);
       let useExistingProtocolSession = true;
-      let protocolEvents = protocolStored.events ? [...protocolStored.events] : [];
-      let protocolMessages = protocolStored.messages;
       await runProtocol(process.stdin, process.stdout, undefined, config.provider, config.model, {
         createSession: async (approvalService, events) => {
           if (!useExistingProtocolSession) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []);
           useExistingProtocolSession = false;
-          protocolEvents = protocolStored?.events ? [...protocolStored.events] : [];
-          protocolMessages = protocolStored?.messages ?? [];
-          return runtime.createSession({ providerId: config.provider, ...(protocolStored ? { messages: protocolStored.messages, events: protocolEvents } : {}), ...(config.systemPrompt ? { systemPrompt: config.systemPrompt } : {}), enableTools: true, projectRoot: process.cwd(), permissionPreset: 'workspace', approvalPolicy: 'ask', approvalService, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished, onSessionEvent: async event => { protocolEvents.push(event); if (protocolStored) protocolStored = await protocolStore.save(protocolStored, protocolMessages, protocolEvents); }, onMessagesChanged: async messages => { protocolMessages = messages; if (protocolStored) protocolStored = await protocolStore.save(protocolStored, messages, protocolEvents); } });
+          return runtime.createSession({ providerId: config.provider, ...(protocolStored ? { messages: protocolStored.messages } : {}), ...(config.systemPrompt ? { systemPrompt: config.systemPrompt } : {}), enableTools: true, projectRoot: process.cwd(), permissionPreset: 'workspace', approvalPolicy: 'ask', approvalService, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished, onMessagesChanged: async messages => { if (protocolStored) protocolStored = await protocolStore.save(protocolStored, messages); } });
         },
         sessionId: () => protocolStored?.id ?? 'unknown',
       });

@@ -72,24 +72,20 @@ async function runRound(round: number): Promise<void> {
     await driver.wait("response_end", `discuss-${round}`);
 
     driver.send({ type: "prompt", id: `reject-${round}`, text: "在当前项目目录创建 acceptance-rejected.txt，写入精确内容 rejected。" });
-    await driver.wait("response_end", `reject-${round}`);
-    driver.send({ type: "prompt", id: `confirm-reject-${round}`, text: "确认执行" });
     const rejectedApproval = await driver.wait("approval_request");
     expect(rejectedApproval.approvalId).toBeTruthy();
     driver.send({ type: "approval_response", id: `reject-approval-${round}`, approvalId: rejectedApproval.approvalId, approved: false });
-    await driver.wait("response_end", `confirm-reject-${round}`);
+    await driver.wait("response_end", `reject-${round}`);
 
     driver.send({ type: "new_session", id: `new-${round}` });
     const changed = await driver.wait("session_changed");
     expect(changed.sessionId).toBeTruthy();
 
     driver.send({ type: "prompt", id: `approve-${round}`, text: "在当前项目目录创建 acceptance-approved.txt，写入精确内容 approved。" });
-    await driver.wait("response_end", `approve-${round}`);
-    driver.send({ type: "prompt", id: `confirm-approve-${round}`, text: "确认执行" });
     const approvedApproval = await driver.wait("approval_request", undefined, 90_000, driver.events.length);
     expect(approvedApproval.approvalId).toBeTruthy();
     driver.send({ type: "approval_response", id: `approve-approval-${round}`, approvalId: approvedApproval.approvalId, approved: true });
-    await driver.wait("response_end", `confirm-approve-${round}`);
+    await driver.wait("response_end", `approve-${round}`);
     expect((await readFile(join(root, "acceptance-approved.txt"), "utf8")).trim()).toBe("approved");
 
     driver.send({ type: "exit", id: `exit-${round}` });

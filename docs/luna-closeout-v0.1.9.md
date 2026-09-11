@@ -1,8 +1,22 @@
-# Luna 收口任务：Isla v0.1.9
+# Isla v0.1.9 历史收口记录
+
+> 状态：已通过并关闭。2026-09-11 复核确认允许进入 v0.2.0。本文后续缺陷列表保留为历史审计输入，不再是当前架构的规范性要求；凡涉及 IntentClassifier、ContextResolver、CompletionChecker、execution phase、TurnSummary 或文本流式接口的旧要求，均已被 `docs/architecture-v0.1.9.md` 的统一 Agent Loop 与 Runtime 收口修订取代。
+
+## 最终准入结论（2026-09-11）
+
+- v0.1.9 核心验收：通过。
+- v0.2.0 设计与开发准入：通过。
+- 离线门禁：17 个测试文件、81 条测试通过、3 条显式真实测试默认跳过；typecheck、build、pack:check、git diff check 全部通过。
+- 真实连通：DeepSeek 基础双请求通过；真实 NDJSON 完整场景连续两轮通过。
+- 持久化：`StoredSession.messages` 是唯一事实源，Tool Call 与 Tool Result 可恢复；旧 events 副本只兼容读取并丢弃。
+- 协议：当前不提供文本增量流；Tool 生命周期、Approval、new_session、错误终态和退出 flush 已验证。
+- 安全：写入 Approval 展示目标和内容摘要；参数与 Sandbox 校验先于审批；Sandbox 拒绝使用稳定错误码。
+- 非阻断项：OpenAI/Local Tool 能力后续补齐；插件扩展接口留待 v0.2 真实需求驱动重构。
+- 发布说明：本文件只确认开发准入，不代表已经执行 Git 或 npm 发布。
 
 ## 任务目标
 
-本文件是 Isla 进入 v0.2.0 前的唯一收口清单。Luna 需要一次性解决本文列出的 v0.1.8/v0.1.9 遗留问题，并用离线自动测试、子进程协议测试和显式真实 Provider 对话证明结果。
+本文件原是 Isla 进入 v0.2.0 前的收口清单。以下内容按历史原貌保留，用于解释 v0.1.9 曾发现的问题和设计演变。
 
 本轮只完成现有 Runtime 闭环，不新增 Shell、网络、MCP、子 Agent、长期记忆、向量数据库、Web 服务或通用工作流框架。不得为了赶进度降低 Approval、Sandbox、持久化或完成判定的安全要求。
 

@@ -5,9 +5,10 @@ import { parseProtocolRequest } from "./parser.js";
 import { ProtocolWriter } from "./writer.js";
 import { ProtocolApprovalService } from "./approval.js";
 import { performance } from "node:perf_hooks";
+import type { ToolExecutionResult } from "../tools/types.js";
 export interface ProtocolSessionEvents {
   readonly onToolStarted: (tool: string, callId: string) => void;
-  readonly onToolFinished: (tool: string, callId: string, result: { readonly ok: boolean; readonly code?: string }) => void;
+  readonly onToolFinished: (tool: string, callId: string, result: ToolExecutionResult) => void;
 }
 export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly onNewSession?: () => void; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string } = {}): Promise<void> {
   const writer = new ProtocolWriter(output);
@@ -20,7 +21,7 @@ export async function runProtocol(input: Readable, output: import("node:stream")
   const approvalService = options.approvalService ?? (options.createSession ? new ProtocolApprovalService((approvalId, request) => writer.write({ type: "approval_request", id: activeId ?? "", approvalId, tool: request.toolName, permission: request.permission.kind, summary: request.summary })) : undefined);
   const events: ProtocolSessionEvents = {
     onToolStarted: (tool, callId) => writer.write({ type: "tool_start", id: activeId ?? "", tool }),
-    onToolFinished: (tool, callId, result) => writer.write({ type: "tool_end", id: activeId ?? "", tool, ok: result.ok, ...(!result.ok && result.code ? { code: result.code as "UNKNOWN_TOOL" | "INVALID_ARGUMENTS" | "PERMISSION_DENIED" | "USER_REJECTED" | "EXECUTION_FAILED" | "SANDBOX_DENIED" } : {}) }),
+    onToolFinished: (tool, callId, result) => writer.write({ type: "tool_end", id: activeId ?? "", tool, ok: result.ok, ...(!result.ok && result.code ? { code: result.code } : {}) }),
   };
   let currentSession = options.createSession ? await options.createSession(approvalService as ProtocolApprovalService, events) : session;
   if (!currentSession) throw new Error("Protocol session is not configured");
@@ -58,7 +59,7 @@ export async function runProtocol(input: Readable, output: import("node:stream")
     activeId = request.id;
     active = (async () => {
       try {
-        const response = await currentSession.sendStream(request.text, text => writer.write({ type: "response_delta", id: request.id, text }));
+        const response = await currentSession.send(request.text);
         writer.write({ type: "response_end", id: request.id, text: response.text, elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)) });
       } catch (error) {
         writer.write({ type: "error", id: request.id, code: classifyPromptError(error), message: safePromptErrorMessage(error), recoverable: true });
@@ -66,6 +67,7 @@ export async function runProtocol(input: Readable, output: import("node:stream")
       }
     })().finally(() => { active = undefined; activeId = undefined; });
   }
+  await writer.flush();
 }
 
 function classifyPromptError(error: unknown): "PROVIDER_FAILED" | "PERSISTENCE_FAILED" | "PROMPT_FAILED" {

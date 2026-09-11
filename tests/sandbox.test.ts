@@ -18,8 +18,8 @@ describe("SandboxPolicy", () => {
     await writeFile(join(outside, "secret.txt"), "secret", "utf8");
     await symlink(outside, join(root, "link"), "junction");
     const sandbox = new SandboxPolicy(root);
-    await expect(sandbox.resolvePath("../outside.txt", "read")).rejects.toThrow("inside");
-    await expect(sandbox.resolvePath(".env", "read")).rejects.toThrow("protected");
+    await expect(sandbox.resolvePath("../outside.txt", "read")).rejects.toMatchObject({ code: "SANDBOX_DENIED" });
+    await expect(sandbox.resolvePath(".env", "read")).rejects.toMatchObject({ code: "SANDBOX_DENIED" });
     await expect(sandbox.resolvePath("link/secret.txt", "read")).rejects.toThrow("inside");
   });
 });

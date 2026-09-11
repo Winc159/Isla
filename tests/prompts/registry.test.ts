@@ -19,17 +19,11 @@ describe("PromptRegistry", () => {
 
   it("filters sections by phase without changing legacy sections", () => {
     const registry = new PromptRegistry();
-    registry.register({ id: "personality", order: 0, phases: ["discussion"], render: () => "personality" });
+    registry.register({ id: "personality", order: 0, phases: ["legacy"], render: () => "personality" });
     registry.register({ id: "tools", order: 1, phases: ["tool-loop"], render: () => "tools" });
     registry.register({ id: "legacy", order: 2, render: () => "legacy" });
-    expect(registry.render({ capabilities: [], phase: "discussion" })).toEqual(["personality", "legacy"]);
+    expect(registry.render({ capabilities: [], phase: "legacy" })).toEqual(["personality", "legacy"]);
     expect(registry.render({ capabilities: [], phase: "tool-loop" })).toEqual(["tools", "legacy"]);
-  });
-
-  it("supports a dedicated execution phase", () => {
-    const registry = new PromptRegistry();
-    registry.register({ id: "execution", order: 0, phases: ["execution"], render: () => "must use tool" });
-    expect(registry.render({ capabilities: [], phase: "execution" })).toEqual(["must use tool"]);
   });
 });
 
