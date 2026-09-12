@@ -28,6 +28,9 @@
 - [DSH Compaction](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/compaction.md) — 持久化压缩检查点、Tool 配对边界和失败语义；采用原则，拒绝完整事件框架；查看日期 2026-09-11。
 - [DSH Session Query](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session-query.md) — 确定性读取、过滤和全文检索；v0.2.1 采用职责分离，暂缓完整 Query 服务；查看日期 2026-09-11。
 - DSH Session Query 对 v0.2.3 的补充取舍：采用确定性读取、可定位来源和可重建派生视图；暂缓 SQLite/FTS、查询 DSL 和跨项目统一索引；查看日期 2026-09-12，具体见 `docs/architecture-v0.2.3.md`。
+- [DSH Tools](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/tools.md) — 模型可见 schema、host-only Tool 定义字段、规范化执行结果和最终权威结果的边界；v0.2.4 采用“展示内容与 Runtime details 分离”，不复制 middleware 或类型框架；查看日期 2026-09-12。
+- [DSH Session Query package](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/session-query/session-query/README.md) — 确定性读取、语义文档投影、live-preferred corpus 与全文索引职责边界；v0.2.4 采用稳定身份、排序和关系校验原则，继续暂缓 SQLite backend、游标与 reconciliation；查看日期 2026-09-12。
+- [DSH Compaction packages](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/compaction/README.md) — 先裁剪过大 Tool Result 再压缩历史的职责拆分；v0.2.4 只采用有界 Tool 输出与优先保留有效片段，不引入 pruner pipeline 或 spill store；查看日期 2026-09-12。
 - [OpenHands Condenser](https://docs.openhands.dev/sdk/arch/condenser) — 压力触发、保留尾部和 View 投影；采用最小语义，不引入通用 Pipeline；查看日期 2026-09-11。
 - [LangGraph Memory](https://langchain-ai.github.io/langgraph/how-tos/memory/manage-conversation-history/) — Thread 持久化、裁剪和滚动摘要；采用派生摘要，拒绝 Graph 编排和删除原文；查看日期 2026-09-11。
 - [Letta Memory Architecture](https://github.com/letta-ai/skills/blob/main/letta/letta-api-client/memory-architecture.md) — Core Memory、消息窗口、归档和语义检索分层；直接影响 v0.2.1 的四层记忆模型；查看日期 2026-09-11。

@@ -146,6 +146,21 @@
 
 完成信号已满足：项目搜索不越过 workspace、秘密和符号链接边界；source ID、行号、Snapshot 与 Journal 可验证；模型不能伪造来源；CLI/NDJSON 无破坏性变化；全量离线门禁及授权后的真实 DeepSeek NDJSON 验收通过。记录见 `docs/evaluation-v0.2.3.md`。
 
+## v0.2.4：可评测的项目检索与结构化证据链（功能验收通过，引用链证据待补足）
+
+- 将 Tool 的模型可见 `content` 与 Runtime 权威 details 分离；
+- `search_project` 来源只从结构化 Tool outcome 进入 Snapshot、Journal 和当前 Turn allowlist；
+- 删除从 Tool 展示文本正则恢复 source ID、路径和行号的隐式协议；
+- 区分 retrieved、cited 和 displayed，最终只展示模型声明且经 Runtime 校验的来源；
+- 增加完整短语、term 覆盖、路径/文件名和中文降级召回的确定性评分；
+- 建立 top-1、top-3、误召回、截断和延迟观察指标；
+- 增加每来源预算，保证 details 只包含实际进入模型上下文的来源；
+- 暂不引入 FTS、Embedding、文件监听、Document Search、Session Query 或 Tool Result spill store。
+
+实施依据：`docs/architecture-v0.2.4.md` 与 `docs/luna-implementation-v0.2.4.md`。
+
+完成信号：结构化 details 是可信来源唯一入口；`displayed ⊆ cited ⊆ retrieved` 可验证；竞争案例满足 top-1/top-3 门禁；中文 bigram 不压过强匹配；Tool 输出预算和 source ID 可重建；Session、Journal、CLI、NDJSON 与全部 v0.2.3 安全语义无回归；全量离线门禁通过；真实 DeepSeek 功能场景已通过，但 citation marker 的真实映射证据仍需补足后才能完全关闭本版本。
+
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。

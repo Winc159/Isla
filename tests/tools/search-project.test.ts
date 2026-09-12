@@ -12,7 +12,7 @@ describe("search_project tool", () => {
     await mkdir(join(root, "docs")); await writeFile(join(root, "docs", "note.md"), "可靠检索\n");
     const tool = createSearchProjectTool(root);
     const registry = new ToolRegistry(); registry.register(tool);
-    await expect(new ToolRuntime(registry, { approvalPolicy: "ask", permissionPreset: "readonly" }).execute({ id: "1", name: "search_project", arguments: JSON.stringify({ query: "检索" }) })).resolves.toMatchObject({ ok: true, content: expect.stringContaining("docs/note.md:1-2") });
+    await expect(new ToolRuntime(registry, { approvalPolicy: "ask", permissionPreset: "readonly" }).execute({ id: "1", name: "search_project", arguments: JSON.stringify({ query: "检索" }) })).resolves.toMatchObject({ ok: true, content: expect.stringContaining("docs/note.md:1-2"), details: { type: "project_search", sources: [{ path: "docs/note.md", startLine: 1, endLine: 2 }], truncated: false } });
   });
 
   it("rejects invalid arguments", async () => {

@@ -2,6 +2,7 @@ export const PROJECT_SEARCH_DEFAULTS = {
   maxFileBytes: 1_048_576,
   limit: 20,
   maxChars: 8_000,
+  maxSourceChars: 4_096,
   contextLines: 1,
 } as const;
 

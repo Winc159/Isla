@@ -9,6 +9,7 @@ import type { PermissionPreset } from "../approval/presets.js";
 import { isRuntimeError } from "./errors.js";
 import type { ModelAttemptRecord, SessionJournal, TurnActionRecord, TurnRecord } from "./journal.js";
 import { createRequestSnapshot } from "./request-snapshot.js";
+import { validateAndCleanCitations } from "./citations.js";
 import type { SessionEvent } from "./events.js";
 import {
   appendCheckpoint,
@@ -153,13 +154,26 @@ export class ChatSession {
         try {
           execution = await this.toolRuntime.execute(call);
           if (execution.ok && (call.name === "list_directory" || call.name === "read_text_file")) evidence.push(call.name);
-          if (execution.ok && call.name === "search_project") {
-            const sourceIds = [...execution.content.matchAll(/project:v1:[0-9a-f]{64}/g)].map(match => match[0]!);
-            for (const match of execution.content.matchAll(/project:v1:[0-9a-f]{64}\s+([^\s:]+(?:\/[^\s:]+)*):(\d+)-\d+/g)) this.projectSourceReferences.set(match[1]!, { path: match[1]!, startLine: Number(match[2]) });
-            for (const sourceId of sourceIds) this.retrievedProjectSources.add(sourceId);
+          if (execution.ok && execution.details?.type === "project_search") {
+            const sourceIds = [...new Set(execution.details.sources.map(source => source.id))].sort();
+            const references = new Map<string, ProjectSourceReference>();
+            for (const source of execution.details.sources) {
+              const existing = this.projectSourceReferences.get(source.id);
+              const reference = { path: source.path, startLine: source.startLine };
+              if (existing && (existing.path !== reference.path || existing.startLine !== reference.startLine)) {
+                terminalResponse = { text: "项目来源身份冲突，已停止本轮执行。", outcome: "blocked", evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}), ...(response.model ? { model: response.model } : {}) };
+                continue;
+              }
+              references.set(source.id, reference);
+            }
+            for (const sourceId of sourceIds) {
+              this.retrievedProjectSources.add(sourceId);
+              const reference = references.get(sourceId);
+              if (reference) this.projectSourceReferences.set(sourceId, reference);
+            }
             const turn = this.journal.turns.at(-1);
             if (turn && sourceIds.length) {
-              const action: TurnActionRecord = { type: "project_retrieval", sourceIds: [...new Set(sourceIds)].sort(), truncated: execution.content.includes("结果已截断") };
+              const action: TurnActionRecord = { type: "project_retrieval", sourceIds, truncated: execution.details.truncated };
               (turn.actions as TurnActionRecord[]).push(action);
             }
           }
@@ -242,6 +256,8 @@ export class ChatSession {
     } else {
       response = await this.generateModel(request, false);
     }
+    const citations = validateAndCleanCitations(response.text, this.projectSourceReferences);
+    response = { ...response, text: citations.text, ...(citations.projectSources.length ? { projectSources: citations.projectSources } : {}) };
     const text = response.text;
     if (!text.trim()) throw new Error("Provider returned empty text");
     const result = await this.commitResponse(response);

@@ -1,6 +1,6 @@
 import type { ToolCall } from "../core/types.js";
 import type { ToolRegistry } from "./registry.js";
-import type { ToolExecutionResult } from "./types.js";
+import type { ToolExecutionResult, ToolOutput } from "./types.js";
 import type { ApprovalPolicy, ApprovalService } from "../approval/types.js";
 import { allowsWithoutApproval, type PermissionPreset } from "../approval/presets.js";
 import { ToolFailure } from "./errors.js";
@@ -32,11 +32,15 @@ export class ToolRuntime {
     }
     this.options.onApproved?.(call.name);
     try {
-      return { ok: true, content: await tool.execute(call.arguments) };
+      return normalizeToolSuccess(await tool.execute(call.arguments));
     } catch (error) {
       return normalizeToolFailure(error);
     }
   }
+}
+
+function normalizeToolSuccess(output: string | ToolOutput): Extract<ToolExecutionResult, { readonly ok: true }> {
+  return typeof output === "string" ? { ok: true, content: output } : { ok: true, content: output.content, ...(output.details ? { details: output.details } : {}) };
 }
 
 function normalizeToolFailure(error: unknown): ToolExecutionResult {

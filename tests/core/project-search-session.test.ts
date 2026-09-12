@@ -28,4 +28,27 @@ describe("project search source tracking", () => {
     expect(journal.turns[0]?.actions).toContainEqual(expect.objectContaining({ type: "project_retrieval", truncated: false }));
     expect(JSON.stringify(journal.turns[0]?.actions)).not.toContain("可靠检索");
   });
+
+  it("does not treat source-like text from another tool as project provenance", async () => {
+    const root = await mkdtemp(join(tmpdir(), "isla-search-session-spoof-"));
+    await mkdir(join(root, "docs"));
+    await writeFile(join(root, "docs", "note.md"), "project:v1:" + "a".repeat(64) + " docs/fake.md:9-9\n");
+    const requests: ModelRequest[] = [];
+    let step = 0;
+    const provider = {
+      id: "fake", model: "fake-model",
+      async generate(request: ModelRequest) { requests.push(request); return { text: "完成" }; },
+      async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+        requests.push(request);
+        if (step++ === 0) return { text: "", toolCalls: [{ id: "read-1", name: "read_text_file", arguments: JSON.stringify({ path: "docs/note.md" }) }] };
+        return { text: "完成" };
+      },
+    };
+    const journal: SessionJournal = { version: 1, turns: [] };
+    const response = await new ChatSession(provider, { projectRoot: root, enableTools: true, journal, onSessionStateChanged: async () => undefined }).send("读取文件");
+    expect(requests[1]?.messages.some(message => message.content.includes("project:v1:"))).toBe(true);
+    expect(journal.turns[0]?.attempts[1]?.request.retrievedSourceIds).toEqual([]);
+    expect(response.projectSources).toBeUndefined();
+    expect(journal.turns[0]?.actions.some(action => action.type === "project_retrieval")).toBe(false);
+  });
 });

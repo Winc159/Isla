@@ -12,6 +12,12 @@ describe("ToolRuntime", () => {
     await expect(runtime.execute({ id: "2", name: "missing", arguments: "{}" })).resolves.toMatchObject({ ok: false, code: "UNKNOWN_TOOL" });
   });
 
+  it("preserves structured success details", async () => {
+    const registry = new ToolRegistry();
+    registry.register({ definition: { name: "structured", description: "", parameters: {} }, execute: async () => ({ content: "reference", details: { type: "project_search", sources: [{ id: `project:v1:${"a".repeat(64)}`, path: "docs/a.md", startLine: 2, endLine: 3 }], filesScanned: 1, truncated: false } }) });
+    await expect(new ToolRuntime(registry).execute({ id: "1", name: "structured", arguments: "{}" })).resolves.toMatchObject({ ok: true, content: "reference", details: { type: "project_search", filesScanned: 1 } });
+  });
+
   it("normalizes execution failures", async () => {
     const registry = new ToolRegistry();
     registry.register({ definition: { name: "bad", description: "", parameters: {} }, execute: async () => { throw new Error("disk unavailable"); } });

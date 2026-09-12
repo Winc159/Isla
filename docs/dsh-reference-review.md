@@ -86,3 +86,33 @@ Isla 已出现新的真实问题：固定历史窗口、单一 Prompt 和“无 
 ## 对 Luna 的约束
 
 Luna 实现 v0 时不需要继续通读 DSH，也不应从 DSH 复制代码。只需遵守 `architecture-v0.md` 中已吸收的语义；如果发现必须引入本文件“暂缓”或“拒绝”的能力，应先停止扩展并更新设计决策。
+
+## v0.2.4 补充评审
+
+v0.2.3 已经出现新的现实问题：`search_project` 的展示字符串被 Runtime 正则当作内部协议，检索评测只能证明基本命中，最终来源也没有严格区分“检索到”和“回答实际引用”。因此 v0.2.4 再参考 DSH 当前 Tool pipeline、Session Query 与 Tool Result pruning 的职责边界。
+
+本轮采用：
+
+- 模型可见 Tool `content` 与 host-only 权威 details 分离；
+- ToolRuntime 规范化字符串和结构化成功结果，审计与投影只消费规范化 outcome；
+- 查询候选使用确定性特征、评分、稳定 tie-break 和 top-k 质量门禁；
+- 模型引用只是声明，必须指向当前 Turn 结构化 Tool outcome 已建立的 allowlist；
+- Tool 输出在进入模型上下文前受整体和每来源预算约束，优先保留实际命中。
+
+本轮暂缓：
+
+- SQLite/FTS Session Query、索引代际、游标和 live/persisted reconciliation；
+- append-only Event Map、Surface 与 source-event relationship graph；
+- Tool Result spill store、locator 和通用 pruner pipeline；
+- 通用 Tool middleware、deadline、并发执行和 provenance backend；
+- Embedding、文件监听、独立 Document Search 和跨项目检索。
+
+本轮拒绝：
+
+- 从 Tool 展示文本反向恢复 Runtime 权威状态；
+- 为单个结构化结果需求引入开放元数据袋或复杂泛型 Tool 框架；
+- 复制 DSH 源码、目录、Cordis 生命周期或 package seam；
+- 让 DSH 成为 Isla 依赖；
+- 借本轮提前增加 Shell、网络、MCP、并行 Tool、后台任务或子 Agent。
+
+重新评估条件：只有真实匿名查询评测证明按需扫描加确定性评分不足，或目标项目规模下扫描延迟不可接受，才讨论 FTS；只有关键词与 FTS 对已记录语义漏召回仍不足，才讨论 Embedding。具体契约与实施停点见 `docs/architecture-v0.2.4.md` 和 `docs/luna-implementation-v0.2.4.md`。

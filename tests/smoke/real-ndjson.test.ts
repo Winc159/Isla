@@ -129,7 +129,7 @@ async function runRound(round: number): Promise<void> {
     const memoryStore = new MemoryStore(memoryPath);
     try {
       const records = memoryStore.list({ status: "active" });
-      expect(records.some(record => record.content.includes("简洁回答") && record.source?.sessionId)).toBe(true);
+      expect(records.some(record => record.content.includes("简洁回答") && record.source?.sessionId), `active memory records=${JSON.stringify(records.map(record => ({ content: record.content, source: record.source })))}`).toBe(true);
     } finally { memoryStore.close(); }
     await rm(root, { recursive: true, force: true });
     await rm(sessions, { recursive: true, force: true });

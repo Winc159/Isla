@@ -25,4 +25,13 @@ describe("DeterministicProjectSearch", () => {
     expect(result.sources[0]?.path).toBe("alpha.md");
     expect((await service.search({ text: "same", limit: 1 })).truncated).toBe(true);
   });
+
+  it("skips an oversized source and still includes later short sources", async () => {
+    const root = await mkdtemp(join(tmpdir(), "isla-search-source-budget-"));
+    await writeFile(join(root, "a.md"), `target ${"x".repeat(5000)}\n`);
+    await writeFile(join(root, "b.md"), "target\n");
+    const result = await new DeterministicProjectSearch(root).search({ text: "target", contextLines: 0 });
+    expect(result.sources.map(source => source.path)).toEqual(["b.md"]);
+    expect(result.truncated).toBe(true);
+  });
 });
