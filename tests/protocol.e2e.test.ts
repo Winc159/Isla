@@ -26,7 +26,7 @@ describe("NDJSON subprocess", () => {
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("test server did not expose a port");
     const baseUrl = `http://127.0.0.1:${address.port}/v1`;
-    const child = spawn(process.execPath, ["dist/cli.js", "--protocol", "ndjson"], {
+    const child = spawn(process.execPath, ["dist/cli.js", "--env", "--protocol", "ndjson"], {
       cwd: process.cwd(),
       env: {
         ...process.env,

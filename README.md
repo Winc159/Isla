@@ -4,20 +4,22 @@ Isla 是一个使用 TypeScript 开发的个人 Agent Runtime。目前通过 CLI
 
 ## 使用
 
-将 `.env.example` 复制为 `.env`，设置 `ISLA_PROVIDER`、`ISLA_MODEL`，以及对应的 API Key 或 `ISLA_BASE_URL`，然后运行：
+首次运行 `isla` 时，如果没有配置文件，会进入启动向导，选择 Profile、Provider、模型、API Key 和基础运行设置。配置默认保存在用户目录的 `~/.isla/config.json`；API Key 与 Profile 保存在同一文件中，是本地明文凭据，请按私密文件保护。后续可使用 `/config`、`/config open`、`/config setup`、`/profile list` 和 `/profile use <name>` 管理配置，修改在下次启动生效。
+
+测试、CI 或临时运行仍可使用环境变量：将 `.env.example` 复制为 `.env`，然后使用显式的 `--env` 启动：
 
 ```bash
-npm run dev
+npm run dev -- --env
 ```
 
 构建后也可以运行：
 
 ```bash
 npm run build
-npm start
+npm start -- --env
 ```
 
-输入 `/new` 开启新对话，输入 `/sessions` 通过方向键选择历史会话，输入 `/memory` 查看长期记忆，输入 `/trace` 查看安全运行摘要，输入 `/exit` 或按 `Ctrl+C` 退出。
+输入 `/new` 开启新对话，输入 `/sessions` 通过方向键选择历史会话，输入 `/memory` 查看长期记忆，输入 `/trace` 查看安全运行摘要，输入 `/config` 查看启动配置，输入 `/profile` 查看当前 Profile，输入 `/exit` 或按 `Ctrl+C` 退出。
 
 等待模型返回时，交互式终端会显示生成状态和本次请求耗时。DeepSeek 默认使用非思考模式，以降低普通对话的等待时间。
 

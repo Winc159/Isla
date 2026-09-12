@@ -116,3 +116,37 @@ v0.2.3 已经出现新的现实问题：`search_project` 的展示字符串被 R
 - 借本轮提前增加 Shell、网络、MCP、并行 Tool、后台任务或子 Agent。
 
 重新评估条件：只有真实匿名查询评测证明按需扫描加确定性评分不足，或目标项目规模下扫描延迟不可接受，才讨论 FTS；只有关键词与 FTS 对已记录语义漏召回仍不足，才讨论 Embedding。具体契约与实施停点见 `docs/architecture-v0.2.4.md` 和 `docs/luna-implementation-v0.2.4.md`。
+
+## v0.2.5 补充评审
+
+Isla 已出现新的真实使用问题：正常启动依赖项目 `.env` 或预设环境变量，首次配置、保存多组启动组合和日常维护不友好。v0.2.5 参考 DSH 对 deployment config、Provider/model route 和 credential resolution 的职责分离，但按个人 CLI 的规模独立实现。
+
+本轮采用：
+
+- Provider/model 是启动路由事实，不是模型可见会话正文；
+- 凭据在 Runtime 创建前解析，缺失时明确失败，不静默切换 Provider；
+- 一次 Runtime 使用稳定的配置快照；
+- 配置错误与用户可见摘要不得泄漏凭据；
+- 测试编排和真实请求授权不进入日常 Profile。
+
+本轮调整：
+
+- DSH 使用独立 credential service 和 credentials 文件；Isla 当前是单用户本地 CLI，用户明确选择在一个 `~/.isla/config.json` 中同时保存 Profile 和 API Key，以减少维护和冲突面；
+- Isla 明确记录本地明文风险，并以私有目录、原子写入、输出脱敏和禁止向其他状态扩散作为当前保护；
+- Profile 只在启动时解析，不采用 DSH 更完整的 Session model selection 或动态 deployment composition。
+
+本轮暂缓：
+
+- 系统钥匙串、凭据加密和可插拔 Credential Provider；
+- Session 内 Provider/model 热切换；
+- Provider 模型目录、在线模型发现和能力协商；
+- 取消、Web、Shell、后台任务和子 Agent。
+
+本轮拒绝：
+
+- 复制 DSH App Config、Cordis schema、profiles/bundles 或目录结构；
+- 把 API Key 写入 Session、Journal、Memory、Snapshot 或日志；
+- Profile 与环境变量进行不可见的字段级合并；
+- 配置损坏时自动覆盖或回退到另一 Provider。
+
+重新评估条件：当本地明文配置不再满足个人部署安全需求时评估系统凭据存储；当同一会话确实需要按成本或能力切换模型时评估 turn-boundary model selection。具体契约与执行顺序见 `docs/architecture-v0.2.5.md` 和 `docs/luna-implementation-v0.2.5.md`。

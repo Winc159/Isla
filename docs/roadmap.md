@@ -161,6 +161,25 @@
 
 完成信号：结构化 details 是可信来源唯一入口；`displayed ⊆ cited ⊆ retrieved` 可验证；竞争案例满足 top-1/top-3 门禁；中文 bigram 不压过强匹配；Tool 输出预算和 source ID 可重建；Session、Journal、CLI、NDJSON 与全部 v0.2.3 安全语义无回归；全量离线门禁通过；真实 DeepSeek 功能场景和 `response_end.projectSources` provenance 投影均已通过。首次 Provider timeout 已通过独立重试恢复并记录。
 
+## v0.2.5：启动 Profile 与本地配置（设计完成，待实施）
+
+- 使用 `~/.isla/config.json` 保存一个或多个完整启动 Profile；
+- Profile 包含 Provider、模型、本地明文 API Key、Runtime、Memory、personality 和日志设置；
+- 交互式首次启动完成 Provider、模型、凭据与基础设置向导；
+- 支持默认 Profile、唯一 Profile、显式 `--profile` 和显式 `--env`；
+- 增加 `/config` 与 `/profile` 管理入口，修改默认在下次启动生效；
+- 保留环境变量供测试、CI、临时运行和迁移，不与 Profile 隐式字段合并；
+- 配置使用严格校验、原子写入、竞争保护和输出脱敏；
+- 不升级 Session schema，不改变 `StoredSession.messages` 的事实源地位。
+
+实施依据：`docs/architecture-v0.2.5.md`、`docs/luna-implementation-v0.2.5.md` 与 `docs/testing-v0.2.5.md`。
+
+完成信号：首次设置、Profile 选择、配置命令、环境兼容、非交互协议、原子写入、冲突和秘密边界均有离线测试；Session、Memory、Tool、Approval、Sandbox 与 NDJSON 无回归；全量离线门禁通过。真实 DeepSeek Profile 启动仅在用户明确授权后验收。
+
+跨版本硬规则：任何新增能力都必须提供可由单一 Agent 通过 CLI、NDJSON 或等价 API 完成的无 TTY 编排路径，覆盖配置、执行、确认/取消（如适用）和结果验证。人工菜单或 GUI 只能是便利入口，不能成为唯一入口；没有对应自动化验收的能力不算完成。
+
+本版暂缓：取消、受控联网、Shell、会话内模型热切换、OpenAI/Local Tool Calling 对齐和子 Agent。后续优先重新评估取消与只读受控联网。
+
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。

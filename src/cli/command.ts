@@ -2,6 +2,7 @@ import type { Readable, Writable } from 'node:stream';
 import type { SessionStore, StoredSession } from '../session-store.js';
 import type { MemoryStore } from '../memory/store.js';
 import type { MemoryRuntime } from '../memory/runtime.js';
+import type { ConfigStore } from '../config-store.js';
 
 export type InteractiveInput = Readable & {
   readonly isTTY: true;
@@ -20,6 +21,10 @@ export interface CliCommandContext {
   readonly commandLine?: string;
   readonly currentSession: StoredSession;
   readonly availableCommands: readonly CliCommandInfo[];
+  readonly configStore?: ConfigStore;
+  readonly configPath?: string;
+  readonly profileName?: string;
+  readonly openConfig?: (path: string) => Promise<void>;
 }
 
 export type CliCommandResult =

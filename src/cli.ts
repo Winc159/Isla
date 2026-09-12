@@ -14,6 +14,9 @@ import { runProtocol } from './protocol/runner.js';
 import type { MemoryRuntime } from './memory/runtime.js';
 import { MemoryRuntime as DefaultMemoryRuntime } from './memory/runtime.js';
 import { LocalEmbeddingProvider, OpenAIEmbeddingProvider } from './memory/embeddings.js';
+import { ConfigStore, defaultConfigPath } from './config-store.js';
+import { parseCliStartupArgs } from './cli-args.js';
+import { runSetupWizard } from './cli/setup-wizard.js';
 export async function runCli(
   input: Readable,
   output: Writable,
@@ -29,6 +32,11 @@ export async function runCli(
   contextRetainTurns = 6,
   memoryRuntime?: MemoryRuntime,
   modelRetries = 0,
+  configStore?: import('./config-store.js').ConfigStore,
+  configPath?: string,
+  profileName?: string,
+  openConfig?: (path: string) => Promise<void>,
+  logLevel: 'quiet' | 'normal' | 'debug' = 'normal',
 ): Promise<void> {
   writeHeader(output, providerId, model);
   const latestSession = await sessionStore.loadLatest(providerId, model);
@@ -62,6 +70,10 @@ export async function runCli(
           ...(memoryRuntime ? { memoryRuntime } : {}),
           currentSession: storedSession,
           availableCommands: listCliCommands(),
+          ...(configStore ? { configStore } : {}),
+          ...(configPath ? { configPath } : {}),
+          ...(profileName ? { profileName } : {}),
+          ...(openConfig ? { openConfig } : {}),
       });
       if (result.type === 'exit') {
         return 'exit';
@@ -87,7 +99,9 @@ export async function runCli(
       const response = await session.send(line);
       stopLoading();
       output.write('isla> ');
-      output.write(`${response.text}\n耗时 ${formatElapsed(startedAt)}\n\n`);
+      output.write(`${response.text}\n`);
+      if (logLevel !== 'quiet') output.write(`耗时 ${formatElapsed(startedAt)}\n`);
+      output.write('\n');
       if (response.projectSources?.length) output.write(`参考：\n${response.projectSources.map(source => `- ${source.path}:${source.startLine}`).join("\n")}\n\n`);
     } catch (error) {
       stopLoading();
@@ -208,7 +222,16 @@ function createPersistentSession(
 }
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
-    const { runtime, config } = loadRuntime();
+    const startupArgs = parseCliStartupArgs(process.argv.slice(2));
+    if (!startupArgs.useEnv && !startupArgs.profileName && process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') {
+      const configStore = new ConfigStore(startupArgs.configPath ?? defaultConfigPath());
+      const configState = await configStore.load();
+      if (configState.status === 'missing' || configState.status === 'empty') {
+        const completed = await runSetupWizard(process.stdin, process.stdout, configStore, process.stdin as unknown as import('./cli/command.js').InteractiveInput);
+        if (!completed) process.exit(1);
+      }
+    }
+    const { runtime, config, startup } = await loadRuntime();
     const embeddingProvider = config.embeddingProvider === 'openai' && config.embeddingModel && config.embeddingApiKey
       ? new OpenAIEmbeddingProvider(config.embeddingModel, config.embeddingApiKey, config.embeddingBaseURL, config.timeoutMs)
       : config.embeddingProvider === 'local' && config.embeddingModel && config.embeddingBaseURL
@@ -216,8 +239,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
         : undefined;
     const memoryRuntime = DefaultMemoryRuntime.open({ enabled: config.memoryEnabled, ...(config.memoryDatabase ? { path: config.memoryDatabase } : {}), ...(embeddingProvider ? { embeddingProvider } : {}), onWarning: message => process.stderr.write(`${message}\n`) });
     try {
-    if (process.argv.includes('--protocol')) {
-      const protocol = process.argv[process.argv.indexOf('--protocol') + 1];
+    if (startup.protocol !== undefined) {
+      const protocol = startup.protocol;
       if (protocol !== 'ndjson') throw new Error('Unsupported protocol');
       const protocolStore = new JsonSessionStore(config.sessionDirectory);
       let protocolStored = await protocolStore.loadLatest(config.provider, config.model);
@@ -248,6 +271,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       config.contextRetainTurns,
       memoryRuntime,
       config.modelRetries,
+      new ConfigStore(startup.configPath ?? defaultConfigPath()),
+      startup.configPath ?? defaultConfigPath(),
+      startup.profileName,
+      undefined,
+      config.logLevel,
     );
     } finally { memoryRuntime.close(); }
   } catch (error) {
