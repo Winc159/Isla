@@ -32,7 +32,7 @@ export class MemorySearch {
   search(query: string, options: SearchOptions = {}): SearchResult[] {
     const normalizedQuery = normalizeSearchText(query);
     if (!normalizedQuery) return [];
-    const terms = [...new Set([normalizedQuery, ...normalizedQuery.split(/\s+/).filter(term => term.length > 1)])];
+    const terms = searchTerms(normalizedQuery);
     const workspace = options.workspace ? normalizeWorkspace(options.workspace) : undefined;
     const candidates = this.store.listSearchDocuments().filter(document => {
       if (options.excludeTargetIds?.has(document.targetId)) return false;
@@ -79,3 +79,10 @@ export function renderRetrievedMemory(results: readonly SearchResult[]): string 
 export function normalizeSearchText(value: string): string { return value.normalize("NFKC").toLocaleLowerCase().replaceAll(/\s+/g, " ").trim(); }
 export function normalizeWorkspace(value: string): string { const normalized = resolve(value).replaceAll("\\", "/"); return process.platform === "win32" ? normalized.toLocaleLowerCase() : normalized; }
 function score(document: SearchDocument, terms: readonly string[]): number { return terms.reduce((total, term) => total + (document.normalizedContent === term ? 100 : document.normalizedContent.includes(term) ? term.length : 0), document.targetType === "memory" ? 2 : 0); }
+
+function searchTerms(normalizedQuery: string): string[] {
+  const terms = new Set([normalizedQuery, ...normalizedQuery.split(/\s+/).filter(term => term.length > 1)]);
+  const cjk = normalizedQuery.match(/[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+/g) ?? [];
+  for (const segment of cjk) for (let index = 0; index < segment.length - 1; index += 1) terms.add(segment.slice(index, index + 2));
+  return [...terms];
+}

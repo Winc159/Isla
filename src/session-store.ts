@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Message } from "./core/types.js";
 import type { ContextCheckpoint, SessionContext } from "./core/context.js";
+import { validateSessionJournal, type SessionJournal } from "./core/journal.js";
 
 export type { ContextCheckpoint, SessionContext } from "./core/context.js";
 
@@ -16,6 +17,7 @@ export interface StoredSessionV1 {
   readonly provider: string;
   readonly model: string;
   readonly messages: readonly Message[];
+  readonly journal?: SessionJournal;
 }
 
 export interface StoredSessionV2 {
@@ -27,13 +29,27 @@ export interface StoredSessionV2 {
   readonly model: string;
   readonly messages: readonly Message[];
   readonly context?: SessionContext;
+  readonly journal?: SessionJournal;
 }
 
-export type StoredSession = StoredSessionV1 | StoredSessionV2;
+export interface StoredSessionV3 {
+  readonly version: 3;
+  readonly id: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly messages: readonly Message[];
+  readonly context?: SessionContext;
+  readonly journal: SessionJournal;
+}
+
+export type StoredSession = StoredSessionV1 | StoredSessionV2 | StoredSessionV3;
 
 export interface SessionState {
   readonly messages: readonly Message[];
   readonly context?: SessionContext;
+  readonly journal?: SessionJournal;
 }
 
 export interface SessionStore {
@@ -69,24 +85,25 @@ export class JsonSessionStore implements SessionStore {
     return (await this.list(provider, model))[0];
   }
 
-  async create(provider: string, model: string, messages: readonly Message[]): Promise<StoredSessionV2> {
+  async create(provider: string, model: string, messages: readonly Message[]): Promise<StoredSessionV3> {
     const now = new Date().toISOString();
     const session: StoredSession = {
-      version: 2,
+      version: 3,
       id: `${now.replaceAll(":", "-")}-${randomUUID()}`,
       createdAt: now,
       updatedAt: now,
       provider,
       model,
       messages: [...messages],
+      journal: emptyJournal(),
     };
     return this.write(session);
   }
 
-  async save(session: StoredSession, state: SessionState): Promise<StoredSessionV2> {
+  async save(session: StoredSession, state: SessionState): Promise<StoredSessionV3> {
     const updatedAt = nextUpdatedAt(session.updatedAt);
     return this.write({
-      version: 2,
+      version: 3,
       id: session.id,
       createdAt: session.createdAt,
       updatedAt,
@@ -94,10 +111,11 @@ export class JsonSessionStore implements SessionStore {
       model: session.model,
       messages: [...state.messages],
       ...(state.context ? { context: state.context } : {}),
+      journal: state.journal ?? ('journal' in session ? session.journal : emptyJournal()),
     }, session.updatedAt);
   }
 
-  private async write(session: StoredSessionV2, expectedUpdatedAt?: string): Promise<StoredSessionV2> {
+  private async write(session: StoredSessionV3, expectedUpdatedAt?: string): Promise<StoredSessionV3> {
     await mkdir(this.directory, { recursive: true });
     const path = join(this.directory, `${session.id}.json`);
     const temporaryPath = `${path}.${randomUUID()}.tmp`;
@@ -191,7 +209,7 @@ function nextUpdatedAt(previous: string): string {
   return new Date(Number.isNaN(previousTime) ? now : Math.max(now, previousTime + 1)).toISOString();
 }
 
-function parseSession(source: string): StoredSession {
+export function parseStoredSession(source: string): StoredSession {
   const value: unknown = JSON.parse(source);
   if (!isStoredSession(value)) throw new Error("Invalid Isla session file");
   if (value.version === 1) {
@@ -203,10 +221,11 @@ function parseSession(source: string): StoredSession {
       provider: value.provider,
       model: value.model,
       messages: value.messages,
+      journal: emptyJournal(),
     };
   }
-  return {
-    version: value.version,
+  if (value.version === 2) return {
+    version: 2,
     id: value.id,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
@@ -214,13 +233,28 @@ function parseSession(source: string): StoredSession {
     model: value.model,
     messages: value.messages,
     ...(value.context ? { context: value.context } : {}),
+    journal: emptyJournal(),
+  };
+  validateSessionJournal(value.journal, value.messages);
+  return {
+    version: 3,
+    id: value.id,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    provider: value.provider,
+    model: value.model,
+    messages: value.messages,
+    ...(value.context ? { context: value.context } : {}),
+    journal: value.journal,
   };
 }
+
+function parseSession(source: string): StoredSession { return parseStoredSession(source); }
 
 function isStoredSession(value: unknown): value is StoredSession {
   if (!value || typeof value !== "object") return false;
   const session = value as Record<string, unknown>;
-  return (session.version === 1 || session.version === 2)
+  return (session.version === 1 || session.version === 2 || session.version === 3)
     && typeof session.id === "string"
     && typeof session.createdAt === "string"
     && typeof session.updatedAt === "string"
@@ -228,7 +262,16 @@ function isStoredSession(value: unknown): value is StoredSession {
     && typeof session.model === "string"
     && Array.isArray(session.messages)
     && session.messages.every(isMessage)
-    && (session.version === 1 || session.context === undefined || isSessionContext(session.context));
+    && (session.version === 1 || session.context === undefined || isSessionContext(session.context))
+    && (session.version !== 3 || isSessionJournal(session.journal));
+}
+
+function emptyJournal(): SessionJournal { return { version: 1, turns: [] }; }
+
+function isSessionJournal(value: unknown): value is SessionJournal {
+  if (!value || typeof value !== "object") return false;
+  const journal = value as Record<string, unknown>;
+  return journal.version === 1 && Array.isArray(journal.turns);
 }
 
 function isSessionContext(value: unknown): value is SessionContext {

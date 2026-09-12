@@ -28,6 +28,7 @@ export async function runCli(
   maxContextChars = 60000,
   contextRetainTurns = 6,
   memoryRuntime?: MemoryRuntime,
+  modelRetries = 0,
 ): Promise<void> {
   writeHeader(output, providerId, model);
   const latestSession = await sessionStore.loadLatest(providerId, model);
@@ -42,7 +43,7 @@ export async function runCli(
     );
   }
   const interactive = isInteractiveInput(input);
-  let session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime);
+  let session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries);
   const history: string[] = [];
   let draft = '';
 
@@ -67,7 +68,7 @@ export async function runCli(
       }
       if (result.type === 'switch-session') {
         storedSession = result.session;
-        session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime);
+        session = createPersistentSession(runtime, providerId, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries);
         output.write('\x1b[2J\x1b[3J\x1b[H');
         writeHeader(output, providerId, model);
         if (result.replayHistory) writeSessionHistory(output, storedSession);
@@ -81,11 +82,14 @@ export async function runCli(
     draft = '';
     history.push(line);
     const startedAt = performance.now();
+    const stopLoading = startLoading(output, startedAt);
     try {
-      output.write('isla> ');
       const response = await session.send(line);
+      stopLoading();
+      output.write('isla> ');
       output.write(`${response.text}\n耗时 ${formatElapsed(startedAt)}\n\n`);
     } catch (error) {
+      stopLoading();
       if (debug) {
         const name = error instanceof Error ? error.name : 'UnknownError';
         const message = error instanceof Error ? error.message : 'Unknown error';
@@ -173,37 +177,31 @@ function createPersistentSession(
   input: Readable,
   interactive: boolean,
   memoryRuntime?: MemoryRuntime,
+  modelRetries = 0,
 ) {
   let current = storedSession;
-  let stopToolLoading: (() => void) | undefined;
   return runtime.createSession({
     providerId,
     messages: current.messages,
-    ...(current.version === 2 && current.context ? { context: current.context } : {}),
+    ...('context' in current && current.context ? { context: current.context } : {}),
+    ...(current.journal ? { journal: current.journal } : {}),
     maxContextTurns,
     maxContextChars,
     contextRetainTurns,
+    modelRetries,
     enableTools: true,
     projectRoot: process.cwd(),
     permissionPreset: 'workspace',
     approvalPolicy: interactive ? 'ask' : 'never',
     ...(memoryRuntime?.enabled ? {
       retrieveContext: async (query: string) => memoryRuntime.buildRequestContext(query, process.cwd(), current.id),
-      onTurnCommitted: async (messages: readonly import('./core/types.js').Message[]) => { await memoryRuntime.indexConversation(current.id, messages, process.cwd()); await memoryRuntime.captureExplicitMemory(current.id, messages, process.cwd()); },
+      onTurnCommitted: async (messages: readonly import('./core/types.js').Message[]) => { try { await memoryRuntime.indexConversation(current.id, messages, process.cwd()); } finally { await memoryRuntime.captureExplicitMemory(current.id, messages, process.cwd()); } },
       onContextCompacted: async (checkpoint: import('./core/context.js').ContextCheckpoint) => { memoryRuntime.captureCheckpointCandidates(current.id, checkpoint, process.cwd()); },
     } : {}),
     ...(interactive ? { approvalService: new CliApprovalService(input, output) } : {}),
-    onToolStarted: tool => {
-      stopToolLoading?.();
-      stopToolLoading = startLoading(output, performance.now(), `使用工具 ${tool}`);
-    },
-    onToolFinished: () => {
-      stopToolLoading?.();
-      stopToolLoading = undefined;
-      if ((output as Writable & { isTTY?: boolean }).isTTY) output.write('isla> ');
-    },
     onSessionStateChanged: async state => {
       current = await sessionStore.save(current, state);
+      if (memoryRuntime?.enabled) await memoryRuntime.captureExplicitMemory(current.id, state.messages, process.cwd());
     },
   });
 }
@@ -228,7 +226,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
         createSession: async (approvalService, events) => {
           if (!useExistingProtocolSession) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []);
           useExistingProtocolSession = false;
-          return runtime.createSession({ providerId: config.provider, ...(protocolStored ? { messages: protocolStored.messages } : {}), ...(protocolStored?.version === 2 && protocolStored.context ? { context: protocolStored.context } : {}), ...(config.systemPrompt ? { systemPrompt: config.systemPrompt } : {}), maxContextTurns: config.maxContextTurns, maxContextChars: config.maxContextChars, contextRetainTurns: config.contextRetainTurns, enableTools: true, projectRoot: process.cwd(), permissionPreset: 'workspace', approvalPolicy: 'ask', approvalService, ...(memoryRuntime.enabled && protocolStored ? { retrieveContext: async (query: string) => memoryRuntime.buildRequestContext(query, process.cwd(), protocolStored?.id), onTurnCommitted: async (messages: readonly import('./core/types.js').Message[]) => { if (protocolStored) { await memoryRuntime.indexConversation(protocolStored.id, messages, process.cwd()); await memoryRuntime.captureExplicitMemory(protocolStored.id, messages, process.cwd()); } }, onContextCompacted: async (checkpoint: import('./core/context.js').ContextCheckpoint) => { if (protocolStored) memoryRuntime.captureCheckpointCandidates(protocolStored.id, checkpoint, process.cwd()); } } : {}), onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished, onSessionStateChanged: async state => { if (protocolStored) protocolStored = await protocolStore.save(protocolStored, state); } });
+          return runtime.createSession({ providerId: config.provider, ...(protocolStored ? { messages: protocolStored.messages } : {}), ...(protocolStored?.version === 2 && protocolStored.context ? { context: protocolStored.context } : {}), ...(config.systemPrompt ? { systemPrompt: config.systemPrompt } : {}), maxContextTurns: config.maxContextTurns, maxContextChars: config.maxContextChars, contextRetainTurns: config.contextRetainTurns, modelRetries: config.modelRetries, enableTools: true, projectRoot: process.cwd(), permissionPreset: 'workspace', approvalPolicy: 'ask', approvalService, ...(memoryRuntime.enabled && protocolStored ? { retrieveContext: async (query: string) => memoryRuntime.buildRequestContext(query, process.cwd(), protocolStored?.id), onTurnCommitted: async (messages: readonly import('./core/types.js').Message[]) => { if (protocolStored) { try { await memoryRuntime.indexConversation(protocolStored.id, messages, process.cwd()); } finally { await memoryRuntime.captureExplicitMemory(protocolStored.id, messages, process.cwd()); } } }, onContextCompacted: async (checkpoint: import('./core/context.js').ContextCheckpoint) => { if (protocolStored) memoryRuntime.captureCheckpointCandidates(protocolStored.id, checkpoint, process.cwd()); } } : {}), onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished, onSessionStateChanged: async state => { if (protocolStored) { protocolStored = await protocolStore.save(protocolStored, state); if (memoryRuntime.enabled) await memoryRuntime.captureExplicitMemory(protocolStored.id, state.messages, process.cwd()); } } });
         },
         sessionId: () => protocolStored?.id ?? 'unknown',
       });
@@ -248,6 +246,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       config.maxContextChars,
       config.contextRetainTurns,
       memoryRuntime,
+      config.modelRetries,
     );
     } finally { memoryRuntime.close(); }
   } catch (error) {

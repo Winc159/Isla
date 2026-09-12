@@ -9,6 +9,7 @@ import type {
   ToolDefinition,
 } from '../core/types.js';
 import type { DeepSeekConfig } from '../config.js';
+import { normalizeProviderError, RuntimeError } from '../core/errors.js';
 export function createDeepSeekPlugin(config: DeepSeekConfig): RuntimePlugin {
   return {
     name: 'deepseek',
@@ -34,9 +35,10 @@ class DeepSeekProvider implements ModelProvider {
       messages: request.messages.map(toChatMessage),
       thinking: { type: 'disabled' as const },
     };
+    try {
     const r = await this.client.chat.completions.create(body as never);
     const text = r.choices[0]?.message.content;
-    if (!text?.trim()) throw new Error('DeepSeek returned no text');
+    if (!text?.trim()) throw new RuntimeError({ code: 'PROVIDER_EMPTY_RESPONSE', recoverable: false, message: 'DeepSeek 模型返回了空回答。' });
     return {
       text,
       model: r.model,
@@ -50,8 +52,10 @@ class DeepSeekProvider implements ModelProvider {
           }
         : {}),
     };
+    } catch (error) { throw normalizeProviderError(error, 'DeepSeek'); }
   }
   async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+    try {
     const r = await this.client.chat.completions.create({
       model: this.model,
       messages: request.messages.map(toChatMessage) as never,
@@ -63,11 +67,15 @@ class DeepSeekProvider implements ModelProvider {
     const structuredCalls = message?.tool_calls?.map(call => ({ id: call.id, name: call.function.name ?? '', arguments: call.function.arguments })) ?? [];
     const textCalls = parseDsmlToolCalls(message?.content ?? '');
     const toolCalls = [...structuredCalls, ...textCalls];
+    if (!toolCalls.length && !message?.content?.trim()) {
+      throw new RuntimeError({ code: 'PROVIDER_EMPTY_RESPONSE', recoverable: false, message: 'DeepSeek 模型返回了空回答。' });
+    }
     return {
       text: textCalls.length ? '' : message?.content ?? '',
       model: r.model,
       ...(toolCalls.length ? { toolCalls } : {}),
     };
+    } catch (error) { throw normalizeProviderError(error, 'DeepSeek'); }
   }
 }
 function toChatTool(tool: ToolDefinition) {

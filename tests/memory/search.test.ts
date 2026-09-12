@@ -19,6 +19,12 @@ describe("MemorySearch", () => {
     expect(search.search("隐藏", { includeCandidates: true })).toHaveLength(1);
   });
 
+  it("matches Chinese queries whose wording differs from the memory text", () => {
+    const { store, search } = setup();
+    store.create({ scope: "global", kind: "preference", content: "本次验收偏好是简洁回答", provenance: "explicit-user" });
+    expect(search.search("本次验收记录的偏好是什么？").map(result => result.content)).toContain("本次验收偏好是简洁回答");
+  });
+
   it("isolates workspace records and respects result budgets", () => {
     const { store, search } = setup();
     store.create({ scope: "workspace", workspace: "D:/one", kind: "decision", content: "SQLite decision one", provenance: "explicit-user" });

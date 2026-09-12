@@ -103,7 +103,7 @@
 - 优先补齐个人 Agent 的真实能力；OpenAI/Local Tool 对齐和插件扩展重构按实际需求推进。
 - 延续完整离线门禁和真实 DeepSeek/NDJSON 连通性回归。
 
-## v0.2.1：分层记忆与检索基础（收口中）
+## v0.2.1：分层记忆与检索基础（已完成实现，真实 Embedding endpoint 待单独验收）
 
 - 保持 `StoredSession.messages` 为唯一对话事实源，并将会话格式升级为兼容 version 1 的 version 2；
 - 引入 Core Memory、Working Memory、最近消息窗口和完整会话归档；
@@ -115,7 +115,23 @@
 
 实施依据：`docs/architecture-v0.2.1.md` 与 `docs/luna-implementation-v0.2.1.md`。
 
-完成信号：跨进程恢复、上下文压缩、记忆编辑、修订恢复、关键词/向量召回和安全降级均有离线测试；现有 CLI、NDJSON、Tool、Approval、Permission 和 Sandbox 无回归。
+完成信号：跨进程恢复、上下文压缩、记忆编辑、修订恢复、关键词/向量召回和安全降级均有离线测试；现有 CLI、NDJSON、Tool、Approval、Permission 和 Sandbox 无回归。当前已满足该完成信号；真实 Embedding endpoint 作为配置相关的额外验收保留，不阻断离线版本收口。
+
+## v0.2.2：可靠会话与可观测性（离线实现已完成，真实 Provider 验收待授权）
+
+- 将会话升级为兼容 v1/v2 的 version 3，在同一 JSON 中保存最小 Turn Journal；
+- 保持 `StoredSession.messages` 为唯一对话正文事实源，Journal 不参与模型历史投影；
+- 记录 Turn、模型 Attempt、Tool、Approval、记忆召回、Checkpoint 和确定终态；
+- 保存模型实际请求快照与稳定 hash，使请求组成可检查、可验证；
+- Provider 错误转换为稳定 code，失败 Attempt 不生成伪 assistant；
+- 恢复时将未完成 running Turn 标为 interrupted，不自动重放模型或 Tool；
+- 增加只读 `/trace`，展示安全的会话运行摘要；
+- 统一 CLI loading、NDJSON 状态和 Journal 生命周期；
+- 建立中英文、workspace、状态和降级场景的离线记忆召回评测集。
+
+实施依据：`docs/architecture-v0.2.2.md` 与 `docs/luna-implementation-v0.2.2.md`。
+
+完成信号：Session v1/v2/v3 兼容；请求快照与实际请求一致；失败和中断可恢复审计；CLI/NDJSON 终态一致；`/trace` 不泄漏正文；真实 DeepSeek NDJSON 连续两轮无空回答；全部离线、构建和打包门禁通过。
 
 ## 候选阶段：Tool 插件
 

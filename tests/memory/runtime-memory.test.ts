@@ -14,4 +14,21 @@ describe("explicit memory capture", () => {
     runtime.captureExplicitMemory("s1", [{ role: "user", content: "记住 api_key=secret" }, { role: "assistant", content: "不能" }], "D:/workspace");
     expect(runtime.store!.list()).toHaveLength(1); runtime.close(); rmSync(directory, { recursive: true, force: true });
   });
+
+  it("recalls explicit memory from a different session", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "isla-cross-session-memory-"));
+    const runtime = MemoryRuntime.open({ path: join(directory, "memory.sqlite") });
+    await runtime.captureExplicitMemory("session-one", [{ role: "user", content: "请记住：本次验收偏好是简洁回答" }, { role: "assistant", content: "已记住" }], directory);
+    const context = await runtime.buildRequestContext("本次验收记录的偏好是什么？", directory, "session-two");
+    expect(context).toContain("本次验收偏好是简洁回答");
+    runtime.close(); rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("captures explicit memory when the user input ends with punctuation", () => {
+    const directory = mkdtempSync(join(tmpdir(), "isla-punctuated-memory-"));
+    const runtime = MemoryRuntime.open({ path: join(directory, "memory.sqlite") });
+    runtime.captureExplicitMemory("session-punctuation", [{ role: "user", content: "请记住：本次验收偏好是简洁回答。" }, { role: "assistant", content: "已记住" }], directory);
+    expect(runtime.store!.list({ status: "active" }).some(record => record.content.includes("简洁回答"))).toBe(true);
+    runtime.close(); rmSync(directory, { recursive: true, force: true });
+  });
 });

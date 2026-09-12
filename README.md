@@ -17,7 +17,7 @@ npm run build
 npm start
 ```
 
-输入 `/new` 开启新对话，输入 `/sessions` 通过方向键选择历史会话，输入 `/memory` 查看长期记忆，输入 `/exit` 或按 `Ctrl+C` 退出。
+输入 `/new` 开启新对话，输入 `/sessions` 通过方向键选择历史会话，输入 `/memory` 查看长期记忆，输入 `/trace` 查看安全运行摘要，输入 `/exit` 或按 `Ctrl+C` 退出。
 
 等待模型返回时，交互式终端会显示生成状态和本次请求耗时。DeepSeek 默认使用非思考模式，以降低普通对话的等待时间。
 
@@ -31,7 +31,7 @@ npm start
 
 会话文件保留完整历史，但每次请求默认最多向模型发送最近 20 个完整对话轮次，并使用 60000 字符预算；Tool Call 与 Tool Result 不会被拆开。达到压力后，较早轮次会压缩为可恢复的 Working Memory 检查点，默认保留最近 6 轮原文。可以通过 `ISLA_MAX_CONTEXT_TURNS`、`ISLA_MAX_CONTEXT_CHARS` 和 `ISLA_CONTEXT_RETAIN_TURNS` 调整边界。
 
-会话文件包含完整对话内容，属于用户私人数据，不应提交到 Git 仓库或公开分享。
+会话文件包含完整对话内容，属于用户私人数据，不应提交到 Git 仓库或公开分享。v0.2.2 起新保存会话使用 Session v3，并额外保存不含正文的 Turn Journal；旧 v1/v2 文件会在下一次成功保存时升级。
 
 ## 分层记忆
 
@@ -49,7 +49,8 @@ npm run dev -- --protocol ndjson
 
 stdin 每行发送一个 JSON 请求，例如 `prompt`、`approval_response`、`new_session` 或 `exit`。stdout 每行都是 JSON 事件，常见事件包括 `ready`、`response_start`、`response_end`、`tool_start`、`tool_end`、`approval_request`、`session_changed`、`error` 和 `bye`。当前版本不输出文本增量事件。诊断信息只写入 stderr；不要把 API Key、`.env` 或私人会话内容写入日志。
 
-协议同一时间只处理一个 prompt。处理期间发送另一个 prompt 会收到可恢复的 `BUSY` 错误。写入类 Tool 需要先收到匹配 `approvalId` 的批准。
+
+协议同一时间只处理一个 prompt。处理期间发送另一个 prompt 会收到可恢复的 `BUSY` 错误。写入类 Tool 需要先收到匹配 `approvalId` 的批准。Provider 失败只输出 `error`，不会追加空的 `response_end`。
 
 ## 测试与真实 smoke
 
@@ -78,3 +79,13 @@ npm run test:smoke:real
 $env:ISLA_RUN_REAL_SMOKE = "1"
 npm run test:smoke:real:ndjson
 ```
+
+如果 Codex 或后台运行时无法直接看到终端输出，可以把完整协议交互保存到文件：
+
+```powershell
+$env:ISLA_RUN_REAL_SMOKE = "1"
+$env:ISLA_NDJSON_LOG = "./data/ndjson-real.log"
+npm run test:smoke:real:ndjson
+```
+
+日志包含发送给 Isla 的请求、协议事件和最终回答。该文件可能包含私人会话内容，默认不会生成，也不应提交到 Git。

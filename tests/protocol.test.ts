@@ -108,6 +108,16 @@ describe("NDJSON protocol", () => {
     expect(output).toContain("PERSISTENCE_FAILED");
   });
 
+  it("emits only error when a prompt fails, never an empty response_end", async () => {
+    const provider = new FakeProvider([new Error("network unavailable")]);
+    let output = "";
+    const out = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });
+    await runProtocol(Readable.from(['{"type":"prompt","id":"p1","text":"你好"}\n{"type":"exit","id":"e1"}\n']), out, new ChatSession(provider), "fake", "fake-model");
+    const events = output.trim().split("\n").map(line => JSON.parse(line) as { type: string; id?: string; code?: string; text?: string });
+    expect(events.some(event => event.type === "error" && event.id === "p1" && event.code === "PROVIDER_NETWORK")).toBe(true);
+    expect(events.some(event => event.type === "response_end" && event.id === "p1")).toBe(false);
+  });
+
   it("resumes a write tool after an approval response", async () => {
     class WriteProvider extends FakeProvider {
       private calls = 0;

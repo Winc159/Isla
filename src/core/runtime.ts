@@ -1,6 +1,7 @@
 import { ChatSession } from "./session.js";
 import type { PluginContext, RuntimePlugin } from "./plugin.js";
 import type { Message, ModelProvider } from "./types.js";
+import type { SessionJournal } from "./journal.js";
 import type { ToolExecutionResult } from "../tools/types.js";
 import type { SessionEvent } from "./events.js";
 import type { ApprovalPolicy, ApprovalService } from "../approval/types.js";
@@ -12,9 +13,11 @@ export interface CreateSessionOptions {
   readonly maxContextTurns?: number;
   readonly maxContextChars?: number;
   readonly contextRetainTurns?: number;
+  readonly modelRetries?: number;
   readonly context?: import("./context.js").SessionContext;
+  readonly journal?: SessionJournal;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
-  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: import("./context.js").SessionContext }) => Promise<void>;
+  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: import("./context.js").SessionContext; readonly journal?: SessionJournal }) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
   readonly projectRoot?: string;
   readonly onToolsUsed?: (tools: readonly string[]) => void;

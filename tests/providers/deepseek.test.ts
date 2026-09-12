@@ -77,7 +77,7 @@ describe('DeepSeek provider contract', () => {
     await expect(provider().send('test')).rejects.toThrow();
     server.resetHandlers();
     server.use(http.post(endpoint, () => HttpResponse.json({ choices: [{ message: { role: 'assistant', content: '' } }] })));
-    await expect(provider().send('test')).rejects.toThrow('DeepSeek returned no text');
+    await expect(provider().send('test')).rejects.toThrow('空回答');
     server.resetHandlers();
     server.use(http.post(endpoint, () => HttpResponse.error()));
     await expect(provider().send('test')).rejects.toThrow();

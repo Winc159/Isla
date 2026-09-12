@@ -10,6 +10,7 @@ export type OpenAIConfig = {
   readonly maxContextTurns: number;
   readonly maxContextChars: number;
   readonly contextRetainTurns: number;
+  readonly modelRetries: number;
   readonly apiKey: string;
   readonly sessionDirectory?: string;
   readonly memoryEnabled: boolean;
@@ -28,6 +29,7 @@ export type DeepSeekConfig = {
   readonly maxContextTurns: number;
   readonly maxContextChars: number;
   readonly contextRetainTurns: number;
+  readonly modelRetries: number;
   readonly apiKey: string;
   readonly sessionDirectory?: string;
   readonly memoryEnabled: boolean;
@@ -46,6 +48,7 @@ export type LocalConfig = {
   readonly maxContextTurns: number;
   readonly maxContextChars: number;
   readonly contextRetainTurns: number;
+  readonly modelRetries: number;
   readonly baseURL: string;
   readonly apiKey?: string;
   readonly sessionDirectory?: string;
@@ -78,6 +81,9 @@ export function readConfig(env: Env = process.env): AppConfig {
   const contextRetainTurns = Number(env.ISLA_CONTEXT_RETAIN_TURNS ?? DEFAULT_CONTEXT_RETAIN_TURNS);
   if (!Number.isInteger(contextRetainTurns) || contextRetainTurns <= 0)
     throw new Error('ISLA_CONTEXT_RETAIN_TURNS must be a positive integer');
+  const modelRetries = Number(env.ISLA_MODEL_RETRIES ?? '0');
+  if (!Number.isInteger(modelRetries) || modelRetries < 0 || modelRetries > 1)
+    throw new Error('ISLA_MODEL_RETRIES must be 0 or 1');
   const embeddingProvider: 'openai' | 'local' | undefined = env.ISLA_EMBEDDING_PROVIDER as 'openai' | 'local' | undefined;
   if (embeddingProvider !== undefined && embeddingProvider !== 'openai' && embeddingProvider !== 'local') throw new Error('ISLA_EMBEDDING_PROVIDER must be openai or local');
   if (embeddingProvider && !env.ISLA_EMBEDDING_MODEL?.trim()) throw new Error('ISLA_EMBEDDING_MODEL is required when embeddings are enabled');
@@ -91,6 +97,7 @@ export function readConfig(env: Env = process.env): AppConfig {
     maxContextTurns,
     maxContextChars,
     contextRetainTurns,
+    modelRetries,
     memoryEnabled: env.ISLA_MEMORY_ENABLED !== '0' && env.ISLA_MEMORY_ENABLED !== 'false',
     ...(env.ISLA_MEMORY_DB ? { memoryDatabase: env.ISLA_MEMORY_DB } : {}),
     ...(embeddingProvider ? { embeddingProvider, embeddingModel: env.ISLA_EMBEDDING_MODEL!, ...(env.ISLA_EMBEDDING_BASE_URL ? { embeddingBaseURL: env.ISLA_EMBEDDING_BASE_URL } : {}), ...(env.ISLA_EMBEDDING_API_KEY ? { embeddingApiKey: env.ISLA_EMBEDDING_API_KEY } : env.OPENAI_API_KEY ? { embeddingApiKey: env.OPENAI_API_KEY } : {}) } : {}),

@@ -6,6 +6,7 @@ import { ProtocolWriter } from "./writer.js";
 import { ProtocolApprovalService } from "./approval.js";
 import { performance } from "node:perf_hooks";
 import type { ToolExecutionResult } from "../tools/types.js";
+import { isRuntimeError, type RuntimeErrorCode } from "../core/errors.js";
 export interface ProtocolSessionEvents {
   readonly onToolStarted: (tool: string, callId: string) => void;
   readonly onToolFinished: (tool: string, callId: string, result: ToolExecutionResult) => void;
@@ -62,24 +63,25 @@ export async function runProtocol(input: Readable, output: import("node:stream")
         const response = await currentSession.send(request.text);
         writer.write({ type: "response_end", id: request.id, text: response.text, elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)) });
       } catch (error) {
-        writer.write({ type: "error", id: request.id, code: classifyPromptError(error), message: safePromptErrorMessage(error), recoverable: true });
-        writer.write({ type: "response_end", id: request.id, text: "", elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)) });
+        writer.write({ type: "error", id: request.id, code: classifyPromptError(error), message: safePromptErrorMessage(error), recoverable: isRuntimeError(error) ? error.recoverable : true });
       }
     })().finally(() => { active = undefined; activeId = undefined; });
   }
   await writer.flush();
 }
 
-function classifyPromptError(error: unknown): "PROVIDER_FAILED" | "PERSISTENCE_FAILED" | "PROMPT_FAILED" {
+function classifyPromptError(error: unknown): RuntimeErrorCode | "PERSISTENCE_FAILED" | "PROMPT_FAILED" {
+  if (isRuntimeError(error)) return error.code;
   const message = error instanceof Error ? error.message : String(error);
   if (/disk|session|lock|persist|permission|EPERM|EACCES/i.test(message)) return "PERSISTENCE_FAILED";
-  if (/provider|network|timeout|fetch|connection/i.test(message)) return "PROVIDER_FAILED";
+  if (/provider|network|timeout|fetch|connection/i.test(message)) return "PROVIDER_NETWORK";
   return "PROMPT_FAILED";
 }
 
 function safePromptErrorMessage(error: unknown): string {
+  if (isRuntimeError(error)) return error.message;
   const code = classifyPromptError(error);
   if (code === "PERSISTENCE_FAILED") return "会话状态保存失败，请检查会话目录权限。";
-  if (code === "PROVIDER_FAILED") return "模型服务请求失败，请检查 Provider 配置或网络。";
+  if (code === "PROVIDER_NETWORK") return "模型服务请求失败，请检查 Provider 配置或网络。";
   return "当前请求未完成。";
 }

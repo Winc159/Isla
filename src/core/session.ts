@@ -1,4 +1,4 @@
-import type { ModelProvider, Message, ModelResponse, ToolDefinition } from "./types.js";
+import type { ModelProvider, Message, ModelResponse, ToolDefinition, ToolResponse } from "./types.js";
 import { composeRequestMessages } from "../prompts/compose.js";
 import { createProjectFilesCapability } from "../tools/project-files.js";
 import type { ToolCapability, ToolExecutionResult } from "../tools/types.js";
@@ -6,6 +6,9 @@ import { ToolRegistry } from "../tools/registry.js";
 import { ToolRuntime } from "../tools/runtime.js";
 import type { ApprovalPolicy, ApprovalService } from "../approval/types.js";
 import type { PermissionPreset } from "../approval/presets.js";
+import { isRuntimeError } from "./errors.js";
+import type { ModelAttemptRecord, SessionJournal, TurnActionRecord, TurnRecord } from "./journal.js";
+import { createRequestSnapshot } from "./request-snapshot.js";
 import type { SessionEvent } from "./events.js";
 import {
   appendCheckpoint,
@@ -28,9 +31,11 @@ export interface ChatSessionOptions {
   readonly maxContextTurns?: number;
   readonly maxContextChars?: number;
   readonly contextRetainTurns?: number;
+  readonly modelRetries?: number;
   readonly context?: SessionContext;
+  readonly journal?: SessionJournal;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
-  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: SessionContext }) => Promise<void>;
+  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal }) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
   readonly projectRoot?: string;
   readonly onToolsUsed?: (tools: readonly string[]) => void;
@@ -49,6 +54,7 @@ export class ChatSession {
   private readonly maxContextTurns: number;
   private readonly maxContextChars: number;
   private readonly contextRetainTurns: number;
+  private readonly modelRetries: number;
   private context: SessionContext | undefined;
   constructor(private readonly provider: ModelProvider, options: ChatSessionOptions = {}) {
     this.messages = options.messages
@@ -63,9 +69,12 @@ export class ChatSession {
     if (!Number.isInteger(this.maxContextChars) || this.maxContextChars <= 0)
       throw new Error("maxContextChars must be a positive integer");
     this.contextRetainTurns = options.contextRetainTurns ?? DEFAULT_CONTEXT_RETAIN_TURNS;
+    this.modelRetries = options.modelRetries ?? 0;
+    if (!Number.isInteger(this.modelRetries) || this.modelRetries < 0 || this.modelRetries > 1) throw new Error("modelRetries must be 0 or 1");
     if (!Number.isInteger(this.contextRetainTurns) || this.contextRetainTurns <= 0)
       throw new Error("contextRetainTurns must be a positive integer");
     this.context = options.context;
+    this.journal = options.journal ?? { version: 1, turns: [] };
     this.onMessagesChanged = options.onMessagesChanged;
     this.onSessionStateChanged = options.onSessionStateChanged;
     this.onSessionEvent = options.onSessionEvent;
@@ -89,7 +98,8 @@ export class ChatSession {
     });
   }
   private readonly onMessagesChanged: ((messages: readonly Message[]) => Promise<void>) | undefined;
-  private readonly onSessionStateChanged: ((state: { readonly messages: readonly Message[]; readonly context?: SessionContext }) => Promise<void>) | undefined;
+  private readonly onSessionStateChanged: ((state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal }) => Promise<void>) | undefined;
+  private readonly journal: SessionJournal;
   private readonly onSessionEvent: ((event: SessionEvent) => Promise<void>) | undefined;
   private readonly projectRoot: string | undefined;
   private readonly onToolsUsed: ((tools: readonly string[]) => void) | undefined;
@@ -115,7 +125,7 @@ export class ChatSession {
     const successfulWrites = new Set<string>();
     const tools: readonly ToolDefinition[] = this.toolRegistry.definitions();
     for (let round = 0; round < DEFAULT_MAX_TOOL_ROUNDS; round += 1) {
-      const response = await provider.generateWithTools({ messages: current, tools });
+      const response = await this.generateModel({ messages: current, tools }, true);
       if (!response.toolCalls?.length) {
         return { ...response, ...(evidence.length ? { evidence } : {}) };
       }
@@ -153,6 +163,9 @@ export class ChatSession {
             if (count >= 2) terminalResponse = { text: "工具调用连续失败，已停止自动重试。", outcome: "blocked", evidence, ...(response.model ? { model: response.model } : {}) };
           }
         } finally {
+          const turn = this.journal.turns.at(-1);
+          if (turn) (turn.actions as TurnActionRecord[]).push({ type: "tool", step: round, callId: call.id, tool: call.name, ok: execution.ok, ...(!execution.ok ? { code: execution.code } : {}) });
+          await this.persistState(false);
           this.onToolFinished?.(call.name, call.id, execution);
           await this.onSessionEvent?.({ type: "tool_result", callId: call.id, tool: call.name, result: execution });
         }
@@ -169,10 +182,33 @@ export class ChatSession {
     }
     return { text: "工具调用达到本轮上限，已停止继续执行。", outcome: "blocked", model: provider.model };
   }
+
+  private generateModel(request: { readonly messages: readonly Message[]; readonly tools: readonly ToolDefinition[] }, withTools: true): Promise<ToolResponse>;
+  private generateModel(request: { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[] }, withTools: false): Promise<ModelResponse>;
+  private async generateModel(request: { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[] }, withTools: boolean): Promise<ModelResponse | ToolResponse> {
+    const turn = this.journal.turns.at(-1);
+    for (let attempt = 0; ; attempt += 1) {
+      const record: ModelAttemptRecord = { attempt: attempt + 1, step: turn?.attempts.length ?? 0, startedAt: new Date().toISOString(), status: "running", request: createRequestSnapshot(request, this.provider.id, this.provider.model) };
+      if (turn) { (turn.attempts as ModelAttemptRecord[]).push(record); await this.persistState(false); }
+      try {
+        const response = withTools && this.provider.generateWithTools ? await this.provider.generateWithTools(request) : await this.provider.generate(request);
+        record.status = "succeeded"; record.endedAt = new Date().toISOString(); await this.persistState(false);
+        return response;
+      } catch (error) {
+        record.status = "failed"; record.endedAt = new Date().toISOString(); if (isRuntimeError(error)) record.error = error.toRecord(); await this.persistState(false);
+        if (attempt >= this.modelRetries || !isRuntimeError(error) || !error.recoverable || !["PROVIDER_TIMEOUT", "PROVIDER_NETWORK", "PROVIDER_RATE_LIMIT"].includes(error.code)) throw error;
+      }
+    }
+  }
+
   private async runTurn(input: string): Promise<ModelResponse> {
-    await this.appendMessage({ role: "user", content: input });
+    const userIndex = this.messages.length;
+    this.messages.push({ role: "user", content: input });
+    const turn: TurnRecord = { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, sequence: this.journal.turns.length + 1, startedAt: new Date().toISOString(), status: "running", userMessageIndex: userIndex, attempts: [], actions: [] };
+    (this.journal.turns as TurnRecord[]).push(turn);
+    try { await this.persistState(); } catch (error) { this.messages.pop(); (this.journal.turns as TurnRecord[]).pop(); throw error; }
     await this.onSessionEvent?.({ type: "user", input });
-    await this.compactIfNeeded();
+    try { await this.compactIfNeeded();
     const projection = buildContextProjection(this.messages, {
       maxTurns: this.context?.checkpoint ? this.contextRetainTurns : this.maxContextTurns,
       maxChars: this.maxContextChars,
@@ -190,11 +226,23 @@ export class ChatSession {
     if (this.capabilities.length && this.provider.generateWithTools) {
       response = await this.generateWithAvailableTools(request);
     } else {
-      response = await this.provider.generate(request);
+      response = await this.generateModel(request, false);
     }
     const text = response.text;
     if (!text.trim()) throw new Error("Provider returned empty text");
-    return this.commitResponse(response);
+    const result = await this.commitResponse(response);
+    turn.status = response.outcome ?? "completed";
+    turn.endedAt = new Date().toISOString();
+    turn.assistantMessageIndex = this.messages.length - 1;
+    await this.persistState(false);
+    return result;
+    } catch (error) {
+      turn.status = "failed";
+      turn.endedAt = new Date().toISOString();
+      if (isRuntimeError(error)) turn.error = error.toRecord();
+      await this.persistState(false);
+      throw error;
+    }
   }
 
   private async commitResponse(response: ModelResponse): Promise<ModelResponse> {
@@ -212,11 +260,11 @@ export class ChatSession {
     catch (error) { this.messages.pop(); throw error; }
   }
 
-  private async persistState(): Promise<void> {
+  private async persistState(includeMessages = true): Promise<void> {
     const messages = [...this.messages];
     if (this.onSessionStateChanged) {
-      await this.onSessionStateChanged({ messages, ...(this.context ? { context: this.context } : {}) });
-    } else {
+      await this.onSessionStateChanged({ messages, ...(this.context ? { context: this.context } : {}), journal: this.journal });
+    } else if (includeMessages) {
       await this.onMessagesChanged?.(messages);
     }
   }
@@ -260,6 +308,9 @@ export class ChatSession {
         this.context = previous;
         return;
       }
+      const turn = this.journal.turns.at(-1);
+      if (turn) (turn.actions as TurnActionRecord[]).push({ type: "checkpoint", throughMessageIndex: checkpoint.checkpoint!.throughMessageIndex });
+      await this.persistState(false);
       try { await this.onContextCompacted?.(checkpoint.checkpoint!); } catch { /* candidate extraction is derived */ }
     } catch {
       // Compression is derived maintenance. A failed compression must not block the turn.
