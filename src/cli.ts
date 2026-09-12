@@ -88,6 +88,7 @@ export async function runCli(
       stopLoading();
       output.write('isla> ');
       output.write(`${response.text}\n耗时 ${formatElapsed(startedAt)}\n\n`);
+      if (response.projectSources?.length) output.write(`参考：\n${response.projectSources.map(source => `- ${source.path}:${source.startLine}`).join("\n")}\n\n`);
     } catch (error) {
       stopLoading();
       if (debug) {

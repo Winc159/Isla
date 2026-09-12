@@ -133,6 +133,19 @@
 
 完成信号：Session v1/v2/v3 兼容；请求快照与实际请求一致；失败和中断可恢复审计；CLI/NDJSON 终态一致；`/trace` 不泄漏正文；真实 DeepSeek NDJSON 连续两轮无空回答；全部离线、构建和打包门禁通过。
 
+## v0.2.3：可验证的项目知识与行动闭环（已完成）
+
+- 建立离线、只读、确定性的项目文件检索服务；
+- 增加只读 `search_project` Tool；
+- 将实际项目来源关联到请求快照和安全 Journal；
+- 最终回答展示可由 Runtime 验证的相对路径与行号；
+- 建立中文、英文、路径、安全与误命中的离线评测集；
+- 暂不引入 SQLite Session Query、Shell、网络、MCP、并行 Tool 或子 Agent。
+
+实施依据：`docs/architecture-v0.2.3.md` 与 `docs/luna-implementation-v0.2.3.md`。
+
+完成信号已满足：项目搜索不越过 workspace、秘密和符号链接边界；source ID、行号、Snapshot 与 Journal 可验证；模型不能伪造来源；CLI/NDJSON 无破坏性变化；全量离线门禁及授权后的真实 DeepSeek NDJSON 验收通过。记录见 `docs/evaluation-v0.2.3.md`。
+
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。

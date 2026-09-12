@@ -1,4 +1,4 @@
-import type { ModelProvider, Message, ModelResponse, ToolDefinition, ToolResponse } from "./types.js";
+import type { ModelProvider, Message, ModelResponse, ProjectSourceReference, ToolDefinition, ToolResponse } from "./types.js";
 import { composeRequestMessages } from "../prompts/compose.js";
 import { createProjectFilesCapability } from "../tools/project-files.js";
 import type { ToolCapability, ToolExecutionResult } from "../tools/types.js";
@@ -112,6 +112,8 @@ export class ChatSession {
   private readonly capabilities: readonly ToolCapability[];
   private readonly toolRegistry: ToolRegistry;
   private readonly toolRuntime: ToolRuntime;
+  private readonly retrievedProjectSources = new Set<string>();
+  private readonly projectSourceReferences = new Map<string, ProjectSourceReference>();
   async send(input: string): Promise<ModelResponse> {
     return this.runTurn(input);
   }
@@ -127,7 +129,7 @@ export class ChatSession {
     for (let round = 0; round < DEFAULT_MAX_TOOL_ROUNDS; round += 1) {
       const response = await this.generateModel({ messages: current, tools }, true);
       if (!response.toolCalls?.length) {
-        return { ...response, ...(evidence.length ? { evidence } : {}) };
+        return { ...response, ...(evidence.length ? { evidence } : {}), ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}) };
       }
       const assistantToolMessage = { role: "assistant" as const, content: "", toolCalls: response.toolCalls };
       const next = [...current, assistantToolMessage];
@@ -151,16 +153,26 @@ export class ChatSession {
         try {
           execution = await this.toolRuntime.execute(call);
           if (execution.ok && (call.name === "list_directory" || call.name === "read_text_file")) evidence.push(call.name);
+          if (execution.ok && call.name === "search_project") {
+            const sourceIds = [...execution.content.matchAll(/project:v1:[0-9a-f]{64}/g)].map(match => match[0]!);
+            for (const match of execution.content.matchAll(/project:v1:[0-9a-f]{64}\s+([^\s:]+(?:\/[^\s:]+)*):(\d+)-\d+/g)) this.projectSourceReferences.set(match[1]!, { path: match[1]!, startLine: Number(match[2]) });
+            for (const sourceId of sourceIds) this.retrievedProjectSources.add(sourceId);
+            const turn = this.journal.turns.at(-1);
+            if (turn && sourceIds.length) {
+              const action: TurnActionRecord = { type: "project_retrieval", sourceIds: [...new Set(sourceIds)].sort(), truncated: execution.content.includes("结果已截断") };
+              (turn.actions as TurnActionRecord[]).push(action);
+            }
+          }
           if (execution.ok && call.name === "write_text_file") successfulWrites.add(writeKey);
           result = execution.ok ? execution.content : `[${execution.code}] ${execution.message}`;
           if (!execution.ok) {
             if (execution.code === "USER_REJECTED") {
-              terminalResponse = { text: "用户拒绝了工具调用，已停止本轮执行。", outcome: "blocked", evidence, ...(response.model ? { model: response.model } : {}) };
+              terminalResponse = { text: "用户拒绝了工具调用，已停止本轮执行。", outcome: "blocked", evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}), ...(response.model ? { model: response.model } : {}) };
             }
             const key = `${call.name}:${call.arguments}:${execution.code}`;
             const count = (failures.get(key) ?? 0) + 1;
             failures.set(key, count);
-            if (count >= 2) terminalResponse = { text: "工具调用连续失败，已停止自动重试。", outcome: "blocked", evidence, ...(response.model ? { model: response.model } : {}) };
+            if (count >= 2) terminalResponse = { text: "工具调用连续失败，已停止自动重试。", outcome: "blocked", evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}), ...(response.model ? { model: response.model } : {}) };
           }
         } finally {
           const turn = this.journal.turns.at(-1);
@@ -188,7 +200,7 @@ export class ChatSession {
   private async generateModel(request: { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[] }, withTools: boolean): Promise<ModelResponse | ToolResponse> {
     const turn = this.journal.turns.at(-1);
     for (let attempt = 0; ; attempt += 1) {
-      const record: ModelAttemptRecord = { attempt: attempt + 1, step: turn?.attempts.length ?? 0, startedAt: new Date().toISOString(), status: "running", request: createRequestSnapshot(request, this.provider.id, this.provider.model) };
+      const record: ModelAttemptRecord = { attempt: attempt + 1, step: turn?.attempts.length ?? 0, startedAt: new Date().toISOString(), status: "running", request: createRequestSnapshot(request, this.provider.id, this.provider.model, "v0", [...this.retrievedProjectSources].sort()) };
       if (turn) { (turn.attempts as ModelAttemptRecord[]).push(record); await this.persistState(false); }
       try {
         const response = withTools && this.provider.generateWithTools ? await this.provider.generateWithTools(request) : await this.provider.generate(request);
@@ -202,6 +214,8 @@ export class ChatSession {
   }
 
   private async runTurn(input: string): Promise<ModelResponse> {
+    this.retrievedProjectSources.clear();
+    this.projectSourceReferences.clear();
     const userIndex = this.messages.length;
     this.messages.push({ role: "user", content: input });
     const turn: TurnRecord = { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, sequence: this.journal.turns.length + 1, startedAt: new Date().toISOString(), status: "running", userMessageIndex: userIndex, attempts: [], actions: [] };

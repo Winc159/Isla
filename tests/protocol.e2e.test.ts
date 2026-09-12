@@ -5,6 +5,12 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+
+if (!existsSync(join(process.cwd(), "dist", "cli.js"))) {
+  execFileSync(process.execPath, [join(process.cwd(), "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"], { cwd: process.cwd(), stdio: "pipe" });
+}
 
 describe("NDJSON subprocess", () => {
   it("starts the built CLI, exchanges a prompt, and exits with JSON stdout", async () => {
@@ -37,7 +43,7 @@ describe("NDJSON subprocess", () => {
     child.stderr.on("data", chunk => errors.push(String(chunk)));
     const rl = createInterface({ input: child.stdout });
     const ready = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("ready timeout")), 15_000);
+      const timer = setTimeout(() => reject(new Error(`ready timeout; stderr=${errors.join("").slice(-1000)}`)), 15_000);
       rl.on("line", line => {
         lines.push(line);
         try {

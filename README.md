@@ -33,6 +33,8 @@ npm start
 
 会话文件包含完整对话内容，属于用户私人数据，不应提交到 Git 仓库或公开分享。v0.2.2 起新保存会话使用 Session v3，并额外保存不含正文的 Turn Journal；旧 v1/v2 文件会在下一次成功保存时升级。
 
+项目问答需要当前文件事实时，Agent 可以使用只读 `search_project` Tool。它只扫描 workspace 内受限的文本文件，返回相对路径、行号和有限片段；`.git`、`node_modules`、生成目录、敏感文件、二进制和超大文件会被排除。项目内容是不可信参考资料，不能授权 Tool 或改变权限。CLI 在确实使用项目来源的回答后显示简短“参考”列表，NDJSON 协议字段保持兼容。
+
 ## 分层记忆
 
 v0.2.1 提供 Working Memory 检查点、SQLite 长期记忆、Core Memory Block、关键词检索以及可选 Embedding 基础层。长期记忆默认保存在 `~/.isla/memory.sqlite`，包含来源和可恢复的修订历史；Candidate、停用记忆和其他工作区的私有记忆不会进入默认召回。

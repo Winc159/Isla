@@ -15,8 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:smoke": "vitest run tests/smoke",
-    "test:smoke:real": "vitest run tests/smoke/real-provider.test.ts",
-    "test:smoke:real:ndjson": "vitest run tests/smoke/real-ndjson.test.ts",
+    "test:smoke:real": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run tests/smoke/real-provider.test.ts",
+    "test:smoke:real:ndjson": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run tests/smoke/real-ndjson.test.ts",
     "test:protocol": "vitest run tests/protocol.test.ts",
     "check": "npm run typecheck && npm run test",
     "pack:check": "npm pack --dry-run"

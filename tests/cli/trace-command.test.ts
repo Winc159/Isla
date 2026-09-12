@@ -12,6 +12,7 @@ describe('/trace', () => {
     const text = Buffer.concat(chunks).toString();
     expect(text).toContain('Turn 1');
     expect(text).toContain('read_text_file');
+    expect(text).toContain('projectSources=0');
     expect(text).not.toContain('PRIVATE_USER_TEXT');
   });
 });

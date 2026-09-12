@@ -5,7 +5,8 @@ export interface ToolCall { readonly id: string; readonly name: string; readonly
 export interface ModelRequest { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[]; readonly toolChoice?: "auto" | "required" | { readonly name: string }; }
 export interface TokenUsage { readonly input?: number; readonly output?: number; readonly total?: number; }
 export type TurnOutcome = "completed" | "needs_user" | "blocked";
-export interface ModelResponse { readonly text: string; readonly model?: string; readonly usage?: TokenUsage; readonly outcome?: TurnOutcome; readonly evidence?: readonly string[]; }
+export interface ProjectSourceReference { readonly path: string; readonly startLine: number; }
+export interface ModelResponse { readonly text: string; readonly model?: string; readonly usage?: TokenUsage; readonly outcome?: TurnOutcome; readonly evidence?: readonly string[]; readonly projectSources?: readonly ProjectSourceReference[]; }
 export interface ToolResponse extends ModelResponse { readonly toolCalls?: readonly ToolCall[]; }
 export interface ModelProvider {
   readonly id: string;

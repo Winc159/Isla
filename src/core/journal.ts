@@ -30,7 +30,8 @@ export type TurnActionRecord =
   | { readonly type: "tool"; readonly step: number; readonly callId: string; readonly tool: string; readonly ok: boolean; readonly code?: string }
   | { readonly type: "approval"; readonly step: number; readonly callId: string; readonly tool: string; readonly decision: "approved" | "rejected" }
   | { readonly type: "checkpoint"; readonly throughMessageIndex: number }
-  | { readonly type: "memory_retrieval"; readonly sourceIds: readonly string[] };
+  | { readonly type: "memory_retrieval"; readonly sourceIds: readonly string[] }
+  | { readonly type: "project_retrieval"; readonly sourceIds: readonly string[]; readonly truncated: boolean };
 
 export interface TurnRecord {
   readonly id: string;

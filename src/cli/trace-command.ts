@@ -23,9 +23,10 @@ export const traceCommand: CliCommand = {
       const attempts = turn.attempts;
       const invalidHashes = attempts.filter(attempt => !verifyRequestSnapshot(attempt.request)).length;
       const tools = turn.actions.filter(action => action.type === 'tool').map(action => action.tool).join(',') || '-';
+      const projectSources = turn.actions.filter(action => action.type === 'project_retrieval').reduce((total, action) => total + action.sourceIds.length, 0);
       const error = turn.error?.code ?? attempts.find(attempt => attempt.error)?.error?.code ?? '-';
       const duration = turn.endedAt ? `${Math.max(0, Date.parse(turn.endedAt) - Date.parse(turn.startedAt))}ms` : '进行中';
-      context.output.write(`Turn ${turn.sequence} · ${turn.status} · ${duration} · attempts=${attempts.length} · tools=${tools} · error=${error} · hashInvalid=${invalidHashes}\n`);
+      context.output.write(`Turn ${turn.sequence} · ${turn.status} · ${duration} · attempts=${attempts.length} · tools=${tools} · projectSources=${projectSources} · error=${error} · hashInvalid=${invalidHashes}\n`);
     }
     return { type: 'continue' };
   },

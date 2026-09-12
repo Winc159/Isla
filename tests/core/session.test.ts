@@ -53,7 +53,7 @@ describe("session", () => {
     const p = new ToolProvider([{ text: "最终回答" }]);
     const s = new ChatSession(p, { projectRoot: sessionRoot, enableTools: true });
     await expect(s.send("读取 README")).resolves.toMatchObject({ text: "最终回答" });
-    expect(p.requests.find(request => request.tools)?.tools?.map(tool => tool.name)).toEqual(["list_directory", "read_text_file", "write_text_file"]);
+    expect(p.requests.find(request => request.tools)?.tools?.map(tool => tool.name)).toEqual(["list_directory", "read_text_file", "search_project", "write_text_file"]);
   });
   it("supports read-only evidence before a discussion", async () => {
     class DiscussionProvider extends FakeProvider {
@@ -68,7 +68,7 @@ describe("session", () => {
     const provider = new DiscussionProvider([]);
     const response = await new ChatSession(provider, { projectRoot: sessionRoot, enableTools: true }).send("讨论如何改进当前项目的审批流程，可以读取相关源码，但不要修改文件");
     expect(response.text).toContain("单一输入泵");
-    expect(provider.requests.find(request => request.tools)?.tools?.map(tool => tool.name)).toEqual(["list_directory", "read_text_file", "write_text_file"]);
+    expect(provider.requests.find(request => request.tools)?.tools?.map(tool => tool.name)).toEqual(["list_directory", "read_text_file", "search_project", "write_text_file"]);
   });
   it("persists tool calls and results as canonical messages", async () => {
     class ToolProvider extends FakeProvider {
