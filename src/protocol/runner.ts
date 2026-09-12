@@ -61,7 +61,7 @@ export async function runProtocol(input: Readable, output: import("node:stream")
     active = (async () => {
       try {
         const response = await currentSession.send(request.text);
-        writer.write({ type: "response_end", id: request.id, text: response.text, elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)) });
+        writer.write({ type: "response_end", id: request.id, text: response.text, elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)), ...(response.projectSources?.length ? { projectSources: response.projectSources.map(source => ({ path: source.path, startLine: source.startLine })) } : {}) });
       } catch (error) {
         writer.write({ type: "error", id: request.id, code: classifyPromptError(error), message: safePromptErrorMessage(error), recoverable: isRuntimeError(error) ? error.recoverable : true });
       }

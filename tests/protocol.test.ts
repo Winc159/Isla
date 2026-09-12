@@ -54,6 +54,16 @@ describe("NDJSON protocol", () => {
     expect(JSON.parse(output.trim().split("\n")[2])).toMatchObject({ type: "response_end", elapsedMs: expect.any(Number) });
   });
 
+  it("projects only safe cited sources on response_end", async () => {
+    let output = "";
+    const out = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });
+    const session = { send: async () => ({ text: "依据", projectSources: [{ path: "docs/policy.md", startLine: 12 }] }) } as unknown as ChatSession;
+    await runProtocol(Readable.from(['{"type":"prompt","id":"p1","text":"依据"}\n{"type":"exit","id":"e1"}\n']), out, session, "fake", "fake-model");
+    const responseEnd = output.trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>).find(event => event.type === "response_end");
+    expect(responseEnd).toMatchObject({ projectSources: [{ path: "docs/policy.md", startLine: 12 }] });
+    expect(JSON.stringify(responseEnd)).not.toMatch(/project:v1|excerpt|query|[A-Fa-f0-9]{64}/);
+  });
+
   it("maps tool lifecycle callbacks to protocol events", async () => {
     class ToolProvider extends FakeProvider {
       private calls = 0;

@@ -9,7 +9,7 @@ export type ProtocolToolErrorCode = "UNKNOWN_TOOL" | "INVALID_ARGUMENTS" | "PERM
 export type ProtocolEvent =
   | { readonly type: "ready"; readonly provider: string; readonly model: string }
   | { readonly type: "response_start"; readonly id: string }
-  | { readonly type: "response_end"; readonly id: string; readonly text: string; readonly elapsedMs: number }
+  | { readonly type: "response_end"; readonly id: string; readonly text: string; readonly elapsedMs: number; readonly projectSources?: readonly { readonly path: string; readonly startLine: number }[] }
   | { readonly type: "tool_start"; readonly id: string; readonly tool: string }
   | { readonly type: "tool_end"; readonly id: string; readonly tool: string; readonly ok: boolean; readonly code?: ProtocolToolErrorCode }
   | { readonly type: "approval_request"; readonly id: string; readonly approvalId: string; readonly tool: string; readonly permission: string; readonly summary: string }

@@ -83,7 +83,7 @@ npx vitest run tests/core/tool-runtime.test.ts tests/tools/search-project.test.t
 
 ### Batch C：结构化来源唯一入口
 
-状态：已完成  
+状态：已完成
 日期：2026-09-12
 
 变更：`ChatSession` 现在只从 `execution.details.type === "project_search"` 建立 source allowlist、Snapshot `retrievedSourceIds` 和 `project_retrieval` Journal action；不再从 Tool content 的 source ID、路径或截断文案恢复可信来源。来源映射改为按 source ID 保存，重复 ID 的不一致定位会阻断本轮。新测试证明其他 Tool 返回的伪造 source-like 文本不会污染来源状态。
@@ -179,7 +179,7 @@ git diff --check
 结果：
 
 - typecheck：通过；
-- 全量测试：44 个测试文件通过、4 个跳过；171 条测试通过、4 条跳过；
+- 全量测试：44 个测试文件通过、4 个跳过；173 条测试通过、4 条跳过；
 - build：通过；
 - pack:check：通过，生成 dry-run 包内容仅含 `dist`、README 和 LICENSE；
 - diff check：通过；仅有 Windows 工作区的 LF/CRLF 提示。
@@ -211,10 +211,32 @@ node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run tests/smoke/
 - `real-project-search.test.ts`：1 个测试通过，约 2.6 秒；收到 `ready`、`search_project tool_start`、成功 `tool_end` 和 `response_end`，回答正确给出 `PROJECT-FACT.md` 及行号；
 - `real-ndjson.test.ts`：1 个测试通过，包含两轮完整场景，约 22 秒；回答、记忆、目录检查、只读讨论、Approval 拒绝/批准、`new_session`、写入和退出均通过。
 
-限制与待复核项：NDJSON `response_end` 按既有 schema 只输出清理后的文本，不暴露 `projectSources` 或 citation marker；本次真实测试因此证明了项目检索和回答路径，但没有从外部协议直接证明模型实际输出过合法 marker 并被 Runtime 映射。不得把该项写成已完全验收；后续应在不改变 NDJSON schema 的前提下，通过临时 Session 审计或专门安全测试补足证据。
+限制与待复核项：NDJSON `response_end` 在 Batch I-a 前只输出清理后的文本，不暴露 `projectSources` 或 citation marker；该缺口已由 Batch I-a 修复并通过真实项目检索断言。
+
+### Batch I-a：NDJSON provenance projection 修复
+
+状态：已完成
+日期：2026-09-12
+
+`response_end` 现在增加可选 `projectSources` 字段，仅投影 Runtime 已校验的 `{ path, startLine }`；无合法引用时省略字段。协议类型、runner、离线协议测试和真实项目检索提示词已同步。真实项目检索重试通过（约 3.1 秒），`response_end.projectSources` 断言通过；本次 Provider 先出现一次 `PROVIDER_TIMEOUT`，随后重试成功。
+
+NDJSON 不输出 source hash、excerpt、query、Tool details 或绝对路径；旧客户端继续读取原有 `text` 字段即可。
+
+## v0.2.4 收口结论
+
+状态：已完成（未执行 Git add、commit 或 push）  
+日期：2026-09-12
+
+架构、Luna Batch A–I、Batch I-a 均已完成。离线门禁最终为 44 个测试文件通过、4 个跳过，173 条测试通过、4 条跳过；typecheck、build、pack check 和 diff check 通过。真实 DeepSeek 项目检索及完整两轮 NDJSON 场景通过，`response_end.projectSources` 真实投影通过。4 个跳过项仅为默认关闭的其他真实 smoke 场景，不构成 v0.2.4 失败。
 
 ## 失败定位与诊断优化
 
 两次初始失败均未在独立重试中复现：项目检索重试约 2.6 秒通过，完整 NDJSON 两轮约 22 秒通过。因此当前证据更支持真实 Provider/子进程的瞬时无终态，而非确定性 Runtime 错误。长期记忆断言对应的离线 `captureExplicitMemory` 测试已覆盖同一中文句式和句末标点，故不能仅凭一次 `expected false` 判定生产记忆捕获缺陷。
 
 已优化真实 smoke 的失败可观测性：项目检索超时现在附带最近事件和脱敏 stderr；长期记忆断言失败现在附带内容与 source 元数据摘要。两项诊断只在测试失败信息中出现，不写入生产日志、不放宽重试或验收断言。下次若复现，可直接区分 Provider timeout、协议终态缺失、Memory disabled、sessionId 不匹配或捕获时序问题。
+
+## 真实 CLI 运行后的修复
+
+用户在真实 Isla workspace 中查询 `ORBIT-731` 时，模型正确发现该字符串只存在于 smoke 测试代码中；但同时暴露出一个引用展示 bug：模型没有输出合法 citation marker，CLI 仍显示了本轮全部 retrieved 来源。原因是 Tool Loop 预先填充的 `projectSources` 在“无 cited”路径没有被清除。
+
+已修复 `ChatSession`：无合法 cited source 时彻底移除 `ModelResponse.projectSources`，并新增“成功检索但回答不引用时不显示参考”回归测试。修复后 typecheck、来源展示/来源关联/协议专项共 17 条测试通过，`git diff --check` 通过。

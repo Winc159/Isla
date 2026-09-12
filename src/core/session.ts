@@ -257,7 +257,12 @@ export class ChatSession {
       response = await this.generateModel(request, false);
     }
     const citations = validateAndCleanCitations(response.text, this.projectSourceReferences);
-    response = { ...response, text: citations.text, ...(citations.projectSources.length ? { projectSources: citations.projectSources } : {}) };
+    if (citations.projectSources.length) {
+      response = { ...response, text: citations.text, projectSources: citations.projectSources };
+    } else {
+      const { projectSources: _retrievedOnly, ...withoutSources } = response;
+      response = { ...withoutSources, text: citations.text };
+    }
     const text = response.text;
     if (!text.trim()) throw new Error("Provider returned empty text");
     const result = await this.commitResponse(response);

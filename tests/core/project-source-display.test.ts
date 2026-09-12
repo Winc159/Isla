@@ -30,4 +30,20 @@ describe("project source display", () => {
     expect(response.text).toBe("answer ");
     expect(response.projectSources).toBeUndefined();
   });
+
+  it("does not display retrieved sources when the answer cites none", async () => {
+    let step = 0;
+    const provider = {
+      id: "fake", model: "fake", async generate(_request: ModelRequest) { return { text: "done" }; },
+      async generateWithTools(_request: ModelRequest): Promise<ToolResponse> {
+        if (step++ === 0) return { text: "", toolCalls: [{ id: "s", name: "search_project", arguments: JSON.stringify({ query: "x" }) }] };
+        return { text: "done" };
+      },
+    };
+    const root = await mkdtemp(join(tmpdir(), "isla-source-no-citation-"));
+    await writeFile(join(root, "note.md"), "x\n");
+    const response = await new ChatSession(provider, { projectRoot: root, enableTools: true, onSessionStateChanged: async () => undefined }).send("search for x");
+    expect(response.text).toBe("done");
+    expect(response.projectSources).toBeUndefined();
+  });
 });
