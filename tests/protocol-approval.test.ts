@@ -27,4 +27,14 @@ describe("ProtocolApprovalService", () => {
     service.rejectPending("exit");
     await expect(service.request({ toolName: "write_text_file", permission: { kind: "filesystem-write" }, summary: "write" })).resolves.toEqual({ approved: false, reason: "协议输入已结束" });
   });
+
+  it("settles a pending approval when its signal is aborted", async () => {
+    const service = new ProtocolApprovalService(() => {});
+    const controller = new AbortController();
+    const pending = service.request({ toolName: "write_text_file", permission: { kind: "filesystem-write" }, summary: "write" }, { signal: controller.signal });
+    await Promise.resolve();
+    controller.abort();
+    await expect(pending).resolves.toEqual({ approved: false, reason: "当前回合已取消。" });
+    expect(service.resolve({ type: "approval_response", id: "a1", approvalId: "approval-1", approved: true })).toBe(false);
+  });
 });

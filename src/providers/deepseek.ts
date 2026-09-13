@@ -10,6 +10,7 @@ import type {
 } from '../core/types.js';
 import type { DeepSeekConfig } from '../config.js';
 import { normalizeProviderError, RuntimeError } from '../core/errors.js';
+import type { ModelCallOptions } from '../core/types.js';
 export function createDeepSeekPlugin(config: DeepSeekConfig): RuntimePlugin {
   return {
     name: 'deepseek',
@@ -29,14 +30,14 @@ class DeepSeekProvider implements ModelProvider {
       maxRetries: 0,
     });
   }
-  async generate(request: ModelRequest): Promise<ModelResponse> {
+  async generate(request: ModelRequest, options?: ModelCallOptions): Promise<ModelResponse> {
     const body = {
       model: this.model,
       messages: request.messages.map(toChatMessage),
       thinking: { type: 'disabled' as const },
     };
     try {
-    const r = await this.client.chat.completions.create(body as never);
+    const r = await this.client.chat.completions.create(body as never, options?.signal ? { signal: options.signal } : undefined);
     const text = r.choices[0]?.message.content;
     if (!text?.trim()) throw new RuntimeError({ code: 'PROVIDER_EMPTY_RESPONSE', recoverable: false, message: 'DeepSeek 模型返回了空回答。' });
     return {
@@ -54,7 +55,7 @@ class DeepSeekProvider implements ModelProvider {
     };
     } catch (error) { throw normalizeProviderError(error, 'DeepSeek'); }
   }
-  async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+  async generateWithTools(request: ModelRequest, options?: ModelCallOptions): Promise<ToolResponse> {
     try {
     const r = await this.client.chat.completions.create({
       model: this.model,
@@ -62,7 +63,7 @@ class DeepSeekProvider implements ModelProvider {
       ...(request.tools ? { tools: request.tools.map(toChatTool) } : {}),
       ...(request.toolChoice ? { tool_choice: request.toolChoice === 'auto' || request.toolChoice === 'required' ? request.toolChoice : { type: 'function', function: { name: request.toolChoice.name } } } : {}),
       thinking: { type: 'disabled' as const },
-    } as never);
+    } as never, options?.signal ? { signal: options.signal } : undefined);
     const message = r.choices[0]?.message as { content?: string | null; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } | undefined;
     const structuredCalls = message?.tool_calls?.map(call => ({ id: call.id, name: call.function.name ?? '', arguments: call.function.arguments })) ?? [];
     const textCalls = parseDsmlToolCalls(message?.content ?? '');

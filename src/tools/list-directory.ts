@@ -17,12 +17,14 @@ export function createListDirectoryTool(rootDirectory: string): Tool {
         additionalProperties: false,
       },
     },
-    async execute(argumentsJson: string): Promise<string> {
+    async execute(argumentsJson: string, options = {}): Promise<string> {
+      if (options.signal?.aborted) throw new Error("当前回合已取消。");
       let args: unknown;
       try { args = JSON.parse(argumentsJson); } catch { throw invalidArguments("list_directory arguments must be valid JSON"); }
       const path = typeof args === "object" && args !== null && "path" in args ? (args as { path?: unknown }).path : undefined;
       if (typeof path !== "string") throw invalidArguments("list_directory path must be relative");
       const target = await sandbox.resolveRootOrDirectory(path);
+      if (options.signal?.aborted) throw new Error("当前回合已取消。");
       return (await readdir(target, { withFileTypes: true })).map(entry => `${entry.isDirectory() ? "dir" : "file"}\t${entry.name}`).join("\n");
     },
   };

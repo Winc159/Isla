@@ -20,9 +20,11 @@ export function createWriteTextFileTool(rootDirectory: string): Tool {
       const preview = value.content.replaceAll("\r", "\\r").replaceAll("\n", "\\n").slice(0, 80);
       return `${action}文本文件 ${value.path}；${value.content.length} 个字符；内容预览：${preview}${value.content.length > 80 ? "…" : ""}`;
     },
-    async execute(argumentsJson: string): Promise<string> {
+    async execute(argumentsJson: string, options = {}): Promise<string> {
+      if (options.signal?.aborted) throw new Error("当前回合已取消。");
       const value = parseWriteArguments(argumentsJson);
       const target = await sandbox.resolvePath(value.path, "write");
+      if (options.signal?.aborted) throw new Error("当前回合已取消。");
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, value.content, "utf8");
       return `已写入 ${value.path}`;

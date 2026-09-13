@@ -16,7 +16,7 @@ export const helpCommand: CliCommand = {
       + '  Alt+Enter   插入换行\n'
       + '  Tab         补全唯一匹配的 slash token\n'
       + '  Esc         退出 Isla\n'
-      + '  Ctrl+C      Isla 不绑定，复制行为由终端决定\n\n',
+      + '  Ctrl+C      生成中取消本轮；空闲时退出\n\n',
     );
     return { type: 'continue' };
   },

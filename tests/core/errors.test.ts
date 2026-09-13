@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { RuntimeError, isRuntimeError } from "../../src/core/errors.js";
+import { RuntimeError, isRuntimeError, normalizeProviderError } from "../../src/core/errors.js";
+import { FakeProvider } from "../support/fake-provider.js";
 
 describe("RuntimeError", () => {
   it("preserves a stable safe error record", () => {
@@ -12,5 +13,23 @@ describe("RuntimeError", () => {
     const error = new RuntimeError({ code: "PROVIDER_AUTH", recoverable: false, message: "模型服务认证失败。" }, { cause: new Error("Authorization: secret") });
     expect(error.toRecord()).not.toHaveProperty("cause");
     expect(error.toRecord().message).not.toContain("secret");
+  });
+
+  it("defines cancellation as a stable non-retryable runtime code", () => {
+    const error = new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
+    expect(error.toRecord()).toEqual({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
+  });
+
+  it("normalizes provider AbortError without treating it as a network failure", () => {
+    const error = new Error("The operation was aborted");
+    error.name = "AbortError";
+    expect(normalizeProviderError(error, "Test").toRecord()).toEqual({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
+  });
+
+  it("keeps the provider call signal available for the runtime boundary", async () => {
+    const provider = new FakeProvider([{ text: "ok" }]);
+    const controller = new AbortController();
+    await provider.generate({ messages: [] }, { signal: controller.signal });
+    expect(provider.signals).toEqual([controller.signal]);
   });
 });

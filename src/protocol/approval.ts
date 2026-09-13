@@ -1,4 +1,4 @@
-import type { ApprovalDecision, ApprovalRequest, ApprovalService } from "../approval/types.js";
+import type { ApprovalDecision, ApprovalRequest, ApprovalRequestOptions, ApprovalService } from "../approval/types.js";
 import type { ProtocolRequest } from "./types.js";
 export class ProtocolApprovalService implements ApprovalService {
   private sequence = 0;
@@ -6,17 +6,22 @@ export class ProtocolApprovalService implements ApprovalService {
   private pending: { readonly approvalId: string; readonly resolve: (decision: ApprovalDecision, remember: boolean) => void } | undefined;
   private closed = false;
   constructor(private readonly emit: (approvalId: string, request: ApprovalRequest) => void) {}
-  async request(request: ApprovalRequest): Promise<ApprovalDecision> {
+  async request(request: ApprovalRequest, options: ApprovalRequestOptions = {}): Promise<ApprovalDecision> {
+    if (options.signal?.aborted) return { approved: false, reason: "当前回合已取消。" };
     if (this.closed) return { approved: false, reason: "协议输入已结束" };
     const key = `${request.toolName}:${request.permission.kind}`;
     if (this.remembered.has(key)) return { approved: true };
     const approvalId = `approval-${++this.sequence}`;
     this.emit(approvalId, request);
     return await new Promise<ApprovalDecision>(resolve => {
+      const onAbort = () => { if (this.pending?.approvalId === approvalId) { this.pending = undefined; resolve({ approved: false, reason: "当前回合已取消。" }); } };
+      options.signal?.addEventListener("abort", onAbort, { once: true });
       this.pending = { approvalId, resolve: (decision, remember) => {
+        options.signal?.removeEventListener("abort", onAbort);
         if (decision.approved && remember) this.remembered.add(key);
         resolve(decision);
       }};
+      if (options.signal?.aborted) onAbort();
     });
   }
   resolve(response: Extract<ProtocolRequest, { type: "approval_response" }>): boolean {

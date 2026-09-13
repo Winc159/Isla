@@ -17,6 +17,36 @@ import { parseCliStartupArgs } from './cli-args.js';
 import { runSetupWizard } from './cli/setup-wizard.js';
 import { createApplication, createStderrDiagnosticSink } from './application.js';
 import { createSessionFactory } from './session-factory.js';
+import type { ChatSession } from './core/session.js';
+
+export interface CliInterruptController {
+  start(): void;
+  stop(): void;
+  readonly cancelling: boolean;
+}
+
+export function createCliInterruptController(
+  session: Pick<ChatSession, 'cancelActiveTurn'>,
+  output: Pick<Writable, 'write'>,
+  options: { readonly signalSource?: { on(event: 'SIGINT', listener: () => void): unknown; off(event: 'SIGINT', listener: () => void): unknown }; readonly forceExit?: (code: number) => void } = {},
+): CliInterruptController {
+  const source = options.signalSource ?? process;
+  const forceExit = options.forceExit ?? (code => process.exit(code));
+  let cancelling = false;
+  let started = false;
+  const onSigint = () => {
+    if (cancelling) { forceExit(130); return; }
+    if (session.cancelActiveTurn({ kind: 'user' })) {
+      cancelling = true;
+      output.write('\n正在取消本轮…\n');
+    }
+  };
+  return {
+    start: () => { if (started) return; started = true; source.on('SIGINT', onSigint); },
+    stop: () => { if (!started) return; started = false; source.off('SIGINT', onSigint); cancelling = false; },
+    get cancelling() { return cancelling; },
+  };
+}
 export async function runCli(
   input: Readable,
   output: Writable,
@@ -97,6 +127,8 @@ export async function runCli(
     history.push(line);
     const startedAt = performance.now();
     const stopLoading = startLoading(output, startedAt);
+    const interrupt = interactive ? createCliInterruptController(session, output) : undefined;
+    interrupt?.start();
     try {
       const response = await session.send(line);
       stopLoading();
@@ -120,6 +152,9 @@ export async function runCli(
       errorOutput.write(
         `Error: ${error instanceof Error ? error.message : 'Unknown error'}\n耗时 ${formatElapsed(startedAt)}\n`,
       );
+    } finally {
+      await session.whenIdle();
+      interrupt?.stop();
     }
     return 'continue';
   };
@@ -255,7 +290,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       let useExistingProtocolSession = true;
       await runProtocol(process.stdin, process.stdout, undefined, config.provider, config.model, {
         ...(config.workspaceRoot ? { workspace: config.workspaceRoot } : {}),
-        capabilities: { toolCalling: true, cancellation: false, streaming: false },
+        capabilities: { toolCalling: true, cancellation: true, streaming: false },
         createSession: async (approvalService, events) => {
           if (!useExistingProtocolSession) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []);
           useExistingProtocolSession = false;

@@ -259,4 +259,25 @@ describe("session", () => {
     expect(mainRequest.messages).toContainEqual({ role: "user", content: "u2" });
     expect(mainRequest.messages).toContainEqual({ role: "user", content: "u3" });
   });
+
+  it("cancels the active turn, preserves the user, and reaches idle without an assistant", async () => {
+    let started!: () => void;
+    const providerStarted = new Promise<void>(resolve => { started = resolve; });
+    const provider = {
+      id: "cancel-test", model: "cancel-model",
+      generate: async (_request: ModelRequest, options?: { signal?: AbortSignal }) => await new Promise<ModelResponse>((resolve, reject) => {
+        started();
+        options?.signal?.addEventListener("abort", () => { const error = new Error("The operation was aborted"); error.name = "AbortError"; reject(error); }, { once: true });
+      }),
+    };
+    const states: Array<{ readonly messages: readonly Message[]; readonly journal?: any }> = [];
+    const session = new ChatSession(provider, { onSessionStateChanged: async state => { states.push(state); } });
+    const pending = session.send("cancel me");
+    await providerStarted;
+    expect(session.cancelActiveTurn()).toBe(true);
+    await expect(pending).rejects.toMatchObject({ code: "TURN_CANCELLED" });
+    await session.whenIdle();
+    expect(states.at(-1)?.messages).toEqual([{ role: "user", content: "cancel me" }]);
+    expect(states.at(-1)?.journal?.turns.at(-1)).toMatchObject({ status: "cancelled", error: { code: "TURN_CANCELLED" } });
+  });
 });

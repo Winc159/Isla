@@ -124,7 +124,10 @@ export function readInteractiveMessage(
         render();
         return;
       }
-      if (key.ctrl && key.name === 'c') return;
+      if (key.ctrl && key.name === 'c') {
+        finish({ type: 'exit' });
+        return;
+      }
       if (key.name === 'escape') {
         finish({ type: 'exit' });
         return;

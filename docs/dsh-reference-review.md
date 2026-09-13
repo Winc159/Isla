@@ -171,3 +171,8 @@ Isla 已出现入口装配分叉：CLI 与 NDJSON 分别恢复 Session、Context
 本轮拒绝：服务定位器、任意 token 注册、入口各自装配 Session、ChatSession 内创建具体 Tool、Memory 伪装为当前 user 消息、自动扫描并执行第三方 npm 包。
 
 重新评估条件：只有第二种真实 UI/API 入口接入时才扩展 adapter contract；只有首个需长期持有的网络或子进程资源出现时才扩展资源监督；只有真实 Provider/Tool 包需要独立分发时才设计显式插件清单。具体契约见 `docs/architecture-v0.2.5.1.md`。
+## v0.2.6 补充评审：端到端取消
+
+本轮只采用 DSH 已验证的取消不变量：当前活动独占 AbortSignal、空闲取消不为未来活动预置状态、第一取消原因生效、Tool协作接收同一signal，以及调用方能够等待活动进入quiescence。
+
+落实仍以 Isla 的 `ChatSession → Provider/ToolRuntime/Approval → StoredSession/Journal` 为边界。拒绝引入 DSH Agent Registry、Inbox、nextTurn/nextStep、steer/inject、Cordis生命周期和事件溯源Session；暂停、step-only cancel、maintenance task与父子Agent取消传播暂缓。完整取舍和重新评估条件见 `docs/architecture-v0.2.6.md`。

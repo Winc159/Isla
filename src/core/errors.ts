@@ -11,7 +11,13 @@ export type RuntimeErrorCode =
   | "PERMISSION_DENIED"
   | "SANDBOX_DENIED"
   | "INTERRUPTED"
+  | "TURN_CANCELLED"
   | "UNKNOWN";
+
+export type TurnCancelReason =
+  | { readonly kind: "user" }
+  | { readonly kind: "disconnect" }
+  | { readonly kind: "shutdown" };
 
 export interface SafeErrorRecord {
   readonly code: RuntimeErrorCode;
@@ -45,6 +51,7 @@ export function normalizeProviderError(error: unknown, provider: string): Runtim
   const status = typeof candidate?.status === "number" ? candidate.status : undefined;
   const name = typeof candidate?.name === "string" ? candidate.name : "";
   const message = typeof candidate?.message === "string" ? candidate.message : String(error);
+  if (name === "AbortError" || /\babort(?:ed|ing)?\b|operation was aborted/i.test(message)) return new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" }, { cause: error });
   if (status === 401 || status === 403 || /authentication|unauthorized|forbidden|api key/i.test(message)) return new RuntimeError({ code: "PROVIDER_AUTH", recoverable: false, message: `${provider} 模型服务认证失败。` }, { cause: error });
   if (status === 429 || /rate.?limit|too many requests/i.test(message)) return new RuntimeError({ code: "PROVIDER_RATE_LIMIT", recoverable: true, message: `${provider} 模型服务请求过于频繁。` }, { cause: error });
   if (/timeout|timed out|deadline/i.test(name) || /timeout|timed out|deadline/i.test(message)) return new RuntimeError({ code: "PROVIDER_TIMEOUT", recoverable: true, message: `${provider} 模型服务请求超时。` }, { cause: error });

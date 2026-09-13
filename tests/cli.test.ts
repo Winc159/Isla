@@ -1,6 +1,6 @@
 import { PassThrough, Readable, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { runCli } from "../src/cli.js";
+import { createCliInterruptController, runCli } from "../src/cli.js";
 import { IslaRuntime } from "../src/core/runtime.js";
 import type { Message } from "../src/core/types.js";
 import type { SessionState, SessionStore, StoredSession } from "../src/session-store.js";
@@ -71,7 +71,7 @@ describe("cli", () => {
 
     expect(out).toContain("/sessions   选择历史会话");
     expect(out).toContain("Alt+Enter   插入换行");
-    expect(out).toContain("Ctrl+C      Isla 不绑定");
+    expect(out).toContain("Ctrl+C      生成中取消本轮");
     expect(p.requests).toHaveLength(0);
   });
 
@@ -143,5 +143,23 @@ describe("cli", () => {
     expect(input.rawModes).toEqual([true, false, true, false, true, false]);
     expect(out).toContain("\x1b[2J\x1b[3J\x1b[H");
     expect(p.requests).toHaveLength(0);
+  });
+
+  it("cancels once and force-exits only on a second interrupt before convergence", () => {
+    const listeners = new Set<() => void>();
+    const source = { on: (_event: 'SIGINT', listener: () => void) => { listeners.add(listener); }, off: (_event: 'SIGINT', listener: () => void) => { listeners.delete(listener); } };
+    let cancels = 0;
+    const exits: number[] = [];
+    let output = "";
+    const controller = createCliInterruptController({ cancelActiveTurn: () => { cancels += 1; return cancels === 1; } }, { write: text => { output += text; } }, { signalSource: source, forceExit: code => exits.push(code) });
+    controller.start();
+    const signal = [...listeners][0]!;
+    signal();
+    expect(controller.cancelling).toBe(true);
+    expect(output).toContain("正在取消本轮");
+    signal();
+    expect(exits).toEqual([130]);
+    controller.stop();
+    expect(listeners).toHaveLength(0);
   });
 });

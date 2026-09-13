@@ -198,6 +198,26 @@
 
 收口说明：共享 `projectStoredSession()` 已进入 SessionFactory 生产路径；NDJSON `ready` 明确报告当前 Tool Calling、取消和流式能力；默认离线门禁覆盖 Profile 启动、会话、Tool、Approval、恢复、退出和隐私边界。`projectRoot` 兼容桥仍只为旧的直接构造调用保留，后续删除属于独立兼容性变更。
 
+## v0.2.6：端到端协作式取消（已完成）
+
+- 每个活动Turn创建独立AbortController；
+- 同一AbortSignal传播到Provider、Approval和Tool；
+- 空闲取消为no-op，不影响未来Turn；
+- CLI生成期间第一次Ctrl+C取消当前Turn，未收敛时第二次才强制退出；
+- NDJSON增加cancel请求、ack和唯一response_cancelled终态；
+- user消息保留，不保存不完整assistant，不自动重试或重放Tool；
+- Journal区分cancelled Turn、aborted Attempt和崩溃恢复的interrupted；
+- 对外报告取消终态前等待当前活动进入quiescence；
+- 只借鉴DSH取消不变量，不引入其Inbox、Agent Registry、Cordis或事件溯源Session。
+
+实施依据：`docs/architecture-v0.2.6.md`、`docs/luna-implementation-v0.2.6.md`与`docs/testing-v0.2.6.md`。
+
+完成信号：CLI/NDJSON可取消Provider、Approval和Tool；取消终态唯一且可恢复审计；旧取消不污染新Turn；取消后无后台Tool写入或协议事件；全部离线、构建和打包门禁通过。
+
+收口记录：Batch A-G 已实施；55 个测试文件中 225 个测试通过、4 个 smoke 测试按环境跳过；typecheck、build、pack:check 与 diff 检查通过。真实 NDJSON 子进程已验证 Provider 请求取消、唯一 `response_cancelled` 终态、`cancel_ack` 与 quiescence 后退出。
+
+本版暂缓：联网、Shell、流式输出、暂停/继续、step-only cancel、后台任务、多Turn队列、取消后重试、子Agent和通用生命周期框架。
+
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。

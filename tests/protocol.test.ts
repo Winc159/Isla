@@ -61,6 +61,25 @@ describe("NDJSON protocol", () => {
     expect(JSON.parse(output.trim().split("\n")[0]!)).toEqual({ type: "ready", provider: "fake", model: "fake-model", workspace: protocolRoot, capabilities });
   });
 
+  it("cancels an active prompt and emits one cancelled terminal event", async () => {
+    const input = new PassThrough();
+    let output = "";
+    const out = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });
+    let started!: () => void;
+    const providerStarted = new Promise<void>(resolve => { started = resolve; });
+    const provider = { id: "fake", model: "fake-model", generate: async (_request: ModelRequest, options?: { signal?: AbortSignal }) => { started(); return await new Promise<ModelResponse>((_resolve, reject) => options?.signal?.addEventListener("abort", () => { const error = new Error("aborted"); error.name = "AbortError"; reject(error); }, { once: true })); } };
+    const running = runProtocol(input, out, new ChatSession(provider), "fake", "fake-model", { capabilities: { toolCalling: false, cancellation: true, streaming: false } });
+    input.write('{"type":"prompt","id":"p1","text":"等待"}\n');
+    await providerStarted;
+    input.write('{"type":"cancel","id":"c1","targetId":"p1"}\n');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    input.end('{"type":"exit","id":"e1"}\n');
+    await running;
+    const events = output.trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>);
+    expect(events).toEqual(expect.arrayContaining([{ type: "cancel_ack", id: "c1", targetId: "p1", accepted: true }, { type: "response_cancelled", id: "p1", elapsedMs: expect.any(Number) }]));
+    expect(events.filter(event => event.type === "response_end" || event.type === "response_cancelled" || event.type === "error" && event.id === "p1")).toHaveLength(1);
+  });
+
   it("projects only safe cited sources on response_end", async () => {
     let output = "";
     const out = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });

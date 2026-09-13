@@ -62,4 +62,21 @@ describe("ToolRuntime", () => {
     registry.register({ definition: { name: "read", description: "", parameters: {} }, permission: { kind: "filesystem-read" }, execute: async () => "read" });
     await expect(new ToolRuntime(registry, { approvalPolicy: "ask", permissionPreset: "workspace" }).execute({ id: "1", name: "read", arguments: "{}" })).resolves.toEqual({ ok: true, content: "read" });
   });
+
+  it("fails closed when the execution signal is already aborted", async () => {
+    const registry = new ToolRegistry();
+    let executed = false;
+    registry.register({ definition: { name: "write", description: "", parameters: {} }, execute: async () => { executed = true; return "written"; } });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(new ToolRuntime(registry).execute({ id: "1", name: "write", arguments: "{}" }, { signal: controller.signal })).resolves.toEqual({ ok: false, code: "TURN_CANCELLED", message: "当前回合已取消。" });
+    expect(executed).toBe(false);
+  });
+
+  it("maps a signal aborted during tool execution to cancellation", async () => {
+    const registry = new ToolRegistry();
+    const controller = new AbortController();
+    registry.register({ definition: { name: "slow", description: "", parameters: {} }, execute: async (_args, options) => { await new Promise(resolve => setTimeout(resolve, 5)); controller.abort(); await new Promise(resolve => setTimeout(resolve, 1)); return "late"; } });
+    await expect(new ToolRuntime(registry).execute({ id: "1", name: "slow", arguments: "{}" }, { signal: controller.signal })).resolves.toMatchObject({ ok: false, code: "TURN_CANCELLED" });
+  });
 });

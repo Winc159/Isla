@@ -22,6 +22,20 @@ describe("Session Journal contract", () => {
     expect(() => validateSessionJournal(journal("failed", 1), [{ role: "user", content: "hello" }, { role: "assistant", content: "not valid" }])).toThrow("Non-completed");
   });
 
+  it("accepts a cancelled turn without an assistant and requires a stable cancellation record", () => {
+    const cancelled = journal("cancelled").turns[0]!;
+    const record = { ...cancelled, endedAt: "2026-01-01T00:00:02.000Z", error: { code: "TURN_CANCELLED" as const, recoverable: false, message: "当前回合已取消。" } };
+    expect(() => validateSessionJournal({ version: 1, turns: [record] }, [{ role: "user", content: "hello" }])).not.toThrow();
+    expect(() => validateSessionJournal({ version: 1, turns: [{ ...record, error: { code: "INTERRUPTED" as const, recoverable: true, message: "中断" } }] }, [{ role: "user", content: "hello" }])).toThrow("TURN_CANCELLED");
+  });
+
+  it("requires endedAt for terminal turns and permits aborted attempts", () => {
+    const cancelled = journal("cancelled").turns[0]!;
+    const record = { ...cancelled, error: { code: "TURN_CANCELLED" as const, recoverable: false, message: "当前回合已取消。" }, attempts: [{ ...cancelled.attempts[0]!, status: "aborted" as const, endedAt: "2026-01-01T00:00:02.000Z" }] };
+    expect(() => validateSessionJournal({ version: 1, turns: [record] }, [{ role: "user", content: "hello" }])).toThrow("endedAt");
+    expect(() => validateSessionJournal({ version: 1, turns: [{ ...record, endedAt: "2026-01-01T00:00:02.000Z" }] }, [{ role: "user", content: "hello" }])).not.toThrow();
+  });
+
   it("rejects non-monotonic sequences and a second running turn", () => {
     const first = journal("running").turns[0]!;
     expect(() => validateSessionJournal({ version: 1, turns: [first, { ...first, id: "turn-2", sequence: 2, userMessageIndex: 0 }] }, [{ role: "user", content: "hello" }])).toThrow("Only the latest");

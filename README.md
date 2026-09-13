@@ -19,7 +19,7 @@ npm run build
 npm start -- --env
 ```
 
-输入 `/new` 开启新对话，输入 `/sessions` 通过方向键选择历史会话，输入 `/memory` 查看长期记忆，输入 `/trace` 查看安全运行摘要，输入 `/config` 查看启动配置，输入 `/profile` 查看当前 Profile，输入 `/exit` 或按 `Ctrl+C` 退出。
+输入 `/new` 开启新对话，输入 `/sessions` 通过方向键选择历史会话，输入 `/memory` 查看长期记忆，输入 `/trace` 查看安全运行摘要，输入 `/config` 查看启动配置，输入 `/profile` 查看当前 Profile，输入 `/exit` 或空闲时按 `Ctrl+C` 退出；生成期间第一次 `Ctrl+C` 取消当前回合，未收敛时第二次才强制退出。
 
 等待模型返回时，交互式终端会显示生成状态和本次请求耗时。DeepSeek 默认使用非思考模式，以降低普通对话的等待时间。
 
@@ -51,7 +51,7 @@ v0.2.1 提供 Working Memory 检查点、SQLite 长期记忆、Core Memory Block
 npm run dev -- --protocol ndjson
 ```
 
-stdin 每行发送一个 JSON 请求，例如 `prompt`、`approval_response`、`new_session` 或 `exit`。stdout 每行都是 JSON 事件，常见事件包括 `ready`、`response_start`、`response_end`、`tool_start`、`tool_end`、`approval_request`、`session_changed`、`error` 和 `bye`。当前版本不输出文本增量事件。诊断信息只写入 stderr；不要把 API Key、`.env` 或私人会话内容写入日志。
+stdin 每行发送一个 JSON 请求，例如 `prompt`、`cancel`、`approval_response`、`new_session` 或 `exit`。生成中的 `cancel` 会在当前回合收敛后输出唯一 `response_cancelled` 终态；stdout 每行都是 JSON 事件，常见事件包括 `ready`、`response_start`、`response_end`、`response_cancelled`、`cancel_ack`、`tool_start`、`tool_end`、`approval_request`、`session_changed`、`error` 和 `bye`。当前版本不输出文本增量事件。诊断信息只写入 stderr；不要把 API Key、`.env` 或私人会话内容写入日志。
 
 
 协议同一时间只处理一个 prompt。处理期间发送另一个 prompt 会收到可恢复的 `BUSY` 错误。写入类 Tool 需要先收到匹配 `approvalId` 的批准。Provider 失败只输出 `error`，不会追加空的 `response_end`。

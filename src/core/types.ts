@@ -3,6 +3,7 @@ export interface Message { readonly role: MessageRole; readonly content: string;
 export interface ToolDefinition { readonly name: string; readonly description: string; readonly parameters: Record<string, unknown>; }
 export interface ToolCall { readonly id: string; readonly name: string; readonly arguments: string; }
 export interface ModelRequest { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[]; readonly toolChoice?: "auto" | "required" | { readonly name: string }; }
+export interface ModelCallOptions { readonly signal?: AbortSignal; }
 export interface TokenUsage { readonly input?: number; readonly output?: number; readonly total?: number; }
 export type TurnOutcome = "completed" | "needs_user" | "blocked";
 export interface ProjectSourceReference { readonly path: string; readonly startLine: number; }
@@ -11,6 +12,6 @@ export interface ToolResponse extends ModelResponse { readonly toolCalls?: reado
 export interface ModelProvider {
   readonly id: string;
   readonly model: string;
-  generate(request: ModelRequest): Promise<ModelResponse>;
-  generateWithTools?(request: ModelRequest): Promise<ToolResponse>;
+  generate(request: ModelRequest, options?: ModelCallOptions): Promise<ModelResponse>;
+  generateWithTools?(request: ModelRequest, options?: ModelCallOptions): Promise<ToolResponse>;
 }

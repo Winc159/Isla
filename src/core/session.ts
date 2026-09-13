@@ -6,7 +6,7 @@ import { ToolRegistry } from "../tools/registry.js";
 import { ToolRuntime } from "../tools/runtime.js";
 import type { ApprovalPolicy, ApprovalService } from "../approval/types.js";
 import type { PermissionPreset } from "../approval/presets.js";
-import { isRuntimeError } from "./errors.js";
+import { isRuntimeError, RuntimeError, type TurnCancelReason } from "./errors.js";
 import type { ModelAttemptRecord, SessionJournal, TurnActionRecord, TurnRecord } from "./journal.js";
 import { createRequestSnapshot } from "./request-snapshot.js";
 import { validateAndCleanCitations } from "./citations.js";
@@ -116,22 +116,42 @@ export class ChatSession {
   private readonly capabilities: readonly ToolCapability[];
   private readonly toolRegistry: ToolRegistry;
   private readonly toolRuntime: ToolRuntime;
+  private activeTurn: { readonly controller: AbortController; readonly promise: Promise<ModelResponse> } | undefined;
   private readonly retrievedProjectSources = new Set<string>();
   private readonly projectSourceReferences = new Map<string, ProjectSourceReference>();
   async send(input: string): Promise<ModelResponse> {
-    return this.runTurn(input);
+    if (this.activeTurn) throw new RuntimeError({ code: "UNKNOWN", recoverable: true, message: "当前回合仍在执行。" });
+    const controller = new AbortController();
+    const promise = this.runTurn(input, controller.signal).finally(() => {
+      if (this.activeTurn?.controller === controller) this.activeTurn = undefined;
+    });
+    this.activeTurn = { controller, promise };
+    return promise;
   }
 
-  private async generateWithAvailableTools(request: { messages: Message[] }): Promise<ModelResponse> {
+  cancelActiveTurn(reason: TurnCancelReason = { kind: "user" }): boolean {
+    const active = this.activeTurn;
+    if (!active || active.controller.signal.aborted) return false;
+    active.controller.abort(reason);
+    return true;
+  }
+
+  async whenIdle(): Promise<void> {
+    const active = this.activeTurn;
+    if (!active) return;
+    await active.promise.catch(() => undefined);
+  }
+
+  private async generateWithAvailableTools(request: { messages: Message[] }, signal: AbortSignal): Promise<ModelResponse> {
     const provider = this.provider;
-    if (!this.enableTools || !provider.generateWithTools) return provider.generate(request);
+    if (!this.enableTools || !provider.generateWithTools) return provider.generate(request, { signal });
     let current = request.messages;
     const evidence: string[] = [];
     const failures = new Map<string, number>();
     const successfulWrites = new Set<string>();
     const tools: readonly ToolDefinition[] = this.toolRegistry.definitions();
     for (let round = 0; round < DEFAULT_MAX_TOOL_ROUNDS; round += 1) {
-      const response = await this.generateModel({ messages: current, tools }, true);
+      const response = await this.generateModel({ messages: current, tools }, true, signal);
       if (!response.toolCalls?.length) {
         return { ...response, ...(evidence.length ? { evidence } : {}), ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}) };
       }
@@ -155,7 +175,7 @@ export class ChatSession {
         let terminalResponse: ModelResponse | undefined;
         let execution: ToolExecutionResult = { ok: false, code: "EXECUTION_FAILED", message: "Tool execution interrupted" };
         try {
-          execution = await this.toolRuntime.execute(call);
+          execution = await this.toolRuntime.execute(call, { signal });
           if (execution.ok && (call.name === "list_directory" || call.name === "read_text_file")) evidence.push(call.name);
           if (execution.ok && execution.details?.type === "project_search") {
             const sourceIds = [...new Set(execution.details.sources.map(source => source.id))].sort();
@@ -198,6 +218,7 @@ export class ChatSession {
           this.onToolFinished?.(call.name, call.id, execution);
           await this.onSessionEvent?.({ type: "tool_result", callId: call.id, tool: call.name, result: execution });
         }
+        if (!execution.ok && execution.code === "TURN_CANCELLED") throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
         this.onToolsUsed?.([call.name]);
         const toolMessage = { role: "tool" as const, toolCallId: call.id, content: result };
         next.push(toolMessage);
@@ -212,25 +233,27 @@ export class ChatSession {
     return { text: "工具调用达到本轮上限，已停止继续执行。", outcome: "blocked", model: provider.model };
   }
 
-  private generateModel(request: { readonly messages: readonly Message[]; readonly tools: readonly ToolDefinition[] }, withTools: true): Promise<ToolResponse>;
-  private generateModel(request: { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[] }, withTools: false): Promise<ModelResponse>;
-  private async generateModel(request: { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[] }, withTools: boolean): Promise<ModelResponse | ToolResponse> {
+  private generateModel(request: { readonly messages: readonly Message[]; readonly tools: readonly ToolDefinition[] }, withTools: true, signal: AbortSignal): Promise<ToolResponse>;
+  private generateModel(request: { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[] }, withTools: false, signal: AbortSignal): Promise<ModelResponse>;
+  private async generateModel(request: { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[] }, withTools: boolean, signal: AbortSignal): Promise<ModelResponse | ToolResponse> {
     const turn = this.journal.turns.at(-1);
     for (let attempt = 0; ; attempt += 1) {
       const record: ModelAttemptRecord = { attempt: attempt + 1, step: turn?.attempts.length ?? 0, startedAt: new Date().toISOString(), status: "running", request: createRequestSnapshot(request, this.provider.id, this.provider.model, "v0", [...this.retrievedProjectSources].sort()) };
       if (turn) { (turn.attempts as ModelAttemptRecord[]).push(record); await this.persistState(false); }
       try {
-        const response = withTools && this.provider.generateWithTools ? await this.provider.generateWithTools(request) : await this.provider.generate(request);
+        if (signal.aborted) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
+        const response = withTools && this.provider.generateWithTools ? await this.provider.generateWithTools(request, { signal }) : await this.provider.generate(request, { signal });
         record.status = "succeeded"; record.endedAt = new Date().toISOString(); await this.persistState(false);
         return response;
       } catch (error) {
-        record.status = "failed"; record.endedAt = new Date().toISOString(); if (isRuntimeError(error)) record.error = error.toRecord(); await this.persistState(false);
+        record.status = signal.aborted || (isRuntimeError(error) && error.code === "TURN_CANCELLED") ? "aborted" : "failed"; record.endedAt = new Date().toISOString(); if (isRuntimeError(error)) record.error = error.toRecord(); await this.persistState(false);
+        if (signal.aborted || (isRuntimeError(error) && error.code === "TURN_CANCELLED")) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消." });
         if (attempt >= this.modelRetries || !isRuntimeError(error) || !error.recoverable || !["PROVIDER_TIMEOUT", "PROVIDER_NETWORK", "PROVIDER_RATE_LIMIT"].includes(error.code)) throw error;
       }
     }
   }
 
-  private async runTurn(input: string): Promise<ModelResponse> {
+  private async runTurn(input: string, signal: AbortSignal): Promise<ModelResponse> {
     this.retrievedProjectSources.clear();
     this.projectSourceReferences.clear();
     const userIndex = this.messages.length;
@@ -239,7 +262,7 @@ export class ChatSession {
     (this.journal.turns as TurnRecord[]).push(turn);
     try { await this.persistState(); } catch (error) { this.messages.pop(); (this.journal.turns as TurnRecord[]).pop(); throw error; }
     await this.onSessionEvent?.({ type: "user", input });
-    try { await this.compactIfNeeded();
+    try { await this.compactIfNeeded(signal);
     const projection = buildContextProjection(this.messages, {
       maxTurns: this.context?.checkpoint ? this.contextRetainTurns : this.maxContextTurns,
       maxChars: this.maxContextChars,
@@ -256,10 +279,11 @@ export class ChatSession {
     const request = { messages: composeRequestMessages(history, this.capabilities, phase, memoryContext ? { memory: memoryContext } : undefined) };
     let response: ModelResponse;
     if (this.capabilities.length && this.provider.generateWithTools) {
-      response = await this.generateWithAvailableTools(request);
+      response = await this.generateWithAvailableTools(request, signal);
     } else {
-      response = await this.generateModel(request, false);
+      response = await this.generateModel(request, false, signal);
     }
+    if (signal.aborted) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
     const citations = validateAndCleanCitations(response.text, this.projectSourceReferences);
     if (citations.projectSources.length) {
       response = { ...response, text: citations.text, projectSources: citations.projectSources };
@@ -269,22 +293,26 @@ export class ChatSession {
     }
     const text = response.text;
     if (!text.trim()) throw new Error("Provider returned empty text");
-    const result = await this.commitResponse(response);
+    const result = await this.commitResponse(response, signal);
     turn.status = response.outcome ?? "completed";
     turn.endedAt = new Date().toISOString();
     turn.assistantMessageIndex = this.messages.length - 1;
     await this.persistState(false);
     return result;
     } catch (error) {
-      turn.status = "failed";
+      const cancelled = signal.aborted || (isRuntimeError(error) && error.code === "TURN_CANCELLED");
+      turn.status = cancelled ? "cancelled" : "failed";
       turn.endedAt = new Date().toISOString();
-      if (isRuntimeError(error)) turn.error = error.toRecord();
+      if (cancelled) turn.error = { code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" };
+      else if (isRuntimeError(error)) turn.error = error.toRecord();
       await this.persistState(false);
+      if (cancelled) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
       throw error;
     }
   }
 
-  private async commitResponse(response: ModelResponse): Promise<ModelResponse> {
+  private async commitResponse(response: ModelResponse, signal: AbortSignal): Promise<ModelResponse> {
+    if (signal.aborted) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
     await this.appendMessage({ role: "assistant", content: response.text });
     await this.onSessionEvent?.({ type: "assistant", text: response.text });
     try { await this.onTurnCommitted?.([...this.messages]); } catch { this.onDiagnostic?.({ code: "MEMORY_INDEX_FAILED", component: "memory", severity: "debug" }); }
@@ -308,7 +336,8 @@ export class ChatSession {
     }
   }
 
-  private async compactIfNeeded(): Promise<void> {
+  private async compactIfNeeded(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
     if (!shouldCompact(this.messages, { maxTurns: this.maxContextTurns, maxChars: this.maxContextChars })) return;
     const previousCheckpoint = this.context?.checkpoint;
     const units = selectCompactionUnits(this.messages, this.contextRetainTurns, previousCheckpoint?.throughMessageIndex ?? -1);
@@ -327,7 +356,7 @@ export class ChatSession {
           { role: "system", content: prompt },
           { role: "user", content: renderMessagesForCompaction(sourceMessages, previousCheckpoint) },
         ],
-      });
+      }, { signal });
       if (!response.text.trim() || !hasCompactionSections(response.text)) return;
       const checkpoint: SessionContext = {
         version: 1,

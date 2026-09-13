@@ -38,7 +38,7 @@ describe("Profile NDJSON acceptance", () => {
     });
     try {
       await ready;
-      expect(events[0]).toMatchObject({ type: "ready", provider: "local", model: "fixture-model", workspace: process.cwd(), capabilities: { toolCalling: true, cancellation: false, streaming: false } });
+      expect(events[0]).toMatchObject({ type: "ready", provider: "local", model: "fixture-model", workspace: process.cwd(), capabilities: { toolCalling: true, cancellation: true, streaming: false } });
       child.stdin.write('{"type":"exit","id":"e1"}\n');
       const exitCode = await new Promise<number | null>(resolve => child.once("close", resolve));
       expect(exitCode).toBe(0);

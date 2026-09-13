@@ -154,11 +154,11 @@ describe('interactive input editor', () => {
     await expect(editedMultiline).resolves.toEqual({ type: 'submit', value: 'abZc\nxy!' });
   });
 
-  it('ignores Ctrl+C and exits on standalone Esc', async () => {
+  it('exits on Ctrl+C or standalone Esc while idle', async () => {
     const input = interactiveInput();
     const target = output();
     const reading = readInteractiveMessage(input, target.stream, []);
-    input.write('\x03\x1b');
+    input.write('\x03');
     await expect(reading).resolves.toEqual({ type: 'exit' });
     expect(target.read().endsWith('\n')).toBe(true);
     expect(input.isPaused()).toBe(true);

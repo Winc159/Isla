@@ -30,6 +30,7 @@ export async function runProtocol(input: Readable, output: import("node:stream")
   while (true) {
     const next = await iterator.next();
     if (next.done) {
+      currentSession.cancelActiveTurn?.({ kind: "disconnect" });
       approvalService?.rejectPending();
       if (active) await active;
       break;
@@ -45,6 +46,15 @@ export async function runProtocol(input: Readable, output: import("node:stream")
       if (active) await active;
       writer.write({ type: "bye", id: request.id });
       break;
+    }
+    if (request.type === "cancel") {
+      if (!active || activeId !== request.targetId) {
+        writer.write({ type: "error", id: request.id, code: "NOT_ACTIVE", message: "目标请求当前没有活动回合", recoverable: true });
+      } else {
+        const accepted = currentSession.cancelActiveTurn?.({ kind: "user" }) ?? false;
+        writer.write({ type: "cancel_ack", id: request.id, targetId: request.targetId, accepted });
+      }
+      continue;
     }
     if (request.type === "new_session") {
       if (active) { writer.write({ type: "error", id: request.id, code: "BUSY", message: "当前已有请求处理中", recoverable: true }); continue; }
@@ -64,7 +74,8 @@ export async function runProtocol(input: Readable, output: import("node:stream")
         const response = await currentSession.send(request.text);
         writer.write({ type: "response_end", id: request.id, text: response.text, elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)), ...(response.projectSources?.length ? { projectSources: response.projectSources.map(source => ({ path: source.path, startLine: source.startLine })) } : {}) });
       } catch (error) {
-        writer.write({ type: "error", id: request.id, code: classifyPromptError(error), message: safePromptErrorMessage(error), recoverable: isRuntimeError(error) ? error.recoverable : true });
+        if (isRuntimeError(error) && error.code === "TURN_CANCELLED") writer.write({ type: "response_cancelled", id: request.id, elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)) });
+        else writer.write({ type: "error", id: request.id, code: classifyPromptError(error), message: safePromptErrorMessage(error), recoverable: isRuntimeError(error) ? error.recoverable : true });
       }
     })().finally(() => { active = undefined; activeId = undefined; });
   }

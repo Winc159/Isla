@@ -17,12 +17,14 @@ export function createReadTextFileTool(rootDirectory: string): Tool {
         additionalProperties: false,
       },
     },
-    async execute(argumentsJson: string): Promise<string> {
+    async execute(argumentsJson: string, options = {}): Promise<string> {
+      if (options.signal?.aborted) throw new Error("当前回合已取消。");
       let args: unknown;
       try { args = JSON.parse(argumentsJson); } catch { throw invalidArguments("read_text_file arguments must be valid JSON"); }
       const path = typeof args === "object" && args !== null && "path" in args ? (args as { path?: unknown }).path : undefined;
       if (typeof path !== "string") throw invalidArguments("read_text_file path must be a non-empty relative path");
       const target = await sandbox.resolvePath(path, "read");
+      if (options.signal?.aborted) throw new Error("当前回合已取消。");
       return readFile(target, "utf8");
     },
   };
