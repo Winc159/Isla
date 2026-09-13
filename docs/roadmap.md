@@ -180,6 +180,22 @@
 
 本版暂缓：取消、受控联网、Shell、会话内模型热切换、OpenAI/Local Tool Calling 对齐和子 Agent。后续优先重新评估取消与只读受控联网。
 
+## v0.2.5.1：运行装配与入口一致性（设计完成，待实施）
+
+- 修复CLI与NDJSON对Session v3 Context/Journal恢复的语义分叉；
+- 建立显式ResolvedStartupConfig和不可变workspace绑定；
+- 增加小型ApplicationContext统一Provider、Tool、Memory、SessionStore、诊断和关闭生命周期；
+- 提取唯一SessionFactory，CLI、NDJSON和未来Apple/Web/API入口不得各自装配Session；
+- 将具体Tool capability从ChatSession迁移到组合根；
+- Memory以明确host context进入请求投影，不伪装为当前user消息；
+- 增加最小Provider/Tool能力描述，为取消、流式和更通用Tool Calling保留准确边界；
+- 使用现有Profile logLevel提供脱敏诊断，普通用户不依赖env，不默认写持久日志；
+- 不新增取消、联网、Shell、子Agent、新Provider、通用DI或事件总线。
+
+实施依据：`docs/architecture-v0.2.5.1.md`、`docs/luna-implementation-v0.2.5.1.md`与`docs/testing-v0.2.5.1.md`。
+
+完成信号：CLI/NDJSON恢复与请求投影等价；v3 Journal/Context无丢失；所有入口共用ApplicationContext/SessionFactory；workspace在Header/ready中明确；ChatSession不依赖具体Tool或cwd；Memory角色边界修复；资源关闭和安全诊断可验证；单Agent可通过无TTY协议完成全链路；全部离线和打包门禁通过。
+
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。

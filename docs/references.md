@@ -32,6 +32,7 @@
 - [DSH Session Query package](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/session-query/session-query/README.md) — 确定性读取、语义文档投影、live-preferred corpus 与全文索引职责边界；v0.2.4 采用稳定身份、排序和关系校验原则，继续暂缓 SQLite backend、游标与 reconciliation；查看日期 2026-09-12。
 - [DSH Compaction packages](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/compaction/README.md) — 先裁剪过大 Tool Result 再压缩历史的职责拆分；v0.2.4 只采用有界 Tool 输出与优先保留有效片段，不引入 pruner pipeline 或 spill store；查看日期 2026-09-12。
 - [DSH DeepSeek Provider](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/llm/llm-deepseek/src/index.ts) — Provider/model 配置与凭据解析分离；v0.2.5 采用“启动路由不进入模型历史、缺少凭据明确失败”的原则，但按用户选择使用单个本地 `config.json`，不复制其配置或 credential service；查看日期 2026-09-12。
+- DSH host composition、资源所有权与 capability negotiation 对 v0.2.5.1 的补充取舍：采用单一装配和入口等价不变量；拒绝 Cordis、通用服务容器、Surface 和完整事件框架；具体见 `docs/architecture-v0.2.5.1.md` 与 `docs/dsh-reference-review.md`，查看日期 2026-09-13。
 - [OpenHands Condenser](https://docs.openhands.dev/sdk/arch/condenser) — 压力触发、保留尾部和 View 投影；采用最小语义，不引入通用 Pipeline；查看日期 2026-09-11。
 - [LangGraph Memory](https://langchain-ai.github.io/langgraph/how-tos/memory/manage-conversation-history/) — Thread 持久化、裁剪和滚动摘要；采用派生摘要，拒绝 Graph 编排和删除原文；查看日期 2026-09-11。
 - [Letta Memory Architecture](https://github.com/letta-ai/skills/blob/main/letta/letta-api-client/memory-architecture.md) — Core Memory、消息窗口、归档和语义检索分层；直接影响 v0.2.1 的四层记忆模型；查看日期 2026-09-11。

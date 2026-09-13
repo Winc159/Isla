@@ -7,7 +7,7 @@ export type ProtocolRequest =
 export type ProtocolToolErrorCode = "UNKNOWN_TOOL" | "INVALID_ARGUMENTS" | "PERMISSION_DENIED" | "USER_REJECTED" | "EXECUTION_FAILED" | "SANDBOX_DENIED";
 
 export type ProtocolEvent =
-  | { readonly type: "ready"; readonly provider: string; readonly model: string }
+  | { readonly type: "ready"; readonly provider: string; readonly model: string; readonly workspace?: string }
   | { readonly type: "response_start"; readonly id: string }
   | { readonly type: "response_end"; readonly id: string; readonly text: string; readonly elapsedMs: number; readonly projectSources?: readonly { readonly path: string; readonly startLine: number }[] }
   | { readonly type: "tool_start"; readonly id: string; readonly tool: string }

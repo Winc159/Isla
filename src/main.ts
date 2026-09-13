@@ -5,6 +5,7 @@ import { createDeepSeekPlugin } from './providers/deepseek.js';
 import { createLocalPlugin } from './providers/local.js';
 import { ConfigStore, defaultConfigPath } from './config-store.js';
 import { parseCliStartupArgs, type CliStartupArgs } from './cli-args.js';
+import { resolveWorkspace } from './workspace.js';
 export function createRuntime(config: AppConfig): IslaRuntime {
   const r = new IslaRuntime();
   if (config.provider === 'openai') r.use(createOpenAIPlugin(config));
@@ -15,7 +16,9 @@ export function createRuntime(config: AppConfig): IslaRuntime {
 export async function loadRuntime(argv: readonly string[] = process.argv.slice(2), env: Record<string, string | undefined> = process.env): Promise<{ runtime: IslaRuntime; config: AppConfig; startup: CliStartupArgs }> {
   const startup = parseCliStartupArgs(argv);
   const config = await loadStartupConfig(startup, env);
-  return { runtime: createRuntime(config), config, startup };
+  const workspaceRoot = await resolveWorkspace(startup.workspacePath, config.workspaceRoot, process.cwd());
+  const resolvedConfig = { ...config, workspaceRoot } as AppConfig;
+  return { runtime: createRuntime(resolvedConfig), config: resolvedConfig, startup };
 }
 
 async function loadStartupConfig(startup: CliStartupArgs, env: Record<string, string | undefined>): Promise<AppConfig> {

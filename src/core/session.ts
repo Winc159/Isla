@@ -1,7 +1,7 @@
 import type { ModelProvider, Message, ModelResponse, ProjectSourceReference, ToolDefinition, ToolResponse } from "./types.js";
 import { composeRequestMessages } from "../prompts/compose.js";
-import { createProjectFilesCapability } from "../tools/project-files.js";
 import type { ToolCapability, ToolExecutionResult } from "../tools/types.js";
+import { createProjectFilesCapability } from "../tools/project-files.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { ToolRuntime } from "../tools/runtime.js";
 import type { ApprovalPolicy, ApprovalService } from "../approval/types.js";
@@ -49,6 +49,8 @@ export interface ChatSessionOptions {
   readonly retrieveContext?: (input: string, visibleMessages: readonly Message[]) => Promise<string | undefined>;
   readonly onTurnCommitted?: (messages: readonly Message[]) => Promise<void>;
   readonly onContextCompacted?: (checkpoint: ContextCheckpoint) => Promise<void>;
+  readonly capabilities?: readonly ToolCapability[];
+  readonly onDiagnostic?: (event: { readonly code: string; readonly component: string; readonly severity: 'warning' | 'error' | 'debug' }) => void;
 }
 export class ChatSession {
   private readonly messages: Message[];
@@ -87,9 +89,9 @@ export class ChatSession {
     this.retrieveContext = options.retrieveContext;
     this.onTurnCommitted = options.onTurnCommitted;
     this.onContextCompacted = options.onContextCompacted;
-    this.capabilities = this.enableTools && this.provider.generateWithTools
-      ? [createProjectFilesCapability(this.projectRoot ?? process.cwd())]
-      : [];
+    this.onDiagnostic = options.onDiagnostic;
+    // Explicit capabilities are the application path; retain the projectRoot fallback for direct legacy ChatSession callers.
+    this.capabilities = this.enableTools && this.provider.generateWithTools ? (options.capabilities ?? (this.projectRoot ? [createProjectFilesCapability(this.projectRoot)] : [])) : [];
     this.toolRegistry = new ToolRegistry();
     for (const capability of this.capabilities) this.toolRegistry.registerCapability(capability);
     this.toolRuntime = new ToolRuntime(this.toolRegistry, {
@@ -110,6 +112,7 @@ export class ChatSession {
   private readonly retrieveContext: ((input: string, visibleMessages: readonly Message[]) => Promise<string | undefined>) | undefined;
   private readonly onTurnCommitted: ((messages: readonly Message[]) => Promise<void>) | undefined;
   private readonly onContextCompacted: ((checkpoint: ContextCheckpoint) => Promise<void>) | undefined;
+  private readonly onDiagnostic: ((event: { readonly code: string; readonly component: string; readonly severity: 'warning' | 'error' | 'debug' }) => void) | undefined;
   private readonly capabilities: readonly ToolCapability[];
   private readonly toolRegistry: ToolRegistry;
   private readonly toolRuntime: ToolRuntime;
@@ -241,15 +244,16 @@ export class ChatSession {
       maxTurns: this.context?.checkpoint ? this.contextRetainTurns : this.maxContextTurns,
       maxChars: this.maxContextChars,
     });
-    let history = appendCheckpoint(projection, this.context?.checkpoint);
+    const history = appendCheckpoint(projection, this.context?.checkpoint);
+    let memoryContext: string | undefined;
     if (this.retrieveContext) {
       try {
         const retrieved = await this.retrieveContext(input, history);
-        if (retrieved?.trim()) history = insertHistoricalData(history, retrieved);
-      } catch { /* retrieval failure must not block the main request */ }
+        if (retrieved?.trim()) memoryContext = retrieved;
+      } catch { this.onDiagnostic?.({ code: "MEMORY_RETRIEVAL_DEGRADED", component: "memory", severity: "debug" }); }
     }
     const phase = this.capabilities.length ? "tool-loop" as const : "legacy" as const;
-    const request = { messages: composeRequestMessages(history, this.capabilities, phase) };
+    const request = { messages: composeRequestMessages(history, this.capabilities, phase, memoryContext ? { memory: memoryContext } : undefined) };
     let response: ModelResponse;
     if (this.capabilities.length && this.provider.generateWithTools) {
       response = await this.generateWithAvailableTools(request);
@@ -283,7 +287,7 @@ export class ChatSession {
   private async commitResponse(response: ModelResponse): Promise<ModelResponse> {
     await this.appendMessage({ role: "assistant", content: response.text });
     await this.onSessionEvent?.({ type: "assistant", text: response.text });
-    try { await this.onTurnCommitted?.([...this.messages]); } catch { /* archive indexing is derived and retryable */ }
+    try { await this.onTurnCommitted?.([...this.messages]); } catch { this.onDiagnostic?.({ code: "MEMORY_INDEX_FAILED", component: "memory", severity: "debug" }); }
     return response;
   }
 
@@ -346,9 +350,10 @@ export class ChatSession {
       const turn = this.journal.turns.at(-1);
       if (turn) (turn.actions as TurnActionRecord[]).push({ type: "checkpoint", throughMessageIndex: checkpoint.checkpoint!.throughMessageIndex });
       await this.persistState(false);
-      try { await this.onContextCompacted?.(checkpoint.checkpoint!); } catch { /* candidate extraction is derived */ }
+      try { await this.onContextCompacted?.(checkpoint.checkpoint!); } catch { this.onDiagnostic?.({ code: "CHECKPOINT_CANDIDATE_FAILED", component: "memory", severity: "debug" }); }
     } catch {
       // Compression is derived maintenance. A failed compression must not block the turn.
+      this.onDiagnostic?.({ code: "CHECKPOINT_FAILED", component: "context", severity: "debug" });
     }
   }
 
@@ -362,10 +367,4 @@ export class ChatSession {
       await this.appendMessage(message);
     }
   }
-}
-
-function insertHistoricalData(messages: readonly Message[], content: string): Message[] {
-  const firstNonSystem = messages.findIndex(message => message.role !== "system");
-  const index = firstNonSystem < 0 ? messages.length : firstNonSystem;
-  return [...messages.slice(0, index), { role: "user", content }, ...messages.slice(index)];
 }

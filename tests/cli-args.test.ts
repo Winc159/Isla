@@ -16,4 +16,8 @@ describe('CLI startup arguments', () => {
   it('does not accept API keys as arguments', () => {
     expect(() => parseCliStartupArgs(['--api-key', 'test-only-key'])).toThrow('Unknown argument');
   });
+
+  it('parses workspace without changing the config source', () => {
+    expect(parseCliStartupArgs(['--workspace', 'project', '--profile', 'main'])).toMatchObject({ workspacePath: 'project', profileName: 'main', useEnv: false });
+  });
 });

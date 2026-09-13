@@ -23,8 +23,11 @@ describe("session", () => {
     const provider = new FakeProvider([{ text: "ok" }]);
     await new ChatSession(provider, { systemPrompt: "SYSTEM POLICY", retrieveContext: async () => "MEMORY DATA" }).send("CURRENT INPUT");
     const contents = provider.requests[0]!.messages.map(message => message.content);
-    expect(contents.indexOf("SYSTEM POLICY")).toBeLessThan(contents.indexOf("MEMORY DATA"));
-    expect(contents.indexOf("MEMORY DATA")).toBeLessThan(contents.indexOf("CURRENT INPUT"));
+    const memoryIndex = contents.findIndex(content => content.includes("MEMORY DATA"));
+    const currentIndex = contents.indexOf("CURRENT INPUT");
+    expect(contents.indexOf("SYSTEM POLICY")).toBeLessThan(memoryIndex);
+    expect(memoryIndex).toBeLessThan(currentIndex);
+    expect(provider.requests[0]!.messages.find(message => message.content.includes("MEMORY DATA"))?.role).toBe("system");
   });
   it("indexes only after the final assistant message and ignores indexing failure", async () => {
     const snapshots: readonly Message[][] = [];

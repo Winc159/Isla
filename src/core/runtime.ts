@@ -24,6 +24,8 @@ export interface CreateSessionOptions {
   readonly onToolStarted?: (tool: string, callId: string) => void;
   readonly onToolFinished?: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly enableTools?: boolean;
+  readonly capabilities?: readonly import("../tools/types.js").ToolCapability[];
+  readonly onDiagnostic?: (event: { readonly code: string; readonly component: string; readonly severity: 'warning' | 'error' | 'debug' }) => void;
   readonly approvalPolicy?: ApprovalPolicy;
   readonly approvalService?: ApprovalService;
   readonly permissionPreset?: PermissionPreset;

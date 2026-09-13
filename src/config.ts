@@ -22,6 +22,7 @@ export type OpenAIConfig = {
   readonly embeddingApiKey?: string;
   readonly personality?: 'default' | 'minimal';
   readonly logLevel?: 'quiet' | 'normal' | 'debug';
+  readonly workspaceRoot?: string;
 };
 export type DeepSeekConfig = {
   readonly provider: 'deepseek';
@@ -43,6 +44,7 @@ export type DeepSeekConfig = {
   readonly embeddingApiKey?: string;
   readonly personality?: 'default' | 'minimal';
   readonly logLevel?: 'quiet' | 'normal' | 'debug';
+  readonly workspaceRoot?: string;
 };
 export type LocalConfig = {
   readonly provider: 'local';
@@ -65,6 +67,7 @@ export type LocalConfig = {
   readonly embeddingApiKey?: string;
   readonly personality?: 'default' | 'minimal';
   readonly logLevel?: 'quiet' | 'normal' | 'debug';
+  readonly workspaceRoot?: string;
 };
 export type AppConfig = OpenAIConfig | DeepSeekConfig | LocalConfig;
 
@@ -92,6 +95,7 @@ export interface ProfileAppearanceSettingsV1 {
 
 interface StartupProfileBaseV1 {
   readonly model: string;
+  readonly workspace?: string;
   readonly runtime?: ProfileRuntimeSettingsV1;
   readonly memory?: ProfileMemorySettingsV1;
   readonly appearance?: ProfileAppearanceSettingsV1;
@@ -145,6 +149,7 @@ export function profileToAppConfig(profile: StartupProfileV1): AppConfig {
   const common = {
     provider: profile.provider,
     model: profile.model,
+    ...(profile.workspace ? { workspaceRoot: profile.workspace } : {}),
     timeoutMs: runtime.timeoutMs ?? 600000,
     debug: (appearance.logLevel ?? 'normal') === 'debug',
     logLevel: appearance.logLevel ?? 'normal',
@@ -171,11 +176,13 @@ function isRecord(value: unknown): value is UnknownRecord { return Boolean(value
 
 function parseProfile(name: string, value: unknown, onWarning?: (message: string) => void): StartupProfileV1 {
   if (!isRecord(value)) throw new Error(`Isla profile ${name} must be an object`);
-  warnUnknown(value, ['provider', 'model', 'apiKey', 'baseURL', 'runtime', 'memory', 'appearance'], `profile ${name}`, onWarning);
+  warnUnknown(value, ['provider', 'model', 'apiKey', 'baseURL', 'workspace', 'runtime', 'memory', 'appearance'], `profile ${name}`, onWarning);
   const provider = value.provider;
   const model = nonEmptyString(value.model, `Isla profile ${name}.model`);
+  const workspace = value.workspace === undefined ? undefined : nonEmptyString(value.workspace, `Isla profile ${name}.workspace`);
   const base = {
     model,
+    ...(workspace ? { workspace } : {}),
     ...(value.runtime !== undefined ? { runtime: parseRuntime(name, value.runtime, onWarning) } : {}),
     ...(value.memory !== undefined ? { memory: parseMemory(name, value.memory, onWarning) } : {}),
     ...(value.appearance !== undefined ? { appearance: parseAppearance(name, value.appearance, onWarning) } : {}),

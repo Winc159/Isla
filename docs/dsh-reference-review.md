@@ -150,3 +150,24 @@ Isla 已出现新的真实使用问题：正常启动依赖项目 `.env` 或预�
 - 配置损坏时自动覆盖或回退到另一 Provider。
 
 重新评估条件：当本地明文配置不再满足个人部署安全需求时评估系统凭据存储；当同一会话确实需要按成本或能力切换模型时评估 turn-boundary model selection。具体契约与执行顺序见 `docs/architecture-v0.2.5.md` 和 `docs/luna-implementation-v0.2.5.md`。
+
+## v0.2.5.1 补充评审
+
+Isla 已出现入口装配分叉：CLI 与 NDJSON 分别恢复 Session、Context、Journal、Memory、Tool 和 Approval，且具体 Tool 套装仍由 ChatSession 创建。v0.2.5.1 参考 DSH 中 host composition、资源所有权、capability negotiation 和入口适配层的不变量，但继续采用 Isla 的小型明确接口。
+
+本轮采用：
+
+- 应用组合根创建并拥有 Provider、Tool、Memory、SessionStore 与诊断资源；
+- 不同入口共用同一个 Session 创建/恢复契约；
+- workspace、Provider/model 和能力在一次运行内是稳定启动事实；
+- Tool 能力由 host 注入，Agent Loop 不硬编码具体 Tool；
+- 派生能力失败不阻断主流程，但通过结构化脱敏诊断可观察；
+- Memory/检索数据与当前用户指令保持明确身份边界。
+
+本轮调整：不复制 DSH 的 Cordis 生命周期、Context service graph、Surface 或完整 Event Map；Isla 使用类型封闭的 ApplicationContext 和幂等 close，而非通用依赖注入容器；能力描述只覆盖当前真实需要，不建立在线模型目录；Apple/Web 只作为入口可替换性的契约目标，不在本版实现。
+
+本轮暂缓：动态插件发现、远程 host、后台资源监督、并行 Tool、取消实现、流式事件统一和持久化日志。
+
+本轮拒绝：服务定位器、任意 token 注册、入口各自装配 Session、ChatSession 内创建具体 Tool、Memory 伪装为当前 user 消息、自动扫描并执行第三方 npm 包。
+
+重新评估条件：只有第二种真实 UI/API 入口接入时才扩展 adapter contract；只有首个需长期持有的网络或子进程资源出现时才扩展资源监督；只有真实 Provider/Tool 包需要独立分发时才设计显式插件清单。具体契约见 `docs/architecture-v0.2.5.1.md`。
