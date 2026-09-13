@@ -30,6 +30,7 @@ export interface SessionEntryOptions {
   readonly input?: Readable;
   readonly output?: Writable;
   readonly interactive: boolean;
+  readonly approvalPolicy?: import('./approval/types.js').ApprovalPolicy;
   readonly approvalService?: import('./approval/types.js').ApprovalService;
   readonly onToolStarted?: (tool: string, callId: string) => void;
   readonly onToolFinished?: (tool: string, callId: string, result: ToolExecutionResult) => void;
@@ -64,7 +65,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         projectRoot: workspaceRoot,
         ...(diagnostics ? { onDiagnostic: diagnostics } : {}),
         permissionPreset: 'workspace',
-        approvalPolicy: entry.interactive ? 'ask' : 'never',
+        approvalPolicy: entry.approvalPolicy ?? (entry.interactive ? 'ask' : 'never'),
         ...(entry.approvalService ? { approvalService: entry.approvalService } : {}),
         ...(memoryRuntime?.enabled ? {
           retrieveContext: async (query: string) => memoryRuntime.buildRequestContext(query, workspaceRoot, current.id),

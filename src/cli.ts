@@ -296,7 +296,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
           useExistingProtocolSession = false;
           const activeStored = protocolStored;
           if (!activeStored) throw new Error('Protocol session is not configured');
-          return sessionFactory.create({ stored: activeStored, interactive: false, approvalService, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished });
+          return sessionFactory.create({ stored: activeStored, interactive: false, approvalPolicy: 'ask', approvalService, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished });
         },
         sessionId: () => protocolStored?.id ?? 'unknown',
       });

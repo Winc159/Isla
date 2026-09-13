@@ -1,6 +1,6 @@
 {
   "name": "@winc159/isla",
-  "version": "0.2.5",
+  "version": "0.2.6.1",
   "private": true,
   "type": "module",
   "bin": { "isla": "dist/cli.js" },

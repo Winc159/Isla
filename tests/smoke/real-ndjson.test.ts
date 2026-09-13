@@ -97,7 +97,7 @@ async function runRound(round: number): Promise<void> {
     driver.send({ type: "prompt", id: `discuss-${round}`, text: "讨论如何改进当前审批流程；可以读取相关源码，但不要修改文件。" });
     await driver.waitResponse(`discuss-${round}`);
 
-    driver.send({ type: "prompt", id: `reject-${round}`, text: "在当前项目目录创建 acceptance-rejected.txt，写入精确内容 rejected。" });
+    driver.send({ type: "prompt", id: `reject-${round}`, text: "必须调用 write_text_file Tool：在当前项目目录创建 acceptance-rejected.txt，写入精确内容 rejected。不要只用自然语言回答，先发起 Tool Call 等待审批。" });
     const rejectedApproval = await driver.wait("approval_request");
     expect(rejectedApproval.approvalId).toBeTruthy();
     driver.send({ type: "approval_response", id: `reject-approval-${round}`, approvalId: rejectedApproval.approvalId, approved: false });
@@ -110,7 +110,7 @@ async function runRound(round: number): Promise<void> {
     driver.send({ type: "prompt", id: `recall-${round}`, text: "本次验收记录的偏好是什么？请简洁回答。" });
     await driver.waitResponse(`recall-${round}`);
 
-    driver.send({ type: "prompt", id: `approve-${round}`, text: "在当前项目目录创建 acceptance-approved.txt，写入精确内容 approved。" });
+    driver.send({ type: "prompt", id: `approve-${round}`, text: "必须调用 write_text_file Tool：在当前项目目录创建 acceptance-approved.txt，写入精确内容 approved。不要只用自然语言回答，先发起 Tool Call 等待审批。" });
     const approvedApproval = await driver.wait("approval_request", undefined, 90_000, driver.events.length);
     expect(approvedApproval.approvalId).toBeTruthy();
     driver.send({ type: "approval_response", id: `approve-approval-${round}`, approvalId: approvedApproval.approvalId, approved: true });
