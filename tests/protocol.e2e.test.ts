@@ -5,15 +5,10 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
-
-if (!existsSync(join(process.cwd(), "dist", "cli.js"))) {
-  execFileSync(process.execPath, [join(process.cwd(), "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"], { cwd: process.cwd(), stdio: "pipe" });
-}
+const tsxCli = join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
 
 describe("NDJSON subprocess", () => {
-  it("starts the built CLI, exchanges a prompt, and exits with JSON stdout", async () => {
+  it("starts the source CLI, exchanges a prompt, and exits with JSON stdout", async () => {
     const sessionDir = join(tmpdir(), `isla-e2e-${randomUUID()}`);
     const server = createServer((_request, response) => {
       response.setHeader("content-type", "application/json");
@@ -26,7 +21,7 @@ describe("NDJSON subprocess", () => {
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("test server did not expose a port");
     const baseUrl = `http://127.0.0.1:${address.port}/v1`;
-    const child = spawn(process.execPath, ["dist/cli.js", "--env", "--protocol", "ndjson"], {
+    const child = spawn(process.execPath, [tsxCli, "src/cli.ts", "--env", "--protocol", "ndjson"], {
       cwd: process.cwd(),
       env: {
         ...process.env,

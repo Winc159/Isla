@@ -7,7 +7,7 @@ export type ProtocolRequest =
 export type ProtocolToolErrorCode = "UNKNOWN_TOOL" | "INVALID_ARGUMENTS" | "PERMISSION_DENIED" | "USER_REJECTED" | "EXECUTION_FAILED" | "SANDBOX_DENIED";
 
 export type ProtocolEvent =
-  | { readonly type: "ready"; readonly provider: string; readonly model: string; readonly workspace?: string }
+  | { readonly type: "ready"; readonly provider: string; readonly model: string; readonly workspace?: string; readonly capabilities?: ProtocolCapabilities }
   | { readonly type: "response_start"; readonly id: string }
   | { readonly type: "response_end"; readonly id: string; readonly text: string; readonly elapsedMs: number; readonly projectSources?: readonly { readonly path: string; readonly startLine: number }[] }
   | { readonly type: "tool_start"; readonly id: string; readonly tool: string }
@@ -16,3 +16,9 @@ export type ProtocolEvent =
   | { readonly type: "session_changed"; readonly id: string; readonly sessionId: string }
   | { readonly type: "error"; readonly id?: string; readonly code: string; readonly message: string; readonly recoverable: boolean }
   | { readonly type: "bye"; readonly id: string };
+
+export interface ProtocolCapabilities {
+  readonly toolCalling: boolean;
+  readonly cancellation: boolean;
+  readonly streaming: boolean;
+}

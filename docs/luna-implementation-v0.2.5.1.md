@@ -32,7 +32,7 @@
 
 专项测试：Session v1/v2/v3、protocol、request snapshot、journal。停点报告必须展示修复前会失败的断言。
 
-Batch A 实施记录：新增 `projectStoredSession()` 作为入口共享的恢复投影，按字段存在性保留 v1/v2/v3 的 context 与 journal；回归测试见 `tests/core/session-projection.test.ts` 和 `tests/protocol-profile.e2e.test.ts`。
+Batch A 实施记录：新增 `projectStoredSession()` 作为 SessionFactory 实际调用的唯一恢复投影，按字段存在性保留 v1/v2/v3 的 context 与 journal；回归测试见 `tests/core/session-projection.test.ts` 和 `tests/protocol-profile.e2e.test.ts`。
 
 ## 4. Batch B：ResolvedStartupConfig 与 workspace
 
@@ -156,7 +156,9 @@ Batch H 已完成安全诊断接线：`ApplicationContext` 提供按 `quiet/norm
 
 ## 11. Batch I：兼容、自动化与收口
 
-最终收口检查已在受控权限下完成：`npm run typecheck`、`npm test`、`npm run build`、`npm run pack:check` 与 `git diff --check` 全部通过。离线测试为 55 个文件通过、4 个文件跳过；212 条测试通过、4 条跳过。跳过项均为真实 Provider/外部 smoke，不属于默认离线门禁。当前 package 版本仍为 0.2.1，未执行版本升级、Git add、commit、push 或发布。
+最终收口检查已在受控权限下完成：`npm run typecheck`、`npm test`、`npm run build`、`npm run pack:check` 与 `git diff --check` 全部通过。离线测试为 55 个文件通过、4 个真实 Provider/smoke 文件跳过；213 条测试通过、4 条跳过。npm 包版本已对齐为 0.2.5；未执行 Git add、commit、push 或发布。
+
+最终复验补充：Session 恢复投影已去除生产路径重复实现；NDJSON `ready.capabilities` 已实现并由单元测试和 Profile 子进程验收共同锁定；本地 Memory 数据库已移出受版本控制的数据路径，`data/*.db`、`data/*.sqlite`、`data/*.sqlite3` 与 `.isla-local/` 已加入忽略规则。真实数据库内容未进入测试输出或打包内容。
 
 1. 运行旧 Profile、env、Session v1/v2/v3迁移测试；
 2. 运行 CLI与NDJSON等价矩阵；

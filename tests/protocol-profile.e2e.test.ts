@@ -21,7 +21,8 @@ describe("Profile NDJSON acceptance", () => {
     await writeFile(configPath, JSON.stringify({ version: 1, defaultProfile: "local-test", profiles: {
       "local-test": { provider: "local", model: "fixture-model", baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: "test-only-profile-key", appearance: { personality: "minimal", logLevel: "quiet" } },
     } }));
-    const child = spawn(process.execPath, ["dist/cli.js", "--config", configPath, "--profile", "local-test", "--protocol", "ndjson"], {
+    const tsxCli = join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
+    const child = spawn(process.execPath, [tsxCli, "src/cli.ts", "--config", configPath, "--profile", "local-test", "--protocol", "ndjson"], {
       cwd: process.cwd(),
       env: { ...process.env, USERPROFILE: root, HOME: root, HOMEDRIVE: "", HOMEPATH: "", ISLA_TIMEOUT_MS: "5000" },
       stdio: ["pipe", "pipe", "pipe"],
@@ -29,7 +30,7 @@ describe("Profile NDJSON acceptance", () => {
     const lines: string[] = []; const errors: string[] = [];
     child.stderr.on("data", chunk => errors.push(String(chunk)));
     const rl = createInterface({ input: child.stdout });
-    const events: Array<{ type: string; id?: string; text?: string; provider?: string; model?: string }> = [];
+    const events: Array<{ type: string; id?: string; text?: string; provider?: string; model?: string; workspace?: string; capabilities?: { toolCalling: boolean; cancellation: boolean; streaming: boolean } }> = [];
     const ready = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`ready timeout; stderr=${errors.join("").slice(-1000)}`)), 15_000);
       rl.on("line", line => { lines.push(line); try { const event = JSON.parse(line); events.push(event); if (event.type === "ready") { clearTimeout(timer); resolve(); } } catch { reject(new Error("stdout contained invalid JSON")); } });
@@ -37,7 +38,7 @@ describe("Profile NDJSON acceptance", () => {
     });
     try {
       await ready;
-      expect(events[0]).toMatchObject({ type: "ready", provider: "local", model: "fixture-model" });
+      expect(events[0]).toMatchObject({ type: "ready", provider: "local", model: "fixture-model", workspace: process.cwd(), capabilities: { toolCalling: true, cancellation: false, streaming: false } });
       child.stdin.write('{"type":"exit","id":"e1"}\n');
       const exitCode = await new Promise<number | null>(resolve => child.once("close", resolve));
       expect(exitCode).toBe(0);

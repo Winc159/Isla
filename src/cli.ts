@@ -167,18 +167,6 @@ export async function runCliAdapter(options: CliAdapterOptions): Promise<void> {
   return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics);
 }
 
-export function projectStoredSession(storedSession: StoredSession): {
-  readonly messages: readonly import('./core/types.js').Message[];
-  readonly context?: import('./core/context.js').SessionContext;
-  readonly journal?: import('./core/journal.js').SessionJournal;
-} {
-  return {
-    messages: storedSession.messages,
-    ...('context' in storedSession && storedSession.context ? { context: storedSession.context } : {}),
-    ...('journal' in storedSession && storedSession.journal ? { journal: storedSession.journal } : {}),
-  };
-}
-
 function writeSessionHistory(output: Writable, session: StoredSession): void {
   for (const message of session.messages) {
     if (message.role === 'system') continue;
@@ -267,6 +255,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       let useExistingProtocolSession = true;
       await runProtocol(process.stdin, process.stdout, undefined, config.provider, config.model, {
         ...(config.workspaceRoot ? { workspace: config.workspaceRoot } : {}),
+        capabilities: { toolCalling: true, cancellation: false, streaming: false },
         createSession: async (approvalService, events) => {
           if (!useExistingProtocolSession) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []);
           useExistingProtocolSession = false;

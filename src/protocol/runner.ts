@@ -7,13 +7,14 @@ import { ProtocolApprovalService } from "./approval.js";
 import { performance } from "node:perf_hooks";
 import type { ToolExecutionResult } from "../tools/types.js";
 import { isRuntimeError, type RuntimeErrorCode } from "../core/errors.js";
+import type { ProtocolCapabilities } from "./types.js";
 export interface ProtocolSessionEvents {
   readonly onToolStarted: (tool: string, callId: string) => void;
   readonly onToolFinished: (tool: string, callId: string, result: ToolExecutionResult) => void;
 }
-export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly onNewSession?: () => void; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string } = {}): Promise<void> {
+export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly onNewSession?: () => void; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string } = {}): Promise<void> {
   const writer = new ProtocolWriter(output);
-  writer.write({ type: "ready", provider, model, ...(options.workspace ? { workspace: options.workspace } : {}) });
+  writer.write({ type: "ready", provider, model, ...(options.workspace ? { workspace: options.workspace } : {}), ...(options.capabilities ? { capabilities: options.capabilities } : {}) });
   const ids = new Set<string>();
   const rl = createInterface({ input, crlfDelay: Infinity });
   const iterator = rl[Symbol.asyncIterator]();

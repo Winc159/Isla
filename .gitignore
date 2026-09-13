@@ -4,3 +4,7 @@ coverage/
 .vitest/
 .env
 *.log
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+.isla-local/

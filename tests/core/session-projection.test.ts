@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectStoredSession } from "../../src/cli.js";
+import { projectStoredSession } from "../../src/session-factory.js";
 import type { StoredSessionV3 } from "../../src/session-store.js";
 
 describe("stored session projection", () => {

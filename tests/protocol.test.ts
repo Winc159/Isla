@@ -53,6 +53,13 @@ describe("NDJSON protocol", () => {
     expect(events.map(event => event.type)).toEqual(["ready", "response_start", "response_end", "bye"]);
     expect(JSON.parse(output.trim().split("\n")[2])).toMatchObject({ type: "response_end", elapsedMs: expect.any(Number) });
   });
+  it("reports an explicit and accurate capability snapshot in ready", async () => {
+    let output = "";
+    const out = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });
+    const capabilities = { toolCalling: true, cancellation: false, streaming: false } as const;
+    await runProtocol(Readable.from(['{"type":"exit","id":"e1"}\n']), out, new ChatSession(new FakeProvider([])), "fake", "fake-model", { workspace: protocolRoot, capabilities });
+    expect(JSON.parse(output.trim().split("\n")[0]!)).toEqual({ type: "ready", provider: "fake", model: "fake-model", workspace: protocolRoot, capabilities });
+  });
 
   it("projects only safe cited sources on response_end", async () => {
     let output = "";

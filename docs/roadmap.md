@@ -161,7 +161,7 @@
 
 完成信号：结构化 details 是可信来源唯一入口；`displayed ⊆ cited ⊆ retrieved` 可验证；竞争案例满足 top-1/top-3 门禁；中文 bigram 不压过强匹配；Tool 输出预算和 source ID 可重建；Session、Journal、CLI、NDJSON 与全部 v0.2.3 安全语义无回归；全量离线门禁通过；真实 DeepSeek 功能场景和 `response_end.projectSources` provenance 投影均已通过。首次 Provider timeout 已通过独立重试恢复并记录。
 
-## v0.2.5：启动 Profile 与本地配置（设计完成，待实施）
+## v0.2.5：启动 Profile 与本地配置（已完成）
 
 - 使用 `~/.isla/config.json` 保存一个或多个完整启动 Profile；
 - Profile 包含 Provider、模型、本地明文 API Key、Runtime、Memory、personality 和日志设置；
@@ -180,7 +180,7 @@
 
 本版暂缓：取消、受控联网、Shell、会话内模型热切换、OpenAI/Local Tool Calling 对齐和子 Agent。后续优先重新评估取消与只读受控联网。
 
-## v0.2.5.1：运行装配与入口一致性（设计完成，待实施）
+## v0.2.5.1：运行装配与入口一致性（已完成）
 
 - 修复CLI与NDJSON对Session v3 Context/Journal恢复的语义分叉；
 - 建立显式ResolvedStartupConfig和不可变workspace绑定；
@@ -195,6 +195,8 @@
 实施依据：`docs/architecture-v0.2.5.1.md`、`docs/luna-implementation-v0.2.5.1.md`与`docs/testing-v0.2.5.1.md`。
 
 完成信号：CLI/NDJSON恢复与请求投影等价；v3 Journal/Context无丢失；所有入口共用ApplicationContext/SessionFactory；workspace在Header/ready中明确；ChatSession不依赖具体Tool或cwd；Memory角色边界修复；资源关闭和安全诊断可验证；单Agent可通过无TTY协议完成全链路；全部离线和打包门禁通过。
+
+收口说明：共享 `projectStoredSession()` 已进入 SessionFactory 生产路径；NDJSON `ready` 明确报告当前 Tool Calling、取消和流式能力；默认离线门禁覆盖 Profile 启动、会话、Tool、Approval、恢复、退出和隐私边界。`projectRoot` 兼容桥仍只为旧的直接构造调用保留，后续删除属于独立兼容性变更。
 
 ## 候选阶段：Tool 插件
 

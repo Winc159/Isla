@@ -35,6 +35,18 @@ export interface SessionEntryOptions {
   readonly onToolFinished?: (tool: string, callId: string, result: ToolExecutionResult) => void;
 }
 
+export function projectStoredSession(storedSession: StoredSession): {
+  readonly messages: readonly import('./core/types.js').Message[];
+  readonly context?: import('./core/context.js').SessionContext;
+  readonly journal?: import('./core/journal.js').SessionJournal;
+} {
+  return {
+    messages: storedSession.messages,
+    ...('context' in storedSession && storedSession.context ? { context: storedSession.context } : {}),
+    ...('journal' in storedSession && storedSession.journal ? { journal: storedSession.journal } : {}),
+  };
+}
+
 export function createSessionFactory(options: SessionFactoryOptions) {
   const { runtime, config, sessionStore, memoryRuntime, workspaceRoot, diagnostics } = options;
   return {
@@ -42,9 +54,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
       let current = entry.stored;
       return runtime.createSession({
         providerId: config.provider,
-        messages: current.messages,
-        ...('context' in current && current.context ? { context: current.context } : {}),
-        ...('journal' in current && current.journal ? { journal: current.journal } : {}),
+        ...projectStoredSession(current),
         maxContextTurns: config.maxContextTurns,
         maxContextChars: config.maxContextChars,
         contextRetainTurns: config.contextRetainTurns,
