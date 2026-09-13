@@ -4,6 +4,8 @@ import type { AppConfig } from './config.js';
 import type { ContextCheckpoint } from './core/context.js';
 import type { ToolExecutionResult } from './tools/types.js';
 import { createProjectFilesCapability } from './tools/project-files.js';
+import { createWebFetchCapability } from './tools/web.js';
+import type { WebFetchConfig } from './config.js';
 import type { SessionStore, StoredSession } from './session-store.js';
 import type { MemoryRuntime } from './memory/runtime.js';
 
@@ -23,6 +25,7 @@ export interface SessionFactoryConfig {
   readonly maxContextChars: number;
   readonly contextRetainTurns: number;
   readonly modelRetries: number;
+  readonly webFetch?: WebFetchConfig;
 }
 
 export interface SessionEntryOptions {
@@ -61,7 +64,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         contextRetainTurns: config.contextRetainTurns,
         modelRetries: config.modelRetries,
         enableTools: true,
-        capabilities: [createProjectFilesCapability(workspaceRoot)],
+        capabilities: [createProjectFilesCapability(workspaceRoot), ...(config.webFetch?.enabled ? [createWebFetchCapability(config.webFetch)] : [])],
         projectRoot: workspaceRoot,
         ...(diagnostics ? { onDiagnostic: diagnostics } : {}),
         permissionPreset: 'workspace',

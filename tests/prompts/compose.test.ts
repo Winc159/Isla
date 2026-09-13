@@ -17,6 +17,8 @@ describe("prompt composition", () => {
     expect(messages[3]?.content).toContain("不得根据历史上下文猜测");
     expect(messages[3]?.content).toContain("直接返回 write_text_file Tool Call");
     expect(messages[3]?.content).toContain("批准由 Runtime 自动发起");
+    expect(messages[2]?.content).toContain("只能使用当前会话中用户明确提供的约束");
+    expect(messages[2]?.content).toContain("应先提出最少必要的澄清问题");
   });
 
   it("keeps identity and capabilities together in the tool-loop phase", () => {

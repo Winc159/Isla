@@ -176,3 +176,17 @@ Isla 已出现入口装配分叉：CLI 与 NDJSON 分别恢复 Session、Context
 本轮只采用 DSH 已验证的取消不变量：当前活动独占 AbortSignal、空闲取消不为未来活动预置状态、第一取消原因生效、Tool协作接收同一signal，以及调用方能够等待活动进入quiescence。
 
 落实仍以 Isla 的 `ChatSession → Provider/ToolRuntime/Approval → StoredSession/Journal` 为边界。拒绝引入 DSH Agent Registry、Inbox、nextTurn/nextStep、steer/inject、Cordis生命周期和事件溯源Session；暂停、step-only cancel、maintenance task与父子Agent取消传播暂缓。完整取舍和重新评估条件见 `docs/architecture-v0.2.6.md`。
+
+## v0.2.7 补充：受控只读公网获取
+
+Isla 已完成端到端取消，并出现读取项目外官方文档和公开资源的现实需求，因此重新评审 DSH 当前完整 `web_fetch` 链路，而不是沿用其早期曾暂缓 SSRF 防护的状态。
+
+本轮采用：安全获取与模型展示分离；模型只提供 URL；匿名请求；URL 长度/协议/凭据预检；DNS 全答案 fail closed；IPv4、IPv6、IPv4-mapped IPv6 与 DNS64/NAT64 判断；把验证地址固定到实际 HTTPS 连接；手动、逐跳、同源重定向；独立的 byte/char/output/time 上限；非 2xx 作为资源状态；Content-Type/charset fail closed；响应流与 dispatcher 清理；同一 Turn signal 贯穿 DNS、请求与 body read；结构化 details 不从展示文本反向恢复。
+
+Isla 进一步收窄：只允许 HTTPS；Profile 默认关闭并配置精确 hostname allowlist；拒绝所有 IP literal；网络权限不进入 readonly/workspace 自动放行 preset；不读取系统代理；不实现跨源自动跳转；不增加 Web Provider Registry。
+
+本轮暂缓：`web_search`、HTTP、通配符域名、代理、PDF/二进制、浏览器、登录态、缓存、Tool Result spill、出站 DLP 和独立 Web Provider 插件接口。
+
+本轮拒绝：只做 hostname 黑名单后调用全局 fetch；DNS 校验后允许 transport 二次解析；Approval 绕过 allowlist/公网阻断；复制 DSH Cordis、WebRuntime、Provider Registry、middleware、包结构或源码；让 DSH 成为构建或运行时依赖。
+
+完整契约、实施顺序与测试矩阵见 `docs/architecture-v0.2.7.md`、`docs/luna-implementation-v0.2.7.md` 和 `docs/testing-v0.2.7.md`。

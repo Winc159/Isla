@@ -18,6 +18,12 @@ describe('startup config selection', () => {
     expect(result.config).toMatchObject({ provider: 'local', model: 'local-model', baseURL: 'http://localhost:11434/v1' });
   });
 
+  it('projects the profile provider timeout into AppConfig', async () => {
+    await writeFile(configPath, JSON.stringify({ version: 1, defaultProfile: 'main', profiles: { main: { provider: 'local', model: 'local-model', baseURL: 'http://localhost:11434/v1', runtime: { timeoutMs: 600000 } } } }), 'utf8');
+    const result = await loadRuntime(['--config', configPath, '--profile', 'main'], {});
+    expect(result.config.timeoutMs).toBe(600000);
+  });
+
   it('uses explicit env mode and does not read a config file', async () => {
     const result = await loadRuntime(['--env'], { ISLA_PROVIDER: 'local', ISLA_MODEL: 'env-model', ISLA_BASE_URL: 'http://localhost:1234/v1' });
     expect(result.config).toMatchObject({ provider: 'local', model: 'env-model' });

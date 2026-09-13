@@ -218,6 +218,25 @@
 
 本版暂缓：联网、Shell、流式输出、暂停/继续、step-only cancel、后台任务、多Turn队列、取消后重试、子Agent和通用生命周期框架。
 
+## v0.2.7：受控只读公网获取（设计完成，待实施）
+
+- 只增加一个 `web_fetch` Tool，不增加搜索、浏览器、Shell、认证请求或通用 HTTP 平台；
+- 默认关闭；只有 Profile 显式启用且精确 hostname allowlist 非空时注册；
+- 只允许匿名 HTTPS GET，不接受模型提供的 method、header、body、timeout 或凭据；
+- 对全部 DNS 答案执行公网 IPv4/IPv6、IPv4-mapped IPv6 和 NAT64 检查，并把已验证地址固定到实际连接；
+- 手动处理重定向，每跳重新验证且只允许同源；
+- 分别限制 URL、redirect、timeout、响应字节、解码字符和最终 Tool 输出；
+- 只读取 HTML、text、JSON 和 XML 家族；HTML 在展示层转换为有界 Markdown；
+- 网络权限复用现有 Approval，allowlist 与公网策略不能被 Approval 绕过；
+- 复用 v0.2.6 的同一 Turn signal、唯一取消终态和 quiescence；
+- 参考 DSH 完整 web-fetch 安全链路，但不复制其 Cordis、WebRuntime、Provider Registry、middleware、proxy 或 spill framework。
+
+实施依据：`docs/architecture-v0.2.7.md`、`docs/luna-implementation-v0.2.7.md` 与 `docs/testing-v0.2.7.md`。
+
+完成信号：默认关闭与显式配置、URL/allowlist、公网 DNS、NAT64、地址固定、同源重定向、内容与资源上限、Approval、取消、quiescence、结构化 details、隐私和 CLI/NDJSON 等价均有离线 P0；全量离线、构建和打包门禁通过；真实 HTTPS smoke 只在用户明确授权后执行。
+
+本版暂缓：`web_search`、HTTP、IP literal、跨源自动重定向、代理、认证、浏览器、二进制/PDF、缓存、spill、并行 Tool、Shell、MCP、后台任务和子 Agent。
+
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。

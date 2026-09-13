@@ -35,6 +35,9 @@
 - DSH host composition、资源所有权与 capability negotiation 对 v0.2.5.1 的补充取舍：采用单一装配和入口等价不变量；拒绝 Cordis、通用服务容器、Surface 和完整事件框架；具体见 `docs/architecture-v0.2.5.1.md` 与 `docs/dsh-reference-review.md`，查看日期 2026-09-13。
 - [DSH Agent cancellation](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/core.md) — 当前活动独占signal、空闲cancel不影响未来工作、第一原因生效以及等待quiescence；v0.2.6采用这些不变量，拒绝Inbox、steer、Agent Registry和事件溯源Session；查看日期2026-09-13。
 - [DSH Tool cancellation](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/tools/README.md) — Tool执行接收活动signal并协作停止；v0.2.6映射到Isla现有ToolRuntime/Tool接口，不复制DSH middleware、scope或包结构；查看日期2026-09-13。
+- [DSH Web subsystem](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/web.md) — Web fetch 的能力分层、请求/结果类型、Provider timeout、结构化错误和安全边界；v0.2.7 采用安全获取与展示分离，不复制 WebRuntime/Provider Registry；查看日期 2026-09-13。
+- [DSH HTTP fetch provider](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/web/web-fetch-http) — URL 校验、公网 DNS 全答案、DNS64/NAT64、连接地址固定、同源重定向、响应限界、charset 解码与清理；v0.2.7 采用安全不变量并进一步收窄为 HTTPS、精确 allowlist、无代理；查看日期 2026-09-13。
+- [DSH Web Tool](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/web/tool-web) — 模型参数最小化、HTML→Markdown、模型展示与获取结果分离；v0.2.7 只采用 `web_fetch`，暂缓 `web_search`、通用 output spill 和并行 Tool；查看日期 2026-09-13。
 - [OpenHands Condenser](https://docs.openhands.dev/sdk/arch/condenser) — 压力触发、保留尾部和 View 投影；采用最小语义，不引入通用 Pipeline；查看日期 2026-09-11。
 - [LangGraph Memory](https://langchain-ai.github.io/langgraph/how-tos/memory/manage-conversation-history/) — Thread 持久化、裁剪和滚动摘要；采用派生摘要，拒绝 Graph 编排和删除原文；查看日期 2026-09-11。
 - [Letta Memory Architecture](https://github.com/letta-ai/skills/blob/main/letta/letta-api-client/memory-architecture.md) — Core Memory、消息窗口、归档和语义检索分层；直接影响 v0.2.1 的四层记忆模型；查看日期 2026-09-11。

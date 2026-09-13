@@ -1,6 +1,19 @@
 import { DEFAULT_MAX_CONTEXT_TURNS } from './core/session.js';
 import { DEFAULT_CONTEXT_RETAIN_TURNS, DEFAULT_MAX_CONTEXT_CHARS } from './core/context.js';
 import { DEFAULT_PERSONALITY_PROMPT } from './prompts/base.js';
+import { isIP } from 'node:net';
+
+export interface WebFetchConfig {
+  readonly enabled: boolean;
+  readonly allowedHosts: readonly string[];
+  readonly timeoutMs: number;
+  readonly maxResponseBytes: number;
+  readonly maxBodyChars: number;
+  readonly maxOutputChars: number;
+  readonly maxRedirects: number;
+}
+
+const DEFAULT_WEB_FETCH = { timeoutMs: 30_000, maxResponseBytes: 1_000_000, maxBodyChars: 60_000, maxOutputChars: 80_000, maxRedirects: 3 } as const;
 
 export type OpenAIConfig = {
   readonly provider: 'openai';
@@ -23,6 +36,7 @@ export type OpenAIConfig = {
   readonly personality?: 'default' | 'minimal';
   readonly logLevel?: 'quiet' | 'normal' | 'debug';
   readonly workspaceRoot?: string;
+  readonly webFetch?: WebFetchConfig;
 };
 export type DeepSeekConfig = {
   readonly provider: 'deepseek';
@@ -45,6 +59,7 @@ export type DeepSeekConfig = {
   readonly personality?: 'default' | 'minimal';
   readonly logLevel?: 'quiet' | 'normal' | 'debug';
   readonly workspaceRoot?: string;
+  readonly webFetch?: WebFetchConfig;
 };
 export type LocalConfig = {
   readonly provider: 'local';
@@ -68,6 +83,7 @@ export type LocalConfig = {
   readonly personality?: 'default' | 'minimal';
   readonly logLevel?: 'quiet' | 'normal' | 'debug';
   readonly workspaceRoot?: string;
+  readonly webFetch?: WebFetchConfig;
 };
 export type AppConfig = OpenAIConfig | DeepSeekConfig | LocalConfig;
 
@@ -93,12 +109,24 @@ export interface ProfileAppearanceSettingsV1 {
   readonly logLevel?: 'quiet' | 'normal' | 'debug';
 }
 
+export interface ProfileWebFetchSettingsV1 {
+  readonly enabled?: boolean;
+  readonly allowedHosts?: readonly string[];
+  readonly timeoutMs?: number;
+  readonly maxResponseBytes?: number;
+  readonly maxBodyChars?: number;
+  readonly maxOutputChars?: number;
+  readonly maxRedirects?: number;
+}
+export interface ProfileToolsSettingsV1 { readonly webFetch?: ProfileWebFetchSettingsV1; }
+
 interface StartupProfileBaseV1 {
   readonly model: string;
   readonly workspace?: string;
   readonly runtime?: ProfileRuntimeSettingsV1;
   readonly memory?: ProfileMemorySettingsV1;
   readonly appearance?: ProfileAppearanceSettingsV1;
+  readonly tools?: ProfileToolsSettingsV1;
 }
 
 export type StartupProfileV1 =
@@ -167,6 +195,7 @@ export function profileToAppConfig(profile: StartupProfileV1): AppConfig {
       ...(memory.embeddingBaseURL ? { embeddingBaseURL: memory.embeddingBaseURL } : {}),
       ...(memory.embeddingApiKey ? { embeddingApiKey: memory.embeddingApiKey } : {}),
     } : {}),
+    ...(profile.tools?.webFetch ? { webFetch: normalizeWebFetchConfig(profile.tools.webFetch) } : {}),
   };
   if (profile.provider === 'local') return { ...common, provider: 'local', baseURL: profile.baseURL, ...(profile.apiKey ? { apiKey: profile.apiKey } : {}) };
   return { ...common, provider: profile.provider, apiKey: profile.apiKey };
@@ -176,7 +205,7 @@ function isRecord(value: unknown): value is UnknownRecord { return Boolean(value
 
 function parseProfile(name: string, value: unknown, onWarning?: (message: string) => void): StartupProfileV1 {
   if (!isRecord(value)) throw new Error(`Isla profile ${name} must be an object`);
-  warnUnknown(value, ['provider', 'model', 'apiKey', 'baseURL', 'workspace', 'runtime', 'memory', 'appearance'], `profile ${name}`, onWarning);
+  warnUnknown(value, ['provider', 'model', 'apiKey', 'baseURL', 'workspace', 'runtime', 'memory', 'appearance', 'tools'], `profile ${name}`, onWarning);
   const provider = value.provider;
   const model = nonEmptyString(value.model, `Isla profile ${name}.model`);
   const workspace = value.workspace === undefined ? undefined : nonEmptyString(value.workspace, `Isla profile ${name}.workspace`);
@@ -186,10 +215,54 @@ function parseProfile(name: string, value: unknown, onWarning?: (message: string
     ...(value.runtime !== undefined ? { runtime: parseRuntime(name, value.runtime, onWarning) } : {}),
     ...(value.memory !== undefined ? { memory: parseMemory(name, value.memory, onWarning) } : {}),
     ...(value.appearance !== undefined ? { appearance: parseAppearance(name, value.appearance, onWarning) } : {}),
+    ...(value.tools !== undefined ? { tools: parseTools(name, value.tools, onWarning) } : {}),
   };
   if (provider === 'deepseek' || provider === 'openai') return { ...base, provider, apiKey: nonEmptyString(value.apiKey, `Isla profile ${name}.apiKey`) };
   if (provider === 'local') return { ...base, provider, baseURL: validURL(value.baseURL, `Isla profile ${name}.baseURL`), ...(value.apiKey === undefined ? {} : { apiKey: nonEmptyString(value.apiKey, `Isla profile ${name}.apiKey`) }) };
   throw new Error(`Isla profile ${name}.provider is invalid`);
+}
+
+function parseTools(name: string, value: unknown, onWarning?: (message: string) => void): ProfileToolsSettingsV1 {
+  if (!isRecord(value)) throw new Error(`Isla profile ${name}.tools must be an object`);
+  warnUnknown(value, ['webFetch'], `profile ${name}.tools`, onWarning);
+  return value.webFetch === undefined ? {} : { webFetch: parseWebFetch(name, value.webFetch, onWarning) };
+}
+
+function parseWebFetch(name: string, value: unknown, onWarning?: (message: string) => void): ProfileWebFetchSettingsV1 {
+  if (!isRecord(value)) throw new Error(`Isla profile ${name}.tools.webFetch must be an object`);
+  warnUnknown(value, ['enabled', 'allowedHosts', 'timeoutMs', 'maxResponseBytes', 'maxBodyChars', 'maxOutputChars', 'maxRedirects'], `profile ${name}.tools.webFetch`, onWarning);
+  const enabled = value.enabled === undefined ? false : booleanValue(value.enabled, `Isla profile ${name}.tools.webFetch.enabled`);
+  const rawHosts = value.allowedHosts === undefined ? [] : value.allowedHosts;
+  if (!Array.isArray(rawHosts)) throw new Error(`Isla profile ${name}.tools.webFetch.allowedHosts must be an array`);
+  if (rawHosts.length > 32) throw new Error(`Isla profile ${name}.tools.webFetch.allowedHosts must contain at most 32 hosts`);
+  const hosts = [...new Set(rawHosts.map((host, index) => normalizeWebHost(host, `Isla profile ${name}.tools.webFetch.allowedHosts[${index}]`)))].sort();
+  if (enabled && hosts.length === 0) throw new Error(`Isla profile ${name}.tools.webFetch.allowedHosts is required when enabled`);
+  const bounded = (field: keyof typeof DEFAULT_WEB_FETCH, min: number, max: number): number | undefined => {
+    const raw = value[field];
+    if (raw === undefined) return undefined;
+    if (!Number.isInteger(raw) || (raw as number) < min || (raw as number) > max) throw new Error(`Isla profile ${name}.tools.webFetch.${field} is invalid`);
+    return raw as number;
+  };
+  const timeoutMs = bounded('timeoutMs', 1, 120_000);
+  const maxResponseBytes = bounded('maxResponseBytes', 1, 5_000_000);
+  const maxBodyChars = bounded('maxBodyChars', 1, 200_000);
+  const maxOutputChars = bounded('maxOutputChars', 1, 200_000);
+  const maxRedirects = bounded('maxRedirects', 0, 5);
+  return Object.freeze({ enabled, allowedHosts: Object.freeze(hosts), ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(maxResponseBytes === undefined ? {} : { maxResponseBytes }), ...(maxBodyChars === undefined ? {} : { maxBodyChars }), ...(maxOutputChars === undefined ? {} : { maxOutputChars }), ...(maxRedirects === undefined ? {} : { maxRedirects }) });
+}
+
+function normalizeWebFetchConfig(value: ProfileWebFetchSettingsV1): WebFetchConfig {
+  return Object.freeze({ enabled: value.enabled ?? false, allowedHosts: Object.freeze([...(value.allowedHosts ?? [])]), timeoutMs: value.timeoutMs ?? DEFAULT_WEB_FETCH.timeoutMs, maxResponseBytes: value.maxResponseBytes ?? DEFAULT_WEB_FETCH.maxResponseBytes, maxBodyChars: value.maxBodyChars ?? DEFAULT_WEB_FETCH.maxBodyChars, maxOutputChars: value.maxOutputChars ?? DEFAULT_WEB_FETCH.maxOutputChars, maxRedirects: value.maxRedirects ?? DEFAULT_WEB_FETCH.maxRedirects });
+}
+
+function normalizeWebHost(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim() || value !== value.trim()) throw new Error(`${field} must be a hostname`);
+  const input = value.toLowerCase();
+  if (input.includes('*') || input.includes('/') || input.includes('@')) throw new Error(`${field} must be an exact hostname`);
+  let parsed: URL;
+  try { parsed = new URL(`https://${input}`); } catch { throw new Error(`${field} must be a hostname`); }
+  if (parsed.port || parsed.pathname !== '/' || parsed.search || parsed.username || parsed.password || isIP(parsed.hostname) !== 0 || !parsed.hostname.includes('.')) throw new Error(`${field} must be an exact public hostname`);
+  return parsed.hostname;
 }
 
 function parseRuntime(name: string, value: unknown, onWarning?: (message: string) => void): ProfileRuntimeSettingsV1 {

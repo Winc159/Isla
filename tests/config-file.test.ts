@@ -50,6 +50,45 @@ describe('config file v1', () => {
     expect(warnings).toEqual(['Ignored unknown Isla config field: config.extra', 'Ignored unknown Isla config field: profile main.extra']);
   });
 
+  it('parses disabled web fetch settings without enabling the capability', () => {
+    const file = parseConfigFile(deepseek({ tools: { webFetch: { enabled: false } } }));
+    expect(file.profiles.main).toMatchObject({ tools: { webFetch: { enabled: false, allowedHosts: [] } } });
+    expect(profileToAppConfig(file.profiles.main)).toMatchObject({ webFetch: { enabled: false, allowedHosts: [] } });
+  });
+
+  it('normalizes and freezes an enabled web fetch allowlist', () => {
+    const file = parseConfigFile(deepseek({ tools: { webFetch: { enabled: true, allowedHosts: ['Docs.Example.com', '例子.测试', 'docs.example.com'], timeoutMs: 5000 } } }));
+    const webFetch = file.profiles.main.tools?.webFetch;
+    expect(webFetch).toMatchObject({ enabled: true, allowedHosts: ['docs.example.com', 'xn--fsqu00a.xn--0zwm56d'], timeoutMs: 5000 });
+    expect(profileToAppConfig(file.profiles.main).webFetch).toMatchObject({ ...webFetch, maxResponseBytes: 1_000_000, maxBodyChars: 60_000, maxOutputChars: 80_000, maxRedirects: 3 });
+    expect(Object.isFrozen(webFetch)).toBe(true);
+    expect(Object.isFrozen(webFetch?.allowedHosts)).toBe(true);
+  });
+
+  it('rejects unsafe or incomplete web fetch configuration', () => {
+    const invalid = [
+      { enabled: true },
+      { enabled: true, allowedHosts: [] },
+      { enabled: true, allowedHosts: ['https://example.com'] },
+      { enabled: true, allowedHosts: ['example.com/path'] },
+      { enabled: true, allowedHosts: ['*.example.com'] },
+      { enabled: true, allowedHosts: ['127.0.0.1'] },
+      { enabled: true, allowedHosts: ['[::1]'] },
+      { enabled: true, allowedHosts: ['example.com'], timeoutMs: 0 },
+      { enabled: true, allowedHosts: ['example.com'], maxRedirects: 6 },
+    ];
+    for (const webFetch of invalid) {
+      expect(() => parseConfigFile(deepseek({ tools: { webFetch } }))).toThrow('webFetch');
+    }
+  });
+
+  it('warns unknown web fetch fields without applying them', () => {
+    const warnings: string[] = [];
+    const file = parseConfigFile(deepseek({ tools: { webFetch: { enabled: false, future: true } } }), { onWarning: message => warnings.push(message) });
+    expect(warnings).toContain('Ignored unknown Isla config field: profile main.tools.webFetch.future');
+    expect(file.profiles.main.tools?.webFetch).not.toHaveProperty('future');
+  });
+
   it('validates default profile references', () => {
     expect(() => parseConfigFile(JSON.stringify({ version: 1, defaultProfile: 'missing', profiles: { main: { provider: 'deepseek', model: 'm', apiKey: 'k' } } }))).toThrow('defaultProfile');
     const file = parseConfigFile(JSON.stringify({ version: 1, defaultProfile: 'main', profiles: { main: { provider: 'deepseek', model: 'm', apiKey: 'k' } } }));

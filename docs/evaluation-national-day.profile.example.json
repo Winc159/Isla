@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "defaultProfile": "national-day-eval",
+  "profiles": {
+    "national-day-eval": {
+      "provider": "deepseek",
+      "model": "<ISLA_MODEL>",
+      "apiKey": "<DEEPSEEK_API_KEY>",
+      "runtime": {
+        "timeoutMs": 600000,
+        "modelRetries": 0
+      },
+      "tools": {
+        "webFetch": {
+          "enabled": true,
+          "allowedHosts": [
+            "www.gov.cn",
+            "www.mct.gov.cn"
+          ],
+          "timeoutMs": 30000,
+          "maxResponseBytes": 1000000,
+          "maxBodyChars": 60000,
+          "maxOutputChars": 80000,
+          "maxRedirects": 3
+        }
+      },
+      "appearance": {
+        "personality": "minimal",
+        "logLevel": "quiet"
+      }
+    }
+  }
+}

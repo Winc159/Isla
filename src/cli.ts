@@ -69,8 +69,9 @@ export async function runCli(
   logLevel: 'quiet' | 'normal' | 'debug' = 'normal',
   workspaceRoot = process.cwd(),
   diagnostics?: (event: import('./application.js').DiagnosticEvent) => void,
+  webFetch?: import('./config.js').WebFetchConfig,
 ): Promise<void> {
-  writeHeader(output, providerId, model, workspaceRoot);
+  writeHeader(output, providerId, model, workspaceRoot, webFetch?.enabled === true);
   const latestSession = await sessionStore.loadLatest(providerId, model);
   let storedSession: StoredSession;
   if (latestSession) {
@@ -83,7 +84,7 @@ export async function runCli(
     );
   }
   const interactive = isInteractiveInput(input);
-  let session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics);
+  let session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch);
   const history: string[] = [];
   let draft = '';
 
@@ -112,7 +113,7 @@ export async function runCli(
       }
       if (result.type === 'switch-session') {
         storedSession = result.session;
-        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics);
+        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch);
         output.write('\x1b[2J\x1b[3J\x1b[H');
         writeHeader(output, providerId, model, workspaceRoot);
         if (result.replayHistory) writeSessionHistory(output, storedSession);
@@ -196,10 +197,11 @@ export interface CliAdapterOptions {
   readonly logLevel?: 'quiet' | 'normal' | 'debug';
   readonly workspaceRoot: string;
   readonly diagnostics?: (event: import('./application.js').DiagnosticEvent) => void;
+  readonly webFetch?: import('./config.js').WebFetchConfig;
 }
 
 export async function runCliAdapter(options: CliAdapterOptions): Promise<void> {
-  return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics);
+  return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics, options.webFetch);
 }
 
 function writeSessionHistory(output: Writable, session: StoredSession): void {
@@ -239,9 +241,9 @@ function formatElapsed(startedAt: number): string {
   return `${hours}h${minutes % 60}m`;
 }
 
-function writeHeader(output: Writable, providerId: string, model: string, workspaceRoot = process.cwd()): void {
+function writeHeader(output: Writable, providerId: string, model: string, workspaceRoot = process.cwd(), webFetchEnabled = false): void {
   output.write(
-    `Isla v0 · provider=${providerId} · model=${model} · workspace=${workspaceRoot}\nmaster,你好，我叫（Error划掉）Isla，很高兴认识你\n输入 /new 开启新对话，输入 /sessions 选择会话，输入 /exit 或按 Esc 退出。\n\n`,
+    `Isla v0 · provider=${providerId} · model=${model} · workspace=${workspaceRoot} · web_fetch=${webFetchEnabled ? 'on' : 'off'}\nmaster,你好，我叫（Error划掉）Isla，很高兴认识你\n输入 /new 开启新对话，输入 /sessions 选择会话，输入 /exit 或按 Esc 退出。\n\n`,
   );
 }
 
@@ -261,8 +263,9 @@ function createPersistentSession(
   modelRetries = 0,
   workspaceRoot = process.cwd(),
   diagnostics?: (event: import('./application.js').DiagnosticEvent) => void,
+  webFetch?: import('./config.js').WebFetchConfig,
 ) {
-  const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, modelRetries }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}) });
+  const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, modelRetries, ...(webFetch ? { webFetch } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}) });
   return factory.create({ stored: storedSession, input, output, interactive, ...(interactive ? { approvalService: new CliApprovalService(input, output) } : {}) });
 }
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
@@ -290,7 +293,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       let useExistingProtocolSession = true;
       await runProtocol(process.stdin, process.stdout, undefined, config.provider, config.model, {
         ...(config.workspaceRoot ? { workspace: config.workspaceRoot } : {}),
-        capabilities: { toolCalling: true, cancellation: true, streaming: false },
+        capabilities: { toolCalling: true, cancellation: true, streaming: false, webFetch: config.webFetch?.enabled === true },
         createSession: async (approvalService, events) => {
           if (!useExistingProtocolSession) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []);
           useExistingProtocolSession = false;
@@ -322,6 +325,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       ...(startup.profileName ? { profileName: startup.profileName } : {}),
       ...(config.logLevel ? { logLevel: config.logLevel } : {}),
       workspaceRoot: config.workspaceRoot ?? process.cwd(),
+      ...(config.webFetch ? { webFetch: config.webFetch } : {}),
       diagnostics: event => application.diagnostics.emit(event),
     });
     } finally { application.close(); }

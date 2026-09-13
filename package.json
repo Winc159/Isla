@@ -3,9 +3,17 @@
   "version": "0.2.6.1",
   "private": true,
   "type": "module",
-  "bin": { "isla": "dist/cli.js" },
-  "files": ["dist", "README.md", "LICENSE"],
-  "engines": { "node": ">=24" },
+  "bin": {
+    "isla": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "tsx --env-file-if-exists=.env src/cli.ts",
     "clean": "node scripts/clean.mjs",
@@ -21,7 +29,13 @@
     "check": "npm run typecheck && npm run test",
     "pack:check": "npm pack --dry-run"
   },
-  "dependencies": { "openai": "^5.12.2" },
+  "dependencies": {
+    "ipaddr.js": "^2.5.0",
+    "openai": "^5.12.2",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2",
+    "undici": "^8.10.2"
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "msw": "^2.10.2",
