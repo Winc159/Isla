@@ -1,4 +1,4 @@
-import type { ModelProvider, Message, ModelResponse, ProjectSourceReference, ToolDefinition, ToolResponse } from "./types.js";
+import type { ModelProvider, Message, ModelRequest, ModelResponse, ProjectSourceReference, ToolDefinition, ToolResponse } from "./types.js";
 import { composeRequestMessages } from "../prompts/compose.js";
 import type { ToolCapability, ToolExecutionResult } from "../tools/types.js";
 import { createProjectFilesCapability } from "../tools/project-files.js";
@@ -8,7 +8,7 @@ import type { ApprovalPolicy, ApprovalService } from "../approval/types.js";
 import type { PermissionPreset } from "../approval/presets.js";
 import { isRuntimeError, RuntimeError, type TurnCancelReason } from "./errors.js";
 import type { ModelAttemptRecord, SessionJournal, TurnActionRecord, TurnRecord } from "./journal.js";
-import { parseTurnDecision, type TaskBrief, type TurnDecision } from "./agent-loop.js";
+import { parseTurnDecision, type EvidenceRequirement, type TaskBrief, type TurnDecision } from "./agent-loop.js";
 import { createRequestSnapshot } from "./request-snapshot.js";
 import { validateAndCleanCitations } from "./citations.js";
 import type { SessionEvent } from "./events.js";
@@ -162,7 +162,7 @@ export class ChatSession {
       if (!response.toolCalls?.length) {
         return { ...response, ...(evidence.length ? { evidence } : {}), ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}) };
       }
-      const assistantToolMessage = { role: "assistant" as const, content: "", toolCalls: response.toolCalls };
+      const assistantToolMessage = { role: "assistant" as const, content: response.assistantContent ?? "", toolCalls: response.toolCalls };
       const next = [...current, assistantToolMessage];
       await this.appendMessage(assistantToolMessage);
       for (let callIndex = 0; callIndex < response.toolCalls.length; callIndex += 1) {
@@ -184,6 +184,12 @@ export class ChatSession {
         try {
           execution = await this.toolRuntime.execute(call, { signal });
           if (execution.ok && (call.name === "list_directory" || call.name === "read_text_file")) evidence.push(call.name);
+          if (execution.ok && execution.details?.type === "web_search") {
+            evidence.push(`web_search:${execution.details.sources.map(source => source.url).join(",") || "no-sources"}`);
+          }
+          if (execution.ok && execution.details?.type === "web_fetch") {
+            evidence.push(`web_fetch:${execution.details.finalUrl}#status=${execution.details.statusCode}${execution.details.truncated ? "#truncated" : ""}`);
+          }
           if (execution.ok && execution.details?.type === "project_search") {
             const sourceIds = [...new Set(execution.details.sources.map(source => source.id))].sort();
             const references = new Map<string, ProjectSourceReference>();
@@ -240,9 +246,9 @@ export class ChatSession {
     return { text: "工具调用达到本轮上限，已停止继续执行。", outcome: "blocked", model: provider.model };
   }
 
-  private generateModel(request: { readonly messages: readonly Message[]; readonly tools: readonly ToolDefinition[] }, withTools: true, signal: AbortSignal): Promise<ToolResponse>;
-  private generateModel(request: { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[] }, withTools: false, signal: AbortSignal): Promise<ModelResponse>;
-  private async generateModel(request: { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[] }, withTools: boolean, signal: AbortSignal): Promise<ModelResponse | ToolResponse> {
+  private generateModel(request: ModelRequest & { readonly tools: readonly ToolDefinition[] }, withTools: true, signal: AbortSignal): Promise<ToolResponse>;
+  private generateModel(request: ModelRequest, withTools: false, signal: AbortSignal): Promise<ModelResponse>;
+  private async generateModel(request: ModelRequest, withTools: boolean, signal: AbortSignal): Promise<ModelResponse | ToolResponse> {
     const turn = this.journal.turns.at(-1);
     for (let attempt = 0; ; attempt += 1) {
       const record: ModelAttemptRecord = { attempt: attempt + 1, step: turn?.attempts.length ?? 0, startedAt: new Date().toISOString(), status: "running", request: createRequestSnapshot(request, this.provider.id, this.provider.model, "v0", [...this.retrievedProjectSources].sort()) };
@@ -328,15 +334,27 @@ export class ChatSession {
       JSON.stringify(this.task),
       "请结合当前用户消息更新任务状态；用户已经回答的问题不要重复追问。",
     ].join("\n") }] : [];
-    const understand = { messages: composeRequestMessages([...history, ...taskContext], [], "understand", memoryContext ? { memory: memoryContext } : undefined) };
-    const decisionResponse = await this.generateModel({ messages: understand.messages }, false, signal);
+    const understand = { messages: [{ role: "system" as const, content: "请返回单个 JSON（json）决策对象，不要输出其他内容。" }, ...composeRequestMessages([...history, ...taskContext], [], "understand", memoryContext ? { memory: memoryContext } : undefined)] };
+    let decisionResponse: ModelResponse;
+    try {
+      decisionResponse = await this.generateModel({ messages: understand.messages, responseFormat: { type: "json_object" } }, false, signal);
+    } catch (error) {
+      if (!isRuntimeError(error) || error.code !== "PROVIDER_EMPTY_RESPONSE") throw error;
+      decisionResponse = await this.generateModel({ messages: [...understand.messages, { role: "system", content: "JSON 输出为空。请改用普通回答接口，但仍只返回单个 json 决策对象。" }] }, false, signal);
+    }
     let decision: TurnDecision;
     let repairAttempted = false;
     try {
       decision = parseTurnDecision(decisionResponse.text, this.messages);
     } catch {
       repairAttempted = true;
-      const repair = await this.generateModel({ messages: [...understand.messages, { role: "system", content: "上一次输出无法解析。请只返回符合要求的单个 JSON 决策对象，不要添加任何解释。" }] }, false, signal);
+      let repair: ModelResponse;
+      try {
+        repair = await this.generateModel({ messages: [...understand.messages, { role: "system", content: "上一次输出无法解析。请只返回符合要求的单个 JSON（json）决策对象，不要添加任何解释。" }], responseFormat: { type: "json_object" } }, false, signal);
+      } catch (error) {
+        if (!isRuntimeError(error) || error.code !== "PROVIDER_EMPTY_RESPONSE") throw error;
+        repair = await this.generateModel({ messages: [...understand.messages, { role: "system", content: "请改用普通回答接口，只返回单个 json 决策对象。" }] }, false, signal);
+      }
       try { decision = parseTurnDecision(repair.text, this.messages); }
       catch {
         const input = this.messages.at(-1)?.content ?? "";
@@ -358,7 +376,7 @@ export class ChatSession {
     // a provider repeat its previous questions.
     if (decision.kind === "clarify" && /补充|\d+\s*(天|日)|预算|人|驾驶员|高速|日期|出发/.test(this.messages.at(-1)?.content ?? "")) {
       const prior = this.task ?? decision.task;
-      decision = { kind: "execute", objective: prior.goal, task: { ...prior, openQuestions: [], confirmedConstraints: [...prior.confirmedConstraints, { text: this.messages.at(-1)?.content ?? "", sourceMessageIndex: this.messages.length - 1 }] } };
+      decision = { kind: "execute", objective: prior.goal, evidenceRequirement: { external: "required", topics: ["旅行规划"] }, task: { ...prior, openQuestions: [], confirmedConstraints: [...prior.confirmedConstraints, { text: this.messages.at(-1)?.content ?? "", sourceMessageIndex: this.messages.length - 1 }] } };
     }
     this.task = decision.task;
     await this.persistState(false);
@@ -378,9 +396,16 @@ export class ChatSession {
     const executed = await this.generateWithAvailableTools({ messages: executeMessages }, signal);
     if (signal.aborted) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
     if (turn) (turn.actions as TurnActionRecord[]).push({ type: "phase", phase: "synthesize" });
-    const synthesisMessages = composeRequestMessages(this.messages, [], "synthesize", memoryContext ? { memory: memoryContext } : undefined);
+    const synthesisMessages = composeRequestMessages(this.messages, [], "synthesize", { ...(memoryContext ? { memory: memoryContext } : {}), evidence: this.formatEvidenceContext(decision.evidenceRequirement, executed.evidence ?? []) });
     const synthesis = await this.generateModel({ messages: synthesisMessages }, false, signal);
     return { ...synthesis, ...(executed.evidence ? { evidence: executed.evidence } : {}), ...(executed.outcome ? { outcome: executed.outcome } : {}) };
+  }
+
+  private formatEvidenceContext(requirement: EvidenceRequirement, evidence: readonly string[]): string {
+  const webEvidence = evidence.filter(item => item.startsWith("web_search:") || item.startsWith("web_fetch:"));
+  if (webEvidence.length > 0) return [`external=${requirement.external}`, `topics=${requirement.topics.join(",") || "none"}`, "successfulWebEvidence:", ...webEvidence].join("\n");
+  if (requirement.external === "required") return ["external=required", `topics=${requirement.topics.join(",") || "unspecified"}`, "successfulWebEvidence: none", "相关当前事实必须标记为估算、未核实或当前无法确认。"].join("\n");
+  return [`external=${requirement.external}`, "successfulWebEvidence: none"].join("\n");
   }
 
   private async commitResponse(response: ModelResponse, signal: AbortSignal): Promise<ModelResponse> {

@@ -14,10 +14,15 @@ export interface TaskBrief {
   readonly assumptions: readonly string[];
 }
 
+export interface EvidenceRequirement {
+  readonly external: "none" | "preferred" | "required";
+  readonly topics: readonly string[];
+}
+
 export type TurnDecision =
   | { readonly kind: "answer"; readonly text: string; readonly task: TaskBrief }
   | { readonly kind: "clarify"; readonly questions: readonly string[]; readonly task: TaskBrief }
-  | { readonly kind: "execute"; readonly objective: string; readonly task: TaskBrief };
+  | { readonly kind: "execute"; readonly objective: string; readonly task: TaskBrief; readonly evidenceRequirement: EvidenceRequirement };
 
 const MAX_QUESTIONS = 4;
 const MAX_ITEMS = 32;
@@ -45,7 +50,13 @@ export function parseTurnDecision(text: string, messages: readonly Message[]): T
     return { kind, questions, task };
   }
   assertString(value.objective, "execute.objective");
-  return { kind, objective: value.objective, task };
+  return { kind, objective: value.objective, task, evidenceRequirement: parseEvidenceRequirement(value.evidenceRequirement) };
+}
+
+function parseEvidenceRequirement(value: unknown): EvidenceRequirement {
+  if (value === undefined) return { external: "none", topics: [] };
+  if (!isRecord(value) || (value.external !== "none" && value.external !== "preferred" && value.external !== "required")) throw new Error("evidenceRequirement.external 无效");
+  return { external: value.external, topics: parseStringArray(value.topics, "evidenceRequirement.topics", 8) };
 }
 
 function parseTaskBrief(value: unknown, messages: readonly Message[]): TaskBrief {

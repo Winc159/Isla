@@ -26,6 +26,13 @@ describe("RuntimeError", () => {
     expect(normalizeProviderError(error, "Test").toRecord()).toEqual({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
   });
 
+  it("projects only a safe HTTP status for unknown provider responses", () => {
+    const error = normalizeProviderError(Object.assign(new Error("response body contains secret"), { status: 422 }), "DeepSeek");
+    expect(error.code).toBe("PROVIDER_INVALID_RESPONSE");
+    expect(error.message).toContain("HTTP 422");
+    expect(error.message).not.toContain("secret");
+  });
+
   it("keeps the provider call signal available for the runtime boundary", async () => {
     const provider = new FakeProvider([{ text: "ok" }]);
     const controller = new AbortController();

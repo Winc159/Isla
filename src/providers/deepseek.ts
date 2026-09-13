@@ -33,8 +33,9 @@ class DeepSeekProvider implements ModelProvider {
   async generate(request: ModelRequest, options?: ModelCallOptions): Promise<ModelResponse> {
     const body = {
       model: this.model,
-      messages: request.messages.map(toChatMessage),
+      messages: toChatMessages(request.messages),
       thinking: { type: 'disabled' as const },
+      ...(request.responseFormat ? { response_format: request.responseFormat } : {}),
     };
     try {
     const r = await this.client.chat.completions.create(body as never, options?.signal ? { signal: options.signal } : undefined);
@@ -59,7 +60,7 @@ class DeepSeekProvider implements ModelProvider {
     try {
     const r = await this.client.chat.completions.create({
       model: this.model,
-      messages: request.messages.map(toChatMessage) as never,
+      messages: toChatMessages(request.messages) as never,
       ...(request.tools ? { tools: request.tools.map(toChatTool) } : {}),
       ...(request.toolChoice ? { tool_choice: request.toolChoice === 'auto' || request.toolChoice === 'required' ? request.toolChoice : { type: 'function', function: { name: request.toolChoice.name } } } : {}),
       thinking: { type: 'disabled' as const },
@@ -73,6 +74,7 @@ class DeepSeekProvider implements ModelProvider {
     }
     return {
       text: textCalls.length ? '' : message?.content ?? '',
+      ...(textCalls.length ? { assistantContent: message?.content ?? null } : {}),
       model: r.model,
       ...(toolCalls.length ? { toolCalls } : {}),
     };
@@ -86,6 +88,32 @@ function toChatMessage(message: ModelRequest['messages'][number]) {
   if (message.role === 'tool') return { role: 'tool', tool_call_id: message.toolCallId, content: message.content };
   if (message.role === 'assistant' && message.toolCalls?.length) return { role: 'assistant', content: message.content || null, tool_calls: message.toolCalls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } })) };
   return { role: message.role, content: message.content };
+}
+function toChatMessages(messages: ModelRequest['messages']) {
+  const result: Array<Record<string, unknown>> = [];
+  let activeToolIds = new Set<string>();
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]!;
+    if (message.role === 'assistant' && message.toolCalls?.length) {
+      const following = new Set<string>();
+      for (let next = index + 1; next < messages.length && messages[next]?.role === 'tool'; next += 1) {
+        const id = messages[next]?.toolCallId;
+        if (id) following.add(id);
+      }
+      const complete = message.toolCalls.every(call => following.has(call.id));
+      activeToolIds = complete ? new Set(message.toolCalls.map(call => call.id)) : new Set();
+      result.push(complete ? toChatMessage(message) : { role: 'assistant', content: message.content?.trim() || '（工具调用历史已省略）' });
+      continue;
+    }
+    if (message.role === 'tool') {
+      if (!activeToolIds.has(message.toolCallId ?? '')) continue;
+      activeToolIds.delete(message.toolCallId!);
+    } else {
+      activeToolIds = new Set();
+    }
+    result.push(toChatMessage(message));
+  }
+  return result;
 }
 export function parseDsmlToolCalls(content: string) {
   const calls: Array<{ id: string; name: string; arguments: string }> = [];

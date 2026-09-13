@@ -21,7 +21,7 @@ function writeTrace(line: string): void {
   if (tracePath) appendFileSync(tracePath, `${new Date().toISOString()} ${line}\n`, "utf8");
 }
 
-type Event = { type: string; id?: string; text?: string; approvalId?: string; approved?: boolean; ok?: boolean; code?: string; sessionId?: string; message?: string; error?: string; capabilities?: { webFetch?: boolean } };
+type Event = { type: string; id?: string; tool?: string; text?: string; approvalId?: string; approved?: boolean; ok?: boolean; code?: string; sessionId?: string; message?: string; error?: string; capabilities?: { webFetch?: boolean; webSearch?: boolean } };
 
 class Driver {
   readonly events: Event[] = [];
@@ -65,6 +65,11 @@ class Driver {
     const list = this.waiters.get(`${type}:${id ?? "*"}`) ?? [];
       list.push(done); this.waiters.set(`${type}:${id ?? "*"}`, list);
     });
+  }
+  async waitApproval(timeout = 90_000, from = 0): Promise<Event> {
+    const existing = this.events.slice(from).find(event => event.type === "approval_request" && event.approvalId);
+    if (existing) return existing;
+    return this.wait("approval_request", undefined, timeout, from);
   }
   async waitResponse(id: string): Promise<Event> {
     const failure = this.events.find(event => event.type === "error" && event.id === id);
@@ -186,17 +191,29 @@ describe.skipIf(!enabled || !configured)("real Agent Loop web planning driver", 
     const configDir = await mkdtemp(join(tmpdir(), `isla-agent-web-config-${randomUUID()}-`));
     const configPath = join(configDir, "config.json");
     const source = JSON.parse(await readFile(join(process.env.USERPROFILE ?? "", ".isla", "config.json"), "utf8"));
-    source.profiles.eval = { ...source.profiles.deepseek, runtime: { ...(source.profiles.deepseek.runtime ?? {}), timeoutMs: 600_000 }, tools: { webFetch: { enabled: true, allowedHosts: ["www.gov.cn", "www.mct.gov.cn"] } }, appearance: { logLevel: "quiet" } };
+    source.profiles.eval = { ...source.profiles.deepseek, runtime: { ...(source.profiles.deepseek.runtime ?? {}), timeoutMs: 600_000 }, tools: { webSearch: { enabled: true, maxResults: 5, timeoutMs: 60_000 }, webFetch: { enabled: true, allowedHosts: ["www.gov.cn", "www.mct.gov.cn"] } }, appearance: { logLevel: "quiet" } };
     await writeFile(configPath, JSON.stringify({ version: 1, defaultProfile: "eval", profiles: { eval: source.profiles.eval } }), "utf8");
     const driver = new Driver(root, sessions, join(configDir, "memory.sqlite"), configPath);
     try {
       await driver.wait("ready", undefined, 30_000);
       const ready = driver.events.find(event => event.type === "ready");
       expect(ready?.capabilities?.webFetch).toBe(true);
+      expect(ready?.capabilities?.webSearch).toBe(true);
       driver.send({ type: "prompt", id: "clarify-web", text: "去重庆取车，然后自驾回广州，按照这个路线自驾游。" });
       const first = await driver.waitResponse("clarify-web");
       expect(first.outcome).toBe("needs_user");
       expect(driver.events.filter(event => event.type === "tool_start")).toHaveLength(0);
+      driver.send({ type: "prompt", id: "continue-web", text: "补充：计划 5 天，预算适中，2 人 1 名驾驶员，优先自然风景，接受高速。请继续原任务，并查找当前可引用来源。" });
+      const searchApproval = await driver.waitApproval(90_000, driver.events.length - 1);
+      expect(searchApproval.approvalId).toBeTruthy();
+      driver.send({ type: "approval_response", id: "continue-web-approval", approvalId: searchApproval.approvalId, approved: true });
+      const fetchApproval = await driver.waitApproval(90_000, driver.events.length - 1);
+      expect(fetchApproval.approvalId).toBeTruthy();
+      driver.send({ type: "approval_response", id: "continue-web-fetch-approval", approvalId: fetchApproval.approvalId, approved: true });
+      const second = await driver.waitResponse("continue-web");
+      expect(second.text?.trim()).toBeTruthy();
+      expect(driver.events.some(event => event.type === "tool_start" && event.tool === "web_search")).toBe(true);
+      expect(driver.events.some(event => event.type === "tool_end" && event.tool === "web_search" && event.ok === true)).toBe(true);
     } finally {
       await driver.close();
       await rm(root, { recursive: true, force: true }); await rm(sessions, { recursive: true, force: true }); await rm(configDir, { recursive: true, force: true });

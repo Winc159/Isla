@@ -70,6 +70,7 @@ export async function runCli(
   workspaceRoot = process.cwd(),
   diagnostics?: (event: import('./application.js').DiagnosticEvent) => void,
   webFetch?: import('./config.js').WebFetchConfig,
+  webSearch?: import('./config.js').WebSearchConfig,
 ): Promise<void> {
   writeHeader(output, providerId, model, workspaceRoot, webFetch?.enabled === true);
   const latestSession = await sessionStore.loadLatest(providerId, model);
@@ -84,7 +85,7 @@ export async function runCli(
     );
   }
   const interactive = isInteractiveInput(input);
-  let session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch);
+  let session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch);
   const history: string[] = [];
   let draft = '';
 
@@ -113,7 +114,7 @@ export async function runCli(
       }
       if (result.type === 'switch-session') {
         storedSession = result.session;
-        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch);
+        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch);
         output.write('\x1b[2J\x1b[3J\x1b[H');
         writeHeader(output, providerId, model, workspaceRoot);
         if (result.replayHistory) writeSessionHistory(output, storedSession);
@@ -198,10 +199,11 @@ export interface CliAdapterOptions {
   readonly workspaceRoot: string;
   readonly diagnostics?: (event: import('./application.js').DiagnosticEvent) => void;
   readonly webFetch?: import('./config.js').WebFetchConfig;
+  readonly webSearch?: import('./config.js').WebSearchConfig;
 }
 
 export async function runCliAdapter(options: CliAdapterOptions): Promise<void> {
-  return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics, options.webFetch);
+  return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics, options.webFetch, options.webSearch);
 }
 
 function writeSessionHistory(output: Writable, session: StoredSession): void {
@@ -264,8 +266,9 @@ function createPersistentSession(
   workspaceRoot = process.cwd(),
   diagnostics?: (event: import('./application.js').DiagnosticEvent) => void,
   webFetch?: import('./config.js').WebFetchConfig,
+  webSearch?: import('./config.js').WebSearchConfig,
 ) {
-  const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, modelRetries, ...(webFetch ? { webFetch } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}) });
+  const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}) });
   return factory.create({ stored: storedSession, input, output, interactive, ...(interactive ? { approvalService: new CliApprovalService(input, output) } : {}) });
 }
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
@@ -293,7 +296,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       let useExistingProtocolSession = true;
       await runProtocol(process.stdin, process.stdout, undefined, config.provider, config.model, {
         ...(config.workspaceRoot ? { workspace: config.workspaceRoot } : {}),
-        capabilities: { toolCalling: true, cancellation: true, streaming: false, webFetch: config.webFetch?.enabled === true },
+        capabilities: { toolCalling: true, cancellation: true, streaming: false, webFetch: config.webFetch?.enabled === true, webSearch: config.webSearch?.enabled === true },
         createSession: async (approvalService, events) => {
           if (!useExistingProtocolSession) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []);
           useExistingProtocolSession = false;
@@ -326,6 +329,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       ...(config.logLevel ? { logLevel: config.logLevel } : {}),
       workspaceRoot: config.workspaceRoot ?? process.cwd(),
       ...(config.webFetch ? { webFetch: config.webFetch } : {}),
+      ...(config.webSearch ? { webSearch: config.webSearch } : {}),
       diagnostics: event => application.diagnostics.emit(event),
     });
     } finally { application.close(); }

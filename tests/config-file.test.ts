@@ -87,6 +87,17 @@ describe('config file v1', () => {
     expect(file.profiles.main.tools?.webFetch).not.toHaveProperty('future');
   });
 
+  it('parses an explicitly enabled DeepSeek web search profile', () => {
+    const file = parseConfigFile(deepseek({ tools: { webSearch: { enabled: true, maxResults: 5, timeoutMs: 4000, maxOutputChars: 9000 } } }));
+    expect(file.profiles.main.tools?.webSearch).toMatchObject({ enabled: true, maxResults: 5, timeoutMs: 4000, maxOutputChars: 9000 });
+    expect(profileToAppConfig(file.profiles.main).webSearch).toMatchObject({ enabled: true, provider: 'deepseek-official', apiKey: 'test-only-key', model: 'deepseek-chat', maxResults: 5, timeoutMs: 4000, maxOutputChars: 9000 });
+  });
+
+  it('rejects unsupported web search providers and bounds', () => {
+    expect(() => parseConfigFile(deepseek({ tools: { webSearch: { enabled: true, provider: 'exa' } } }))).toThrow('webSearch.provider');
+    expect(() => parseConfigFile(deepseek({ tools: { webSearch: { enabled: true, maxResults: 21 } } }))).toThrow('webSearch.maxResults');
+  });
+
   it('validates default profile references', () => {
     expect(() => parseConfigFile(JSON.stringify({ version: 1, defaultProfile: 'missing', profiles: { main: { provider: 'deepseek', model: 'm', apiKey: 'k' } } }))).toThrow('defaultProfile');
     const file = parseConfigFile(JSON.stringify({ version: 1, defaultProfile: 'main', profiles: { main: { provider: 'deepseek', model: 'm', apiKey: 'k' } } }));

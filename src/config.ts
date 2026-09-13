@@ -12,6 +12,15 @@ export interface WebFetchConfig {
   readonly maxOutputChars: number;
   readonly maxRedirects: number;
 }
+export interface WebSearchConfig {
+  readonly enabled: boolean;
+  readonly provider: 'deepseek-official';
+  readonly apiKey: string;
+  readonly model: string;
+  readonly maxResults: number;
+  readonly timeoutMs: number;
+  readonly maxOutputChars: number;
+}
 
 const DEFAULT_WEB_FETCH = { timeoutMs: 30_000, maxResponseBytes: 1_000_000, maxBodyChars: 60_000, maxOutputChars: 80_000, maxRedirects: 3 } as const;
 
@@ -37,6 +46,7 @@ export type OpenAIConfig = {
   readonly logLevel?: 'quiet' | 'normal' | 'debug';
   readonly workspaceRoot?: string;
   readonly webFetch?: WebFetchConfig;
+  readonly webSearch?: WebSearchConfig;
 };
 export type DeepSeekConfig = {
   readonly provider: 'deepseek';
@@ -60,6 +70,7 @@ export type DeepSeekConfig = {
   readonly logLevel?: 'quiet' | 'normal' | 'debug';
   readonly workspaceRoot?: string;
   readonly webFetch?: WebFetchConfig;
+  readonly webSearch?: WebSearchConfig;
 };
 export type LocalConfig = {
   readonly provider: 'local';
@@ -84,6 +95,7 @@ export type LocalConfig = {
   readonly logLevel?: 'quiet' | 'normal' | 'debug';
   readonly workspaceRoot?: string;
   readonly webFetch?: WebFetchConfig;
+  readonly webSearch?: WebSearchConfig;
 };
 export type AppConfig = OpenAIConfig | DeepSeekConfig | LocalConfig;
 
@@ -118,7 +130,8 @@ export interface ProfileWebFetchSettingsV1 {
   readonly maxOutputChars?: number;
   readonly maxRedirects?: number;
 }
-export interface ProfileToolsSettingsV1 { readonly webFetch?: ProfileWebFetchSettingsV1; }
+export interface ProfileWebSearchSettingsV1 { readonly enabled?: boolean; readonly provider?: 'deepseek-official'; readonly maxResults?: number; readonly timeoutMs?: number; readonly maxOutputChars?: number; }
+export interface ProfileToolsSettingsV1 { readonly webFetch?: ProfileWebFetchSettingsV1; readonly webSearch?: ProfileWebSearchSettingsV1; }
 
 interface StartupProfileBaseV1 {
   readonly model: string;
@@ -198,6 +211,7 @@ export function profileToAppConfig(profile: StartupProfileV1): AppConfig {
     // Web Fetch is a built-in read-only capability. Keep its security limits
     // internal so a normal user does not need to maintain a host allowlist.
     ...(profile.tools?.webFetch ? { webFetch: normalizeWebFetchConfig(profile.tools.webFetch) } : { webFetch: normalizeWebFetchConfig({ enabled: true, allowedHosts: ['*'] }) }),
+    ...(profile.tools?.webSearch?.enabled && profile.provider === 'deepseek' ? { webSearch: normalizeWebSearchConfig(profile.tools.webSearch, profile.apiKey, profile.model) } : {}),
   };
   if (profile.provider === 'local') return { ...common, provider: 'local', baseURL: profile.baseURL, ...(profile.apiKey ? { apiKey: profile.apiKey } : {}) };
   return { ...common, provider: profile.provider, apiKey: profile.apiKey };
@@ -226,8 +240,18 @@ function parseProfile(name: string, value: unknown, onWarning?: (message: string
 
 function parseTools(name: string, value: unknown, onWarning?: (message: string) => void): ProfileToolsSettingsV1 {
   if (!isRecord(value)) throw new Error(`Isla profile ${name}.tools must be an object`);
-  warnUnknown(value, ['webFetch'], `profile ${name}.tools`, onWarning);
-  return value.webFetch === undefined ? {} : { webFetch: parseWebFetch(name, value.webFetch, onWarning) };
+  warnUnknown(value, ['webFetch', 'webSearch'], `profile ${name}.tools`, onWarning);
+  return { ...(value.webFetch === undefined ? {} : { webFetch: parseWebFetch(name, value.webFetch, onWarning) }), ...(value.webSearch === undefined ? {} : { webSearch: parseWebSearch(name, value.webSearch, onWarning) }) };
+}
+
+function parseWebSearch(name: string, value: unknown, onWarning?: (message: string) => void): ProfileWebSearchSettingsV1 {
+  if (!isRecord(value)) throw new Error(`Isla profile ${name}.tools.webSearch must be an object`);
+  warnUnknown(value, ['enabled', 'provider', 'maxResults', 'timeoutMs', 'maxOutputChars'], `profile ${name}.tools.webSearch`, onWarning);
+  const provider = value.provider === undefined ? undefined : value.provider;
+  if (provider !== undefined && provider !== 'deepseek-official') throw new Error(`Isla profile ${name}.tools.webSearch.provider is invalid`);
+  const bounded = (field: 'maxResults' | 'timeoutMs' | 'maxOutputChars', min: number, max: number): number | undefined => value[field] === undefined ? undefined : (!Number.isInteger(value[field]) || (value[field] as number) < min || (value[field] as number) > max) ? (() => { throw new Error(`Isla profile ${name}.tools.webSearch.${field} is invalid`); })() : value[field] as number;
+  const maxResults = bounded('maxResults', 1, 20); const timeoutMs = bounded('timeoutMs', 1, 120_000); const maxOutputChars = bounded('maxOutputChars', 1, 200_000);
+  return { ...(value.enabled === undefined ? {} : { enabled: booleanValue(value.enabled, `Isla profile ${name}.tools.webSearch.enabled`) }), ...(provider === undefined ? {} : { provider }), ...(maxResults === undefined ? {} : { maxResults }), ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(maxOutputChars === undefined ? {} : { maxOutputChars }) };
 }
 
 function parseWebFetch(name: string, value: unknown, onWarning?: (message: string) => void): ProfileWebFetchSettingsV1 {
@@ -257,6 +281,10 @@ function parseWebFetch(name: string, value: unknown, onWarning?: (message: strin
 
 function normalizeWebFetchConfig(value: ProfileWebFetchSettingsV1): WebFetchConfig {
   return Object.freeze({ enabled: value.enabled ?? true, allowedHosts: Object.freeze([...(value.allowedHosts ?? ['*'])]), timeoutMs: value.timeoutMs ?? DEFAULT_WEB_FETCH.timeoutMs, maxResponseBytes: value.maxResponseBytes ?? DEFAULT_WEB_FETCH.maxResponseBytes, maxBodyChars: value.maxBodyChars ?? DEFAULT_WEB_FETCH.maxBodyChars, maxOutputChars: value.maxOutputChars ?? DEFAULT_WEB_FETCH.maxOutputChars, maxRedirects: value.maxRedirects ?? DEFAULT_WEB_FETCH.maxRedirects });
+}
+
+function normalizeWebSearchConfig(value: ProfileWebSearchSettingsV1, apiKey: string, model: string): WebSearchConfig {
+  return Object.freeze({ enabled: value.enabled ?? true, provider: 'deepseek-official', apiKey, model, maxResults: value.maxResults ?? 8, timeoutMs: value.timeoutMs ?? 30_000, maxOutputChars: value.maxOutputChars ?? 12_000 });
 }
 
 function normalizeWebHost(value: unknown, field: string): string {

@@ -4,8 +4,8 @@ import type { AppConfig } from './config.js';
 import type { ContextCheckpoint } from './core/context.js';
 import type { ToolExecutionResult } from './tools/types.js';
 import { createProjectFilesCapability } from './tools/project-files.js';
-import { createWebFetchCapability } from './tools/web.js';
-import type { WebFetchConfig } from './config.js';
+import { createWebCapability } from './tools/web.js';
+import type { WebFetchConfig, WebSearchConfig } from './config.js';
 import type { SessionStore, StoredSession } from './session-store.js';
 import type { MemoryRuntime } from './memory/runtime.js';
 import type { TaskBrief } from './core/agent-loop.js';
@@ -27,6 +27,7 @@ export interface SessionFactoryConfig {
   readonly contextRetainTurns: number;
   readonly modelRetries: number;
   readonly webFetch?: WebFetchConfig;
+  readonly webSearch?: WebSearchConfig;
 }
 
 export interface SessionEntryOptions {
@@ -68,7 +69,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         modelRetries: config.modelRetries,
         enableTools: true,
         agentLoop: true,
-        capabilities: [createProjectFilesCapability(workspaceRoot), ...(config.webFetch?.enabled ? [createWebFetchCapability(config.webFetch)] : [])],
+        capabilities: [createProjectFilesCapability(workspaceRoot), ...((config.webFetch?.enabled || config.webSearch?.enabled) ? [createWebCapability({ ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) })] : [])],
         projectRoot: workspaceRoot,
         ...(diagnostics ? { onDiagnostic: diagnostics } : {}),
         permissionPreset: 'workspace',
