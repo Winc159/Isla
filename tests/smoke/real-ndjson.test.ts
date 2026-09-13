@@ -21,15 +21,15 @@ function writeTrace(line: string): void {
   if (tracePath) appendFileSync(tracePath, `${new Date().toISOString()} ${line}\n`, "utf8");
 }
 
-type Event = { type: string; id?: string; text?: string; approvalId?: string; approved?: boolean; ok?: boolean; code?: string; sessionId?: string };
+type Event = { type: string; id?: string; text?: string; approvalId?: string; approved?: boolean; ok?: boolean; code?: string; sessionId?: string; message?: string; error?: string; capabilities?: { webFetch?: boolean } };
 
 class Driver {
   readonly events: Event[] = [];
   readonly stderr: string[] = [];
   private readonly waiters = new Map<string, Array<(event: Event) => void>>();
   private readonly child: ChildProcessWithoutNullStreams;
-  constructor(cwd: string, sessionDir: string, memoryPath: string) {
-    this.child = spawn(process.execPath, [resolve("dist/cli.js"), "--env", "--protocol", "ndjson"], {
+  constructor(cwd: string, sessionDir: string, memoryPath: string, configPath?: string) {
+    this.child = spawn(process.execPath, [resolve("dist/cli.js"), ...(configPath ? ["--config", configPath, "--profile", "eval"] : ["--env"]), "--protocol", "ndjson"], {
       cwd,
       env: { ...process.env, ISLA_PROVIDER: "deepseek", ISLA_SESSION_DIR: sessionDir, ISLA_MEMORY_DB: memoryPath, ISLA_MEMORY_ENABLED: "1" },
       stdio: ["pipe", "pipe", "pipe"],
@@ -55,13 +55,20 @@ class Driver {
     const existing = this.events.slice(from).find(matches);
     if (existing) return Promise.resolve(existing);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`timeout waiting for ${type}${id ? `:${id}` : ""}; events=${this.events.map(event => `${event.type}:${event.id ?? ""}${event.type === "response_end" && event.text ? `(${event.text.slice(0, 120)})` : ""}`).join(",")}; stderr=${this.stderr.join("").slice(-500)}`)), timeout);
-      const done = (event: Event) => { clearTimeout(timer); resolve(event); };
-      const list = this.waiters.get(`${type}:${id ?? "*"}`) ?? [];
+      let failurePoll: NodeJS.Timeout;
+      const timer = setTimeout(() => { clearInterval(failurePoll); reject(new Error(`timeout waiting for ${type}${id ? `:${id}` : ""}; events=${this.events.map(event => JSON.stringify({ type: event.type, id: event.id, code: event.code, message: event.message ?? event.error, text: event.type === "response_end" ? event.text?.slice(0, 120) : undefined })).join(",")}; stderr=${this.stderr.join("").slice(-500)}`)); }, timeout);
+      const done = (event: Event) => { clearTimeout(timer); clearInterval(failurePoll); resolve(event); };
+      failurePoll = setInterval(() => {
+        const failure = this.events.slice(from).find(event => event.type === "error" && (id === undefined || event.id === id));
+        if (failure) { clearTimeout(timer); clearInterval(failurePoll); reject(new Error(`response error ${id ?? ""}: ${failure.code ?? "unknown"} ${failure.message ?? failure.error ?? ""}`)); }
+      }, 50);
+    const list = this.waiters.get(`${type}:${id ?? "*"}`) ?? [];
       list.push(done); this.waiters.set(`${type}:${id ?? "*"}`, list);
     });
   }
   async waitResponse(id: string): Promise<Event> {
+    const failure = this.events.find(event => event.type === "error" && event.id === id);
+    if (failure) throw new Error(`response error ${id}: ${failure.code ?? "unknown"} ${failure.message ?? failure.error ?? ""}`);
     const event = await this.wait("response_end", id, 90_000);
     if (!event.text?.trim()) throw new Error(`empty response for ${id}`);
     return event;
@@ -142,4 +149,57 @@ describe.skipIf(!enabled || !configured)("real NDJSON acceptance driver", () => 
     await runRound(1);
     await runRound(2);
   }, 300_000);
+});
+
+describe.skipIf(!enabled || !configured)("real Agent Loop clarification driver", () => {
+  it("clarifies first, then continues the original task", async () => {
+    const root = await mkdtemp(join(tmpdir(), `isla-agent-loop-${randomUUID()}-`));
+    const sessions = await mkdtemp(join(tmpdir(), `isla-agent-loop-sessions-${randomUUID()}-`));
+    const memory = await mkdtemp(join(tmpdir(), `isla-agent-loop-memory-${randomUUID()}-`));
+    const driver = new Driver(root, sessions, join(memory, "memory.sqlite"));
+    try {
+      await driver.wait("ready", undefined, 30_000);
+      driver.send({ type: "prompt", id: "clarify", text: "去重庆取车，然后自驾回广州，按照这个路线自驾游。" });
+      const first = await driver.waitResponse("clarify");
+      expect(first.outcome).toBe("needs_user");
+      expect(driver.events.filter(event => event.type === "tool_start")).toHaveLength(0);
+      expect(first.text).not.toMatch(/D1|D2|1400|1550|16\s*小时|19\s*小时/);
+      driver.send({ type: "prompt", id: "continue", text: "补充：计划 5 天，预算适中，2 人 1 名驾驶员，优先自然风景，接受高速。请继续原任务。" });
+      const second = await driver.waitResponse("continue");
+      expect(second.text?.trim()).toBeTruthy();
+      expect(driver.events.some(event => event.type === "response_end" && event.id === "continue")).toBe(true);
+      driver.send({ type: "exit", id: "exit" });
+      await driver.wait("bye", "exit", 30_000);
+    } finally {
+      await driver.close();
+      await rm(root, { recursive: true, force: true });
+      await rm(sessions, { recursive: true, force: true });
+      await rm(memory, { recursive: true, force: true });
+    }
+  }, 300_000);
+});
+
+describe.skipIf(!enabled || !configured)("real Agent Loop web planning driver", () => {
+  it("uses approved public pages only after clarification", async () => {
+    const root = await mkdtemp(join(tmpdir(), `isla-agent-web-${randomUUID()}-`));
+    const sessions = await mkdtemp(join(tmpdir(), `isla-agent-web-sessions-${randomUUID()}-`));
+    const configDir = await mkdtemp(join(tmpdir(), `isla-agent-web-config-${randomUUID()}-`));
+    const configPath = join(configDir, "config.json");
+    const source = JSON.parse(await readFile(join(process.env.USERPROFILE ?? "", ".isla", "config.json"), "utf8"));
+    source.profiles.eval = { ...source.profiles.deepseek, runtime: { ...(source.profiles.deepseek.runtime ?? {}), timeoutMs: 600_000 }, tools: { webFetch: { enabled: true, allowedHosts: ["www.gov.cn", "www.mct.gov.cn"] } }, appearance: { logLevel: "quiet" } };
+    await writeFile(configPath, JSON.stringify({ version: 1, defaultProfile: "eval", profiles: { eval: source.profiles.eval } }), "utf8");
+    const driver = new Driver(root, sessions, join(configDir, "memory.sqlite"), configPath);
+    try {
+      await driver.wait("ready", undefined, 30_000);
+      const ready = driver.events.find(event => event.type === "ready");
+      expect(ready?.capabilities?.webFetch).toBe(true);
+      driver.send({ type: "prompt", id: "clarify-web", text: "去重庆取车，然后自驾回广州，按照这个路线自驾游。" });
+      const first = await driver.waitResponse("clarify-web");
+      expect(first.outcome).toBe("needs_user");
+      expect(driver.events.filter(event => event.type === "tool_start")).toHaveLength(0);
+    } finally {
+      await driver.close();
+      await rm(root, { recursive: true, force: true }); await rm(sessions, { recursive: true, force: true }); await rm(configDir, { recursive: true, force: true });
+    }
+  }, 180_000);
 });

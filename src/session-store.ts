@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { Message } from "./core/types.js";
 import type { ContextCheckpoint, SessionContext } from "./core/context.js";
 import { validateSessionJournal, type SessionJournal } from "./core/journal.js";
+import type { TaskBrief } from "./core/agent-loop.js";
 
 export type { ContextCheckpoint, SessionContext } from "./core/context.js";
 
@@ -41,6 +42,7 @@ export interface StoredSessionV3 {
   readonly model: string;
   readonly messages: readonly Message[];
   readonly context?: SessionContext;
+  readonly task?: TaskBrief;
   readonly journal: SessionJournal;
 }
 
@@ -50,6 +52,7 @@ export interface SessionState {
   readonly messages: readonly Message[];
   readonly context?: SessionContext;
   readonly journal?: SessionJournal;
+  readonly task?: TaskBrief;
 }
 
 export interface SessionStore {
@@ -111,6 +114,7 @@ export class JsonSessionStore implements SessionStore {
       model: session.model,
       messages: [...state.messages],
       ...(state.context ? { context: state.context } : {}),
+      ...(state.task ? { task: state.task } : {}),
       journal: state.journal ?? ('journal' in session ? session.journal : emptyJournal()),
     }, session.updatedAt);
   }
@@ -263,7 +267,15 @@ function isStoredSession(value: unknown): value is StoredSession {
     && Array.isArray(session.messages)
     && session.messages.every(isMessage)
     && (session.version === 1 || session.context === undefined || isSessionContext(session.context))
+    && (session.version !== 3 || session.task === undefined || isTaskBrief(session.task))
     && (session.version !== 3 || isSessionJournal(session.journal));
+}
+
+function isTaskBrief(value: unknown): value is TaskBrief {
+  if (!value || typeof value !== "object") return false;
+  const task = value as Record<string, unknown>;
+  return typeof task.goal === "string" && Array.isArray(task.confirmedConstraints)
+    && Array.isArray(task.openQuestions) && Array.isArray(task.assumptions);
 }
 
 function emptyJournal(): SessionJournal { return { version: 1, turns: [] }; }

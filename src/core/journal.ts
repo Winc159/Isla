@@ -31,7 +31,9 @@ export type TurnActionRecord =
   | { readonly type: "approval"; readonly step: number; readonly callId: string; readonly tool: string; readonly decision: "approved" | "rejected" }
   | { readonly type: "checkpoint"; readonly throughMessageIndex: number }
   | { readonly type: "memory_retrieval"; readonly sourceIds: readonly string[] }
-  | { readonly type: "project_retrieval"; readonly sourceIds: readonly string[]; readonly truncated: boolean };
+  | { readonly type: "project_retrieval"; readonly sourceIds: readonly string[]; readonly truncated: boolean }
+  | { readonly type: "phase"; readonly phase: "understand" | "clarify" | "execute_tools" | "synthesize" }
+  | { readonly type: "decision"; readonly kind: "answer" | "clarify" | "execute"; readonly repairAttempted: boolean };
 
 export interface TurnRecord {
   readonly id: string;
@@ -58,11 +60,11 @@ export function validateSessionJournal(journal: SessionJournal, messages: readon
   for (const turn of journal.turns) {
     if (!turn.id || !Number.isInteger(turn.sequence) || turn.sequence <= previousSequence) throw new Error("Session Journal turn sequence is invalid");
     if (!Number.isInteger(turn.userMessageIndex) || messages[turn.userMessageIndex]?.role !== "user") throw new Error("Turn userMessageIndex does not reference a user message");
-    if (turn.status === "completed") {
+    if (turn.status === "completed" || turn.status === "needs_user" || turn.status === "blocked") {
       if (turn.assistantMessageIndex === undefined || messages[turn.assistantMessageIndex]?.role !== "assistant" || !messages[turn.assistantMessageIndex]?.content.trim()) throw new Error("Completed Turn must reference a non-empty assistant message");
-      if (!turn.endedAt) throw new Error("Completed Turn must have endedAt");
+      if (!turn.endedAt) throw new Error("Terminal Turn must have endedAt");
     }
-    if (turn.status !== "completed" && turn.assistantMessageIndex !== undefined) throw new Error("Non-completed Turn cannot reference an assistant message");
+    if (!(["completed", "needs_user", "blocked"] as const).includes(turn.status as "completed" | "needs_user" | "blocked") && turn.assistantMessageIndex !== undefined) throw new Error("Non-completed Turn cannot reference an assistant message");
     if (turn.status !== "running" && !turn.endedAt) throw new Error("Terminal Turn must have endedAt");
     if (turn.status === "cancelled" && turn.error?.code !== "TURN_CANCELLED") throw new Error("Cancelled Turn must have TURN_CANCELLED error");
     if (previousTurn?.status === "running") throw new Error("Only the latest Turn may be running");

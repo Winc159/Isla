@@ -186,7 +186,7 @@ export function profileToAppConfig(profile: StartupProfileV1): AppConfig {
     maxContextTurns: runtime.maxContextTurns ?? DEFAULT_MAX_CONTEXT_TURNS,
     maxContextChars: runtime.maxContextChars ?? DEFAULT_MAX_CONTEXT_CHARS,
     contextRetainTurns: runtime.contextRetainTurns ?? DEFAULT_CONTEXT_RETAIN_TURNS,
-    modelRetries: runtime.modelRetries ?? 0,
+    modelRetries: runtime.modelRetries ?? 1,
     memoryEnabled: memory.enabled ?? true,
     ...(memory.database ? { memoryDatabase: memory.database } : {}),
     ...(memory.embeddingProvider ? {
@@ -195,7 +195,9 @@ export function profileToAppConfig(profile: StartupProfileV1): AppConfig {
       ...(memory.embeddingBaseURL ? { embeddingBaseURL: memory.embeddingBaseURL } : {}),
       ...(memory.embeddingApiKey ? { embeddingApiKey: memory.embeddingApiKey } : {}),
     } : {}),
-    ...(profile.tools?.webFetch ? { webFetch: normalizeWebFetchConfig(profile.tools.webFetch) } : {}),
+    // Web Fetch is a built-in read-only capability. Keep its security limits
+    // internal so a normal user does not need to maintain a host allowlist.
+    ...(profile.tools?.webFetch ? { webFetch: normalizeWebFetchConfig(profile.tools.webFetch) } : { webFetch: normalizeWebFetchConfig({ enabled: true, allowedHosts: ['*'] }) }),
   };
   if (profile.provider === 'local') return { ...common, provider: 'local', baseURL: profile.baseURL, ...(profile.apiKey ? { apiKey: profile.apiKey } : {}) };
   return { ...common, provider: profile.provider, apiKey: profile.apiKey };
@@ -236,7 +238,9 @@ function parseWebFetch(name: string, value: unknown, onWarning?: (message: strin
   if (!Array.isArray(rawHosts)) throw new Error(`Isla profile ${name}.tools.webFetch.allowedHosts must be an array`);
   if (rawHosts.length > 32) throw new Error(`Isla profile ${name}.tools.webFetch.allowedHosts must contain at most 32 hosts`);
   const hosts = [...new Set(rawHosts.map((host, index) => normalizeWebHost(host, `Isla profile ${name}.tools.webFetch.allowedHosts[${index}]`)))].sort();
-  if (enabled && hosts.length === 0) throw new Error(`Isla profile ${name}.tools.webFetch.allowedHosts is required when enabled`);
+  // An enabled Web Fetch profile may omit hosts; the runtime applies its
+  // built-in HTTPS/SSRF/size limits instead of requiring user-maintained DNS lists.
+  const effectiveHosts = enabled && hosts.length === 0 ? ['*'] : hosts;
   const bounded = (field: keyof typeof DEFAULT_WEB_FETCH, min: number, max: number): number | undefined => {
     const raw = value[field];
     if (raw === undefined) return undefined;
@@ -248,11 +252,11 @@ function parseWebFetch(name: string, value: unknown, onWarning?: (message: strin
   const maxBodyChars = bounded('maxBodyChars', 1, 200_000);
   const maxOutputChars = bounded('maxOutputChars', 1, 200_000);
   const maxRedirects = bounded('maxRedirects', 0, 5);
-  return Object.freeze({ enabled, allowedHosts: Object.freeze(hosts), ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(maxResponseBytes === undefined ? {} : { maxResponseBytes }), ...(maxBodyChars === undefined ? {} : { maxBodyChars }), ...(maxOutputChars === undefined ? {} : { maxOutputChars }), ...(maxRedirects === undefined ? {} : { maxRedirects }) });
+  return Object.freeze({ enabled, allowedHosts: Object.freeze(effectiveHosts), ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(maxResponseBytes === undefined ? {} : { maxResponseBytes }), ...(maxBodyChars === undefined ? {} : { maxBodyChars }), ...(maxOutputChars === undefined ? {} : { maxOutputChars }), ...(maxRedirects === undefined ? {} : { maxRedirects }) });
 }
 
 function normalizeWebFetchConfig(value: ProfileWebFetchSettingsV1): WebFetchConfig {
-  return Object.freeze({ enabled: value.enabled ?? false, allowedHosts: Object.freeze([...(value.allowedHosts ?? [])]), timeoutMs: value.timeoutMs ?? DEFAULT_WEB_FETCH.timeoutMs, maxResponseBytes: value.maxResponseBytes ?? DEFAULT_WEB_FETCH.maxResponseBytes, maxBodyChars: value.maxBodyChars ?? DEFAULT_WEB_FETCH.maxBodyChars, maxOutputChars: value.maxOutputChars ?? DEFAULT_WEB_FETCH.maxOutputChars, maxRedirects: value.maxRedirects ?? DEFAULT_WEB_FETCH.maxRedirects });
+  return Object.freeze({ enabled: value.enabled ?? true, allowedHosts: Object.freeze([...(value.allowedHosts ?? ['*'])]), timeoutMs: value.timeoutMs ?? DEFAULT_WEB_FETCH.timeoutMs, maxResponseBytes: value.maxResponseBytes ?? DEFAULT_WEB_FETCH.maxResponseBytes, maxBodyChars: value.maxBodyChars ?? DEFAULT_WEB_FETCH.maxBodyChars, maxOutputChars: value.maxOutputChars ?? DEFAULT_WEB_FETCH.maxOutputChars, maxRedirects: value.maxRedirects ?? DEFAULT_WEB_FETCH.maxRedirects });
 }
 
 function normalizeWebHost(value: unknown, field: string): string {
@@ -338,7 +342,7 @@ export function readConfig(env: Env = process.env): AppConfig {
   const contextRetainTurns = Number(env.ISLA_CONTEXT_RETAIN_TURNS ?? DEFAULT_CONTEXT_RETAIN_TURNS);
   if (!Number.isInteger(contextRetainTurns) || contextRetainTurns <= 0)
     throw new Error('ISLA_CONTEXT_RETAIN_TURNS must be a positive integer');
-  const modelRetries = Number(env.ISLA_MODEL_RETRIES ?? '0');
+  const modelRetries = Number(env.ISLA_MODEL_RETRIES ?? '1');
   if (!Number.isInteger(modelRetries) || modelRetries < 0 || modelRetries > 1)
     throw new Error('ISLA_MODEL_RETRIES must be 0 or 1');
   const embeddingProvider: 'openai' | 'local' | undefined = env.ISLA_EMBEDDING_PROVIDER as 'openai' | 'local' | undefined;

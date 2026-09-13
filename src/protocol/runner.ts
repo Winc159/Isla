@@ -72,7 +72,7 @@ export async function runProtocol(input: Readable, output: import("node:stream")
     active = (async () => {
       try {
         const response = await currentSession.send(request.text);
-        writer.write({ type: "response_end", id: request.id, text: response.text, elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)), ...(response.projectSources?.length ? { projectSources: response.projectSources.map(source => ({ path: source.path, startLine: source.startLine })) } : {}) });
+        writer.write({ type: "response_end", id: request.id, text: response.text, ...(response.outcome ? { outcome: response.outcome } : {}), elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)), ...(response.projectSources?.length ? { projectSources: response.projectSources.map(source => ({ path: source.path, startLine: source.startLine })) } : {}) });
       } catch (error) {
         if (isRuntimeError(error) && error.code === "TURN_CANCELLED") writer.write({ type: "response_cancelled", id: request.id, elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)) });
         else writer.write({ type: "error", id: request.id, code: classifyPromptError(error), message: safePromptErrorMessage(error), recoverable: isRuntimeError(error) ? error.recoverable : true });
@@ -92,6 +92,7 @@ function classifyPromptError(error: unknown): RuntimeErrorCode | "PERSISTENCE_FA
 
 function safePromptErrorMessage(error: unknown): string {
   if (isRuntimeError(error)) return error.message;
+  if (error instanceof Error && /^模型决策格式无效（输出长度 \d+）$/.test(error.message)) return error.message;
   const code = classifyPromptError(error);
   if (code === "PERSISTENCE_FAILED") return "会话状态保存失败，请检查会话目录权限。";
   if (code === "PROVIDER_NETWORK") return "模型服务请求失败，请检查 Provider 配置或网络。";

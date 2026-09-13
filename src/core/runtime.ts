@@ -17,13 +17,14 @@ export interface CreateSessionOptions {
   readonly context?: import("./context.js").SessionContext;
   readonly journal?: SessionJournal;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
-  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: import("./context.js").SessionContext; readonly journal?: SessionJournal }) => Promise<void>;
+  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: import("./context.js").SessionContext; readonly journal?: SessionJournal; readonly task?: import("./agent-loop.js").TaskBrief }) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
   readonly projectRoot?: string;
   readonly onToolsUsed?: (tools: readonly string[]) => void;
   readonly onToolStarted?: (tool: string, callId: string) => void;
   readonly onToolFinished?: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly enableTools?: boolean;
+  readonly agentLoop?: boolean;
   readonly capabilities?: readonly import("../tools/types.js").ToolCapability[];
   readonly onDiagnostic?: (event: { readonly code: string; readonly component: string; readonly severity: 'warning' | 'error' | 'debug' }) => void;
   readonly approvalPolicy?: ApprovalPolicy;

@@ -7,7 +7,7 @@ describe('config file v1', () => {
   it('parses a minimal profile and applies app defaults', () => {
     const file = parseConfigFile(deepseek());
     expect(resolveProfile(file)).toEqual({ name: 'main', profile: expect.objectContaining({ provider: 'deepseek', model: 'deepseek-chat' }) });
-    expect(profileToAppConfig(file.profiles.main)).toMatchObject({ provider: 'deepseek', model: 'deepseek-chat', apiKey: 'test-only-key', timeoutMs: 600000, modelRetries: 0, maxContextTurns: 20, maxContextChars: 60000, contextRetainTurns: 6, memoryEnabled: true, personality: 'default', logLevel: 'normal' });
+    expect(profileToAppConfig(file.profiles.main)).toMatchObject({ provider: 'deepseek', model: 'deepseek-chat', apiKey: 'test-only-key', timeoutMs: 600000, modelRetries: 1, maxContextTurns: 20, maxContextChars: 60000, contextRetainTurns: 6, memoryEnabled: true, personality: 'default', logLevel: 'normal' });
   });
 
   it('supports local profiles without an API key', () => {
@@ -67,8 +67,6 @@ describe('config file v1', () => {
 
   it('rejects unsafe or incomplete web fetch configuration', () => {
     const invalid = [
-      { enabled: true },
-      { enabled: true, allowedHosts: [] },
       { enabled: true, allowedHosts: ['https://example.com'] },
       { enabled: true, allowedHosts: ['example.com/path'] },
       { enabled: true, allowedHosts: ['*.example.com'] },

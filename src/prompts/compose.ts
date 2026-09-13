@@ -1,5 +1,5 @@
 import type { Message } from "../core/types.js";
-import { DEFAULT_PERSONALITY_PROMPT, RUNTIME_POLICY_PROMPT } from "./base.js";
+import { DEFAULT_PERSONALITY_PROMPT, RUNTIME_POLICY_PROMPT, DECISION_POLICY_PROMPT, SYNTHESIS_POLICY_PROMPT } from "./base.js";
 import { PromptRegistry, type PromptPhase } from "./registry.js";
 import type { ToolCapability } from "../tools/types.js";
 
@@ -31,12 +31,14 @@ function insertHostContext(history: readonly Message[], memory: string): Message
 
 export function createDefaultPromptRegistry(): PromptRegistry {
   const registry = new PromptRegistry();
-  registry.register({ id: "identity", order: -1000, phases: ["legacy", "tool-loop"], render: () => DEFAULT_PERSONALITY_PROMPT });
-  registry.register({ id: "runtime-policy", order: 500, phases: ["legacy", "tool-loop"], render: () => RUNTIME_POLICY_PROMPT });
+  registry.register({ id: "identity", order: -1000, phases: ["legacy", "understand", "tool-loop", "execute_tools", "synthesize"], render: () => DEFAULT_PERSONALITY_PROMPT });
+  registry.register({ id: "runtime-policy", order: 500, phases: ["legacy", "understand", "tool-loop", "execute_tools", "synthesize"], render: () => RUNTIME_POLICY_PROMPT });
+  registry.register({ id: "decision-policy", order: 700, phases: ["understand"], render: () => DECISION_POLICY_PROMPT });
+  registry.register({ id: "synthesis-policy", order: 700, phases: ["synthesize"], render: () => SYNTHESIS_POLICY_PROMPT });
   registry.register({
     id: "capabilities",
     order: 1000,
-    phases: ["legacy", "tool-loop"],
+    phases: ["legacy", "execute_tools", "tool-loop"],
     render: context => context.capabilities.length
       ? context.capabilities.map(capability => `能力 ${capability.id}:\n${capability.instructions}`).join("\n\n")
       : undefined,

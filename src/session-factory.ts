@@ -8,6 +8,7 @@ import { createWebFetchCapability } from './tools/web.js';
 import type { WebFetchConfig } from './config.js';
 import type { SessionStore, StoredSession } from './session-store.js';
 import type { MemoryRuntime } from './memory/runtime.js';
+import type { TaskBrief } from './core/agent-loop.js';
 
 export interface SessionFactoryOptions {
   readonly runtime: IslaRuntime;
@@ -43,11 +44,13 @@ export function projectStoredSession(storedSession: StoredSession): {
   readonly messages: readonly import('./core/types.js').Message[];
   readonly context?: import('./core/context.js').SessionContext;
   readonly journal?: import('./core/journal.js').SessionJournal;
+  readonly task?: TaskBrief;
 } {
   return {
     messages: storedSession.messages,
     ...('context' in storedSession && storedSession.context ? { context: storedSession.context } : {}),
     ...('journal' in storedSession && storedSession.journal ? { journal: storedSession.journal } : {}),
+    ...('task' in storedSession && storedSession.task ? { task: storedSession.task } : {}),
   };
 }
 
@@ -64,6 +67,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         contextRetainTurns: config.contextRetainTurns,
         modelRetries: config.modelRetries,
         enableTools: true,
+        agentLoop: true,
         capabilities: [createProjectFilesCapability(workspaceRoot), ...(config.webFetch?.enabled ? [createWebFetchCapability(config.webFetch)] : [])],
         projectRoot: workspaceRoot,
         ...(diagnostics ? { onDiagnostic: diagnostics } : {}),

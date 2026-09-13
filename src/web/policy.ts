@@ -11,7 +11,7 @@ export function validateFetchUrl(input: string, allowedHosts: readonly string[])
   if (url.protocol !== "https:") throw new WebFetchError("WEB_INVALID_URL", "只允许 HTTPS URL。");
   if (url.username || url.password) throw new WebFetchError("WEB_BLOCKED_URL", "URL 不允许包含凭据。");
   if (isIP(url.hostname) !== 0) throw new WebFetchError("WEB_BLOCKED_URL", "不允许使用 IP literal。");
-  if (!allowedHosts.includes(url.hostname.toLowerCase())) throw new WebFetchError("WEB_HOST_NOT_ALLOWED", "目标 hostname 不在 allowlist 中。");
+  if (!allowedHosts.includes("*") && !allowedHosts.includes(url.hostname.toLowerCase())) throw new WebFetchError("WEB_HOST_NOT_ALLOWED", "目标 hostname 不在 allowlist 中。");
   url.hash = "";
   return url;
 }
