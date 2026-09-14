@@ -5,7 +5,7 @@ export interface PromptContext {
   readonly phase?: PromptPhase;
 }
 
-export type PromptPhase = "legacy" | "understand" | "tool-loop" | "execute_tools" | "synthesize";
+export type PromptPhase = "legacy" | "agent_step";
 
 export interface PromptSection {
   readonly id: string;

@@ -108,8 +108,8 @@ describe("NDJSON protocol", () => {
     });
     const events = output.trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>);
     expect(events).toEqual(expect.arrayContaining([
-      { type: "tool_start", id: "p1", tool: "list_directory" },
-      { type: "tool_end", id: "p1", tool: "list_directory", ok: true },
+      expect.objectContaining({ type: "tool_start", id: "p1", tool: "list_directory" }),
+      expect.objectContaining({ type: "tool_end", id: "p1", tool: "list_directory", ok: true }),
     ]));
   });
 

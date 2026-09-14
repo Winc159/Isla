@@ -1,6 +1,6 @@
 # Isla v0.2.7.3 Luna 实施顺序：主动建议与真实 Web 闭环
 
-状态：待架构确认后执行  
+状态：部分实施；未完成项迁移至 v0.2.7.4
 架构依据：`docs/architecture-v0.2.7.3-proactive-planning.md`
 
 ## 0. 实施纪律
@@ -208,4 +208,3 @@ git status --short
 - 真实评估前后临时 Profile/Session/Memory 可清理；
 - 不修改 package version 和 Web Fetch 历史默认策略，除非用户单独确认；
 - 未 commit、未 push。
-

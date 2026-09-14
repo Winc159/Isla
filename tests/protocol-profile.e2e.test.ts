@@ -21,8 +21,7 @@ describe("Profile NDJSON acceptance", () => {
     await writeFile(configPath, JSON.stringify({ version: 1, defaultProfile: "local-test", profiles: {
       "local-test": { provider: "local", model: "fixture-model", baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: "test-only-profile-key", appearance: { personality: "minimal", logLevel: "quiet" }, tools: { webFetch: { enabled: true, allowedHosts: ["example.com"] } } },
     } }));
-    const tsxCli = join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
-    const child = spawn(process.execPath, [tsxCli, "src/cli.ts", "--config", configPath, "--profile", "local-test", "--protocol", "ndjson"], {
+    const child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "--config", configPath, "--profile", "local-test", "--protocol", "ndjson"], {
       cwd: process.cwd(),
       env: { ...process.env, USERPROFILE: root, HOME: root, HOMEDRIVE: "", HOMEPATH: "", ISLA_TIMEOUT_MS: "5000" },
       stdio: ["pipe", "pipe", "pipe"],

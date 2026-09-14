@@ -1,4 +1,11 @@
-import type { Message } from "./types.js";
+import type { Message, ToolCall } from "./types.js";
+export { evaluateCompletionGate } from "./completion-gate.js";
+export type { CompletionGateInput, CompletionGateResult, CompletionRejectionReason } from "./completion-gate.js";
+
+/** The only control results produced by a v0.2.7.4 model step. */
+export type StepResult =
+  | { readonly kind: "capability_calls"; readonly calls: readonly ToolCall[] }
+  | { readonly kind: "yield"; readonly text: string };
 
 export type DecisionKind = "answer" | "clarify" | "execute";
 

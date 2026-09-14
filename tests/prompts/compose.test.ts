@@ -18,14 +18,14 @@ describe("prompt composition", () => {
     expect(messages[3]?.content).toContain("直接返回 write_text_file Tool Call");
     expect(messages[3]?.content).toContain("批准由 Runtime 自动发起");
     expect(messages[2]?.content).toContain("只能使用当前会话中用户明确提供的约束");
-    expect(messages[2]?.content).toContain("应先提出最少必要的澄清问题");
+    expect(messages[2]?.content).not.toContain("只负责理解当前任务并返回一个 JSON");
   });
 
-  it("keeps identity and capabilities together in the tool-loop phase", () => {
+  it("keeps identity and capabilities together in the agent-step phase", () => {
     const messages = composeRequestMessages(
       [{ role: "user", content: "查看项目" }],
       [createProjectFilesCapability(process.cwd())],
-      "tool-loop",
+      "agent_step",
     );
     expect(messages.map(message => message.content).join("\n")).toContain("简洁、可靠的个人助理");
     expect(messages.map(message => message.content).join("\n")).toContain("能力 project-files");

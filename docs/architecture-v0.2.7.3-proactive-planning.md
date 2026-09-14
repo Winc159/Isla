@@ -1,12 +1,14 @@
 # Isla v0.2.7.3 架构基线：主动建议与真实 Web 闭环
 
-状态：实施中  
+状态：部分实施；前置决策方案经真实评估后由 v0.2.7.4 取代
 日期：2026-09-14  
 目标名称：Proposal-First Planning and Real Web Closure
 
 ## 1. 唯一目标
 
 v0.2.7.3 修复 v0.2.7.2 真实旅行对话暴露出的同一个交付缺口：Agent 已具备阶段式决策和 Web Search，却会持续要求用户拍板，无法在信息足够时采用可见假设、提出一版建议并完成 `web_search → web_fetch → synthesize`。
+
+后续结论：本版完成的 Web 安全衔接、诊断和测试能力继续保留；`understand → answer/clarify/execute` 前置闸门无法稳定保证 Tool 可见性，控制流由 `docs/architecture-v0.2.7.4-action-loop.md` 接替。
 
 本版目标流程：
 

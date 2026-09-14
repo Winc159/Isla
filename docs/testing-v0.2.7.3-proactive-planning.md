@@ -1,6 +1,6 @@
 # Isla v0.2.7.3 测试与验收：主动建议与真实 Web 闭环
 
-状态：待架构确认后执行  
+状态：部分实施；真实 Search 闭环未通过，后续按 v0.2.7.4 验收
 架构依据：`docs/architecture-v0.2.7.3-proactive-planning.md`  
 实施依据：`docs/luna-implementation-v0.2.7.3.md`
 
@@ -305,4 +305,3 @@ git diff --check
 - 真实评估授权、两轮结果和脱敏失败分类；
 - package version 与 Web Fetch 默认策略是否另行收口；
 - 未 commit、未 push。
-

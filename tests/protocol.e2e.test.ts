@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-const tsxCli = join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
+const cliEntry = join(process.cwd(), "dist", "cli.js");
 
 describe("NDJSON subprocess", () => {
   it("starts the source CLI, exchanges a prompt, and exits with JSON stdout", async () => {
@@ -21,7 +21,7 @@ describe("NDJSON subprocess", () => {
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("test server did not expose a port");
     const baseUrl = `http://127.0.0.1:${address.port}/v1`;
-    const child = spawn(process.execPath, [tsxCli, "src/cli.ts", "--env", "--protocol", "ndjson"], {
+    const child = spawn(process.execPath, [cliEntry, "--env", "--protocol", "ndjson"], {
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -98,7 +98,7 @@ describe("NDJSON subprocess", () => {
     if (!address || typeof address === "string") throw new Error("test server did not expose a port");
     const lines: string[] = [];
     const errors: string[] = [];
-    const child = spawn(process.execPath, [tsxCli, "src/cli.ts", "--env", "--protocol", "ndjson"], {
+    const child = spawn(process.execPath, [cliEntry, "--env", "--protocol", "ndjson"], {
       cwd: process.cwd(),
       env: { ...process.env, ISLA_PROVIDER: "local", ISLA_MODEL: "cancel-test-model", ISLA_BASE_URL: `http://127.0.0.1:${address.port}/v1`, ISLA_SESSION_DIR: sessionDir, ISLA_TIMEOUT_MS: "15000" },
       stdio: ["pipe", "pipe", "pipe"],

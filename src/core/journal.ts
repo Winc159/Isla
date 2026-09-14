@@ -13,7 +13,7 @@ export interface ModelRequestSnapshot {
   readonly toolChoice?: ModelRequest["toolChoice"];
   readonly retrievedSourceIds: readonly string[];
   readonly requestHash: string;
-  readonly phase?: "legacy" | "understand" | "decision_fallback" | "decision_repair" | "execute_tools" | "synthesize";
+  readonly phase?: "legacy" | "agent_step";
 }
 
 export interface ModelAttemptRecord {
@@ -33,8 +33,7 @@ export type TurnActionRecord =
   | { readonly type: "checkpoint"; readonly throughMessageIndex: number }
   | { readonly type: "memory_retrieval"; readonly sourceIds: readonly string[] }
   | { readonly type: "project_retrieval"; readonly sourceIds: readonly string[]; readonly truncated: boolean }
-  | { readonly type: "phase"; readonly phase: "understand" | "clarify" | "execute_tools" | "synthesize" }
-  | { readonly type: "decision"; readonly kind: "answer" | "clarify" | "execute"; readonly repairAttempted: boolean };
+  | { readonly type: "phase"; readonly phase: "agent_step" };
 
 export interface TurnRecord {
   readonly id: string;
