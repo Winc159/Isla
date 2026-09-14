@@ -1,8 +1,8 @@
 # Isla v0.2.7.4 测试计划：Capability Call or Yield
 
 状态：待实施
-架构依据：`docs/architecture-v0.2.7.4-action-loop.md`
-实施依据：`docs/luna-implementation-v0.2.7.4.md`
+架构依据：`docs/current/architecture.md`
+实施依据：`docs/current/implementation.md`
 
 ## 1. P0 控制流
 

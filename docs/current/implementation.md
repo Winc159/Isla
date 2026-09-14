@@ -1,7 +1,7 @@
 # Isla v0.2.7.4 实施顺序：Capability Action Loop
 
 状态：待实施
-架构依据：`docs/architecture-v0.2.7.4-action-loop.md`
+架构依据：`docs/current/architecture.md`
 
 ## 0. 实施纪律
 

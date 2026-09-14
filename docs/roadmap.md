@@ -237,7 +237,7 @@
 
 本版暂缓：`web_search`、HTTP、IP literal、跨源自动重定向、代理、认证、浏览器、二进制/PDF、缓存、spill、并行 Tool、Shell、MCP、后台任务和子 Agent。
 
-## v0.2.7.3：主动建议与真实 Web 闭环（部分实施，方案被取代）
+## v0.2.7.3：主动建议与真实 Web 闭环（历史方案，已归档）
 
 - 已加入有界澄清进度、proposal-first 提示、模型 phase 诊断和 debug spinner 修复；
 - 已加入 Search 结果精确 URL 的当前 Turn Fetch 资格；
@@ -246,7 +246,9 @@
 - 真实评估能直接交付方案，但前置 Decision 仍可能误判为 answer，从而绕过 Web Tool；
 - 前置 `answer | clarify | execute` 方案不再继续修补，由 v0.2.7.4 Action Loop 接替。
 
-## v0.2.7.4：Capability Action Loop（设计完成，待实施）
+## v0.2.7.4：Capability Action Loop（当前部分实施）
+
+已完成首 Step Tool 可见、Capability Calls → Observation → 下一 Step、Yield、Completion Gate、TaskBrief 投影、多 query Web Search、NDJSON phase 迁移和交流式真实评估。剩余事项见 `docs/current/implementation.md`。
 
 - 首个模型 Step 即看到当前全部 Tool 和能力边界；
 - 每个 Step 只有 Capability Calls 或 Yield To User 两种控制结果；
@@ -257,7 +259,7 @@
 - TaskBrief 继续保存目标、用户事实、假设和 blocker，但不再控制 Tool 可见性；
 - 参考 DSH/OpenHands 的 Action Loop，不复制其框架规模。
 
-实施依据：`docs/architecture-v0.2.7.4-action-loop.md`、`docs/luna-implementation-v0.2.7.4.md` 与 `docs/testing-v0.2.7.4-action-loop.md`。
+实施依据：`docs/current/architecture.md`、`docs/current/implementation.md` 与 `docs/current/testing.md`。
 
 ## 候选阶段：Tool 插件
 
