@@ -1,14 +1,14 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { setupServer } from 'msw/node';
-import { createDeepSeekPlugin, parseDsmlToolCalls } from '../../src/providers/deepseek.js';
+import { createDeepSeekPlugin, mapDeepSeekStreamEvent, parseDsmlToolCalls } from '../../src/providers/deepseek.js';
 import { IslaRuntime } from '../../src/core/runtime.js';
 
 const endpoint = 'https://api.deepseek.com/chat/completions';
 const server = setupServer();
 const provider = () => {
   const runtime = new IslaRuntime();
-  runtime.use(createDeepSeekPlugin({ provider: 'deepseek', model: 'deepseek-v4-flash', apiKey: 'test-only-key', timeoutMs: 100, debug: false, maxContextTurns: 20 }));
+  runtime.use(createDeepSeekPlugin({ provider: 'deepseek', model: 'deepseek-v4-flash', apiKey: 'test-only-key', timeoutMs: 100, debug: false, maxContextTurns: 20, streaming: false }));
   return runtime.createSession({ providerId: 'deepseek' });
 };
 
@@ -17,6 +17,11 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe('DeepSeek provider contract', () => {
+  it('maps Responses semantic stream events through the shared adapter', () => {
+    expect(mapDeepSeekStreamEvent({ type: 'response.output_text.delta', sequence_number: 1, content_index: 0, delta: '你好' })).toEqual({ type: 'text_delta', index: 0, delta: '你好' });
+    expect(mapDeepSeekStreamEvent({ type: 'response.function_call_arguments.done', sequence_number: 2, output_index: 0, item_id: 'call-1', name: 'read_text_file', arguments: '{"path":"README.md"}' })).toMatchObject({ type: 'tool_call_delta', index: 0, id: 'call-1', name: 'read_text_file' });
+    expect(mapDeepSeekStreamEvent({ type: 'response.completed', sequence_number: 3, response: { model: 'deepseek-v4-flash' } })).toEqual({ type: 'finish', reason: 'stop', model: 'deepseek-v4-flash' });
+  });
   it('parses multiple DSML calls and all named parameters', () => {
     const calls = parseDsmlToolCalls('<invoke name="write_text_file"><parameter name="path">a.txt</parameter><parameter name="content">a&amp;b</parameter></invoke><invoke name="read_file"><parameter name="path">b.txt</parameter></invoke>');
     expect(calls.map(call => ({ name: call.name, arguments: JSON.parse(call.arguments) }))).toEqual([
@@ -35,7 +40,7 @@ describe('DeepSeek provider contract', () => {
       return HttpResponse.json({ model: 'deepseek-v4-flash', choices: [{ message: { role: 'assistant', content: '总结完成' } }] });
     }));
     const runtime = new IslaRuntime();
-    runtime.use(createDeepSeekPlugin({ provider: 'deepseek', model: 'deepseek-v4-flash', apiKey: 'test-only-key', timeoutMs: 100, debug: false, maxContextTurns: 20 }));
+    runtime.use(createDeepSeekPlugin({ provider: 'deepseek', model: 'deepseek-v4-flash', apiKey: 'test-only-key', timeoutMs: 100, debug: false, maxContextTurns: 20, streaming: false }));
     const session = runtime.createSession({ providerId: 'deepseek', enableTools: true, projectRoot: process.cwd() });
     await expect(session.send('读取 AGENTS.md')).resolves.toMatchObject({ text: '总结完成' });
     expect(requests[1]?.messages?.at(-1)).toMatchObject({ role: 'tool', content: expect.stringContaining('Isla 项目约束') });

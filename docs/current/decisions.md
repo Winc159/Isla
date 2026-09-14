@@ -1,4 +1,9 @@
-# 当前设计取舍
+# Isla v0.2.8 当前设计取舍
+
+- 原生流式优先，但不伪造“假流式”；Provider 没有可用原生流式时走一次性请求。
+- OpenAI Responses 原生流式默认开启；DeepSeek Responses Tool streaming 因真实 HTTP 400 默认关闭，显式配置才启用；Local 默认关闭。
+- 共享 `ModelStreamAssembler` 统一文本、Tool Call、usage 和终态；不把不完整 Tool 参数交给 Runtime 执行。
+- 当前流式结果在 Runtime 内组装为完整响应后继续既有 Tool Loop；不新增逐字输出，也不把模型增量写入 Session/Journal。
 
 - 控制流只有 `capability_calls` 与 `yield`。
 - 首个 Agent Step 看到全部可用 Tool；不使用前置 Decision Gate。

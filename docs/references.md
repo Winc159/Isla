@@ -39,6 +39,11 @@
 - [DSH HTTP fetch provider](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/web/web-fetch-http) — URL 校验、公网 DNS 全答案、DNS64/NAT64、连接地址固定、同源重定向、响应限界、charset 解码与清理；v0.2.7 采用安全不变量并进一步收窄为 HTTPS、精确 allowlist、无代理；查看日期 2026-09-13。
 - [DSH Web Tool](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/web/tool-web) — 模型参数最小化、HTML→Markdown、模型展示与获取结果分离；v0.2.7 只采用 `web_fetch`，暂缓 `web_search`、通用 output spill 和并行 Tool；查看日期 2026-09-13。
 - [OpenHands Condenser](https://docs.openhands.dev/sdk/arch/condenser) — 压力触发、保留尾部和 View 投影；采用最小语义，不引入通用 Pipeline；查看日期 2026-09-11。
+- [OpenAI Responses create](https://developers.openai.com/api/reference/typescript/resources/beta/subresources/responses/methods/create) — `stream: true`、语义事件和 Responses Tool Calling；用于 v0.2.8 原生流事实基线，查看日期 2026-09-14。
+- [OpenAI Responses streaming events](https://platform.openai.com/docs/api-reference/responses-streaming) — 文本、Function Call 参数增量和终态事件；v0.2.8 只在 Adapter 转换官方事件，不复制协议到 Runtime，查看日期 2026-09-14。
+- [DeepSeek Responses API](https://api-docs.deepseek.com/guides/responses_api/) — 语义 SSE、单调 `sequence_number`、Function Call delta 和 `completed | incomplete | failed` 终态；用于 v0.2.8 DeepSeek 流契约，查看日期 2026-09-14。
+- [DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/) — Thinking + Tool Calls 的 `reasoning_content` 回传要求；v0.2.8 第一版继续关闭 thinking，查看日期 2026-09-14。
+- [DSH LLM Streaming](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/llm-streaming.md) — Provider-neutral chunk、共享 assembler、Tool Call index 和唯一 finish；v0.2.8 采用不变量，不复制 ContentBlock/Event/Cordis 框架，查看日期 2026-09-14。
 - [LangGraph Memory](https://langchain-ai.github.io/langgraph/how-tos/memory/manage-conversation-history/) — Thread 持久化、裁剪和滚动摘要；采用派生摘要，拒绝 Graph 编排和删除原文；查看日期 2026-09-11。
 - [Letta Memory Architecture](https://github.com/letta-ai/skills/blob/main/letta/letta-api-client/memory-architecture.md) — Core Memory、消息窗口、归档和语义检索分层；直接影响 v0.2.1 的四层记忆模型；查看日期 2026-09-11。
 

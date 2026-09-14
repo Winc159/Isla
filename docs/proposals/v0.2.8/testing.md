@@ -1,12 +1,12 @@
 # Isla v0.2.8 测试计划：Unified Agent Stream
 
-状态：已完成收口
-架构依据：`docs/current/architecture.md`
-实施依据：`docs/current/implementation.md`
+状态：候选测试计划  
+架构依据：`docs/proposals/v0.2.8/architecture.md`  
+实施依据：`docs/proposals/v0.2.8/implementation.md`
 
 默认全部离线。真实 Provider 测试必须同时满足显式环境开关、有效凭据和用户授权。
 
-## 1. 已完成：流协议与 Assembler
+## 1. P0 流协议与 Assembler
 
 ### STREAM-001 文本组装
 
@@ -40,7 +40,7 @@ usage 在 finish 前被保留；未报告 usage 时字段缺省，不伪造零�
 
 文本、Tool arguments 和事件数量均设置有界预算；超限稳定失败，不无限缓存。
 
-## 2. 已完成：OpenAI Adapter fixture
+## 2. P0 OpenAI Adapter fixture
 
 - `response.created → output_text.delta* → response.completed`；
 - function call arguments delta/done；
@@ -55,7 +55,7 @@ usage 在 finish 前被保留；未报告 usage 时字段缺省，不伪造零�
 
 Fixture 必须来自手写最小官方形状，不保存真实 Provider payload。
 
-## 3. 已完成与限制：DeepSeek Adapter
+## 3. P0 DeepSeek Adapter fixture
 
 - Responses API 文本 delta；
 - Function Call arguments delta/done；
@@ -68,9 +68,7 @@ Fixture 必须来自手写最小官方形状，不保存真实 Provider payload�
 -现有 DSML 兼容不从未完成 delta 执行；
 -AbortSignal、timeout、network、rate limit 错误归一化。
 
-真实验证发现 DeepSeek Responses Tool 请求当前返回 HTTP 400，因此默认关闭该路径；默认 Tool Loop 继续使用已验证的 Chat Completions 一次性请求。
-
-## 4. 已完成：Agent Loop 与回归
+## 4. P0 Agent Loop 等价性
 
 每个案例同时用 streaming FakeProvider 和 one-shot FakeProvider 运行，并断言最终结果等价：
 

@@ -1,3 +1,4 @@
+import type { ModelStreamEvent } from "./model-stream.js";
 export type MessageRole = "system" | "user" | "assistant" | "tool";
 export interface Message { readonly role: MessageRole; readonly content: string; readonly toolCalls?: readonly ToolCall[]; readonly toolCallId?: string; }
 export interface ToolDefinition { readonly name: string; readonly description: string; readonly parameters: Record<string, unknown>; }
@@ -12,6 +13,8 @@ export interface ToolResponse extends ModelResponse { readonly toolCalls?: reado
 export interface ModelProvider {
   readonly id: string;
   readonly model: string;
+  readonly streamingEnabled?: boolean;
   generate(request: ModelRequest, options?: ModelCallOptions): Promise<ModelResponse>;
   generateWithTools?(request: ModelRequest, options?: ModelCallOptions): Promise<ToolResponse>;
+  generateStream?(request: ModelRequest, options?: ModelCallOptions): AsyncIterable<ModelStreamEvent>;
 }

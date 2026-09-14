@@ -1,9 +1,7 @@
 # Isla v0.2.8 实施顺序：Unified Agent Stream
 
-状态：已完成收口
-架构依据：`docs/current/architecture.md`
-
-本版本已完成 Provider 原生流协议、Assembler、OpenAI 适配和可选 DeepSeek Responses 适配。Runtime 在 Provider 未开启流式或流式不可用时保留稳定的一次性 Tool Loop；CLI/NDJSON 增量事件输出不属于本次收口范围，后续单独评估。
+状态：方案已确认，实施中  
+架构依据：`docs/proposals/v0.2.8/architecture.md`
 
 ## 0. 前置停点
 

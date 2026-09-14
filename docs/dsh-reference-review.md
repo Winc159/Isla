@@ -190,3 +190,17 @@ Isla 进一步收窄：只允许 HTTPS；Profile 默认关闭并配置精确 hos
 本轮拒绝：只做 hostname 黑名单后调用全局 fetch；DNS 校验后允许 transport 二次解析；Approval 绕过 allowlist/公网阻断；复制 DSH Cordis、WebRuntime、Provider Registry、middleware、包结构或源码；让 DSH 成为构建或运行时依赖。
 
 完整契约、实施顺序与测试矩阵见 `docs/architecture-v0.2.7.md`、`docs/luna-implementation-v0.2.7.md` 和 `docs/testing-v0.2.7.md`。
+
+## v0.2.8 候选补充：Unified Agent Stream
+
+Isla 早期关闭了文本 streaming，因为完整文本、Tool Call 和 Tool 生命周期无法由同一 Runtime 语义承载。v0.2.7.4 已把控制流统一为 `Capability Calls → Observation → 下一 Step` 或候选 `Yield → Completion Gate`，同时 OpenAI Responses 与 DeepSeek Responses 均已有原生语义流，因此重新评估 DSH 的 LLM streaming 边界。
+
+候选采用：Provider-neutral 流事件；一个共享 Assembler；文本和多个 Tool Call 按稳定 index 组装；Tool arguments 保留原始 JSON；usage 和唯一 finish；Provider Adapter、Agent Loop 与 Tool Runtime 分责；只有完整组装且通过现有 Gate 的结果才能成为最终 assistant。
+
+候选调整：Isla 不建立 DSH 的 ContentBlock/Event Map。token delta 只作为进程内 provisional observation，`StoredSession.messages` 仍是模型可见正文事实源；Journal 只记录 step、attempt、usage、终态和耗时。one-shot Provider 保留原路径，Runtime 不把完整答案切片成假流式。
+
+继续暂缓：reasoning delta 持久化、adapter-private replay state、token 级重放、流式 Session fork、通用 middleware、Realtime、WebSocket、并行 Tool 和 steering。
+
+继续拒绝：Cordis、完整事件溯源 Session、通用事件总线、monorepo package seam、复制 DSH 源码或把 DSH 作为依赖。
+
+重新评估条件：v0.2.7.4 必须先完整收口；OpenAI 文本流可作为默认原生能力；DeepSeek Tool streaming 只有完成当前 Responses Tool schema 的 HTTP 400 修复并通过真实回归后才能启用；不支持原生流的 Local Provider 不得报告 streaming 能力。当前稳定决策是 DeepSeek 默认 one-shot Tool Loop。候选设计见 `docs/proposals/v0.2.8/`。

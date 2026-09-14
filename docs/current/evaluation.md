@@ -1,8 +1,8 @@
-# 当前评估结论
+# Isla v0.2.8 当前评估结论
 
 更新时间：2026-09-14
 
-## 最近真实评估
+## 验收结果
 
 `real-agent-capability-evaluation-2026-09-14-rerun.log`：3/3 场景通过。
 
@@ -10,6 +10,12 @@
 
 普通规划不强制 Search；用户明确要求外部资料、参考项目或核实时，模型应优先使用 Web Search。当前 Web Search 是通用来源发现能力，不保证覆盖指定搜索平台。
 
+NDJSON 真实评测已授权并通过 3/3：普通完成场景重复运行、Web 规划 Driver、多轮反馈修订。该结果验证的是稳定的一次性 Tool Loop 与协议闭环，不代表 DeepSeek Responses Tool streaming 已可用。
+
+DeepSeek Responses Tool streaming 的真实请求返回 HTTP 400，已作为明确边界处理：默认关闭，只有显式 `streaming: true` 才尝试；生产默认路径不受影响。OpenAI 原生流式适配已通过离线 fixture，未使用真实 OpenAI 凭据进行网络评测。
+
+离线门禁：68 个测试文件通过，295 passed、6 skipped；TypeScript typecheck、build、pack check、`git diff --check` 均通过。
+
 ## 解释
 
-旧版 clarification 和“规划必须 Search”的固定验收已移除，不再作为当前门禁。
+旧版 clarification 和“规划必须 Search”的固定验收已移除，不再作为当前门禁。当前版本不声称特定 Provider 的流式性能提升；当原生流式 Tool 协议不兼容时优先保持一次性路径的正确性与稳定性。

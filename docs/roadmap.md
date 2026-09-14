@@ -261,6 +261,22 @@
 
 实施依据：`docs/current/architecture.md`、`docs/current/implementation.md` 与 `docs/current/testing.md`。
 
+## v0.2.8：Unified Agent Stream（已完成收口）
+
+触发条件：v0.2.7.4 已将模型执行统一为 Agent Step，并完成 Provider 流协议验证。
+
+候选范围：
+
+- 增加 Provider-neutral `ModelStreamEvent` 和共享 Step Assembler；
+- OpenAI/DeepSeek Adapter 只转换官方原生流，不切片完整回答制造假流式；
+- 流式与 one-shot 最终都归一化为相同 `ToolResponse` 和 `capability_calls | yield`；
+- Runtime 内部组装流结果；CLI/NDJSON `model_delta` 展示暂缓，不作为本版本完成信号；
+- 保持 Completion Gate、取消、重试、Tool 配对和 Session 原子提交；
+- Local Provider 只有明确支持原生流时才报告 `streaming: true`；
+- 不引入 Realtime、思维链展示、事件溯源 Session、Inbox、并行 Tool、子 Agent或后台任务。
+
+设计、步骤与测试归档见 `docs/proposals/v0.2.8/`；当前执行基线已迁入 `docs/current/`。
+
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。

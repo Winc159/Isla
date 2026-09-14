@@ -10,6 +10,7 @@ import { isRuntimeError, RuntimeError, type TurnCancelReason } from "./errors.js
 import type { ModelAttemptRecord, SessionJournal, TurnActionRecord, TurnRecord } from "./journal.js";
 import type { TaskBrief } from "./agent-loop.js";
 import { evaluateCompletionGate, type CompletionRejectionReason } from "./completion-gate.js";
+import { ModelStreamAssembler } from "./model-stream.js";
 import { createRequestSnapshot } from "./request-snapshot.js";
 import { validateAndCleanCitations } from "./citations.js";
 import type { SessionEvent } from "./events.js";
@@ -275,7 +276,14 @@ export class ChatSession {
       if (turn) { (turn.attempts as ModelAttemptRecord[]).push(record); await this.persistState(false); }
       try {
         if (signal.aborted) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
-        const response = withTools && this.provider.generateWithTools ? await this.provider.generateWithTools(request, { signal }) : await this.provider.generate(request, { signal });
+        let response: ModelResponse | ToolResponse;
+        if (this.provider.streamingEnabled && this.provider.generateStream) {
+          const assembler = new ModelStreamAssembler();
+          for await (const event of this.provider.generateStream(request, { signal })) assembler.add(event);
+          response = assembler.finish().response;
+        } else {
+          response = withTools && this.provider.generateWithTools ? await this.provider.generateWithTools(request, { signal }) : await this.provider.generate(request, { signal });
+        }
         record.status = "succeeded"; record.endedAt = new Date().toISOString(); await this.persistState(false);
         this.onDiagnostic?.({ code: "MODEL_REQUEST_SUCCEEDED", component: "provider", severity: "debug", detail: `phase=${phase};attempt=${attempt + 1};elapsedMs=${Date.parse(record.endedAt) - Date.parse(record.startedAt)};withTools=${withTools}` });
         return response;

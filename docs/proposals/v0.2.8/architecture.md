@@ -1,7 +1,7 @@
 # Isla v0.2.8 架构提案：Unified Agent Stream
 
-状态：已完成收口
-前置基线：v0.2.7.4 Capability Action Loop 完整收口
+状态：方案已确认，待实现收口  
+前置基线：v0.2.7.4 Capability Action Loop 完整收口  
 日期：2026-09-14
 
 ## 1. 现实问题

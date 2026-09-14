@@ -11,6 +11,8 @@ import type {
 import type { DeepSeekConfig } from '../config.js';
 import { normalizeProviderError, RuntimeError } from '../core/errors.js';
 import type { ModelCallOptions } from '../core/types.js';
+import type { ModelStreamEvent } from '../core/model-stream.js';
+import { mapOpenAIStreamEvent } from './openai.js';
 export function createDeepSeekPlugin(config: DeepSeekConfig): RuntimePlugin {
   return {
     name: 'deepseek',
@@ -19,10 +21,13 @@ export function createDeepSeekPlugin(config: DeepSeekConfig): RuntimePlugin {
 }
 class DeepSeekProvider implements ModelProvider {
   readonly id = 'deepseek';
+  readonly streamingEnabled: boolean;
   readonly model: string;
   private readonly client: OpenAI;
   constructor(config: DeepSeekConfig) {
     this.model = config.model;
+    // DeepSeek Responses 的 Tool schema 兼容性仍需独立验收；默认沿用已验证的 Chat Completions Tool Loop。
+    this.streamingEnabled = config.streaming === true;
     this.client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: 'https://api.deepseek.com',
@@ -80,7 +85,26 @@ class DeepSeekProvider implements ModelProvider {
     };
     } catch (error) { throw normalizeProviderError(error, 'DeepSeek'); }
   }
+
+  generateStream(request: ModelRequest, options?: ModelCallOptions): AsyncIterable<ModelStreamEvent> { return this.stream(request, options); }
+
+  private async *stream(request: ModelRequest, options?: ModelCallOptions): AsyncIterable<ModelStreamEvent> {
+    try {
+      const response = await this.client.responses.create({
+        model: this.model,
+        input: request.messages.map(message => ({ role: message.role, content: message.content })) as never,
+        ...(request.tools ? { tools: request.tools.map(tool => ({ type: 'function' as const, name: tool.name, description: tool.description, parameters: tool.parameters, strict: false })) } : {}),
+        stream: true,
+      }, options?.signal ? { signal: options.signal } : undefined);
+      for await (const raw of response) {
+        const event = mapOpenAIStreamEvent(raw);
+        if (event) yield event;
+      }
+    } catch (error) { throw normalizeProviderError(error, 'DeepSeek'); }
+  }
 }
+
+export const mapDeepSeekStreamEvent = mapOpenAIStreamEvent;
 function toChatTool(tool: ToolDefinition) {
   return { type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } };
 }

@@ -36,6 +36,7 @@ export type OpenAIConfig = {
   readonly contextRetainTurns: number;
   readonly modelRetries: number;
   readonly apiKey: string;
+  readonly streaming?: boolean;
   readonly sessionDirectory?: string;
   readonly memoryEnabled: boolean;
   readonly memoryDatabase?: string;
@@ -60,6 +61,7 @@ export type DeepSeekConfig = {
   readonly contextRetainTurns: number;
   readonly modelRetries: number;
   readonly apiKey: string;
+  readonly streaming?: boolean;
   readonly sessionDirectory?: string;
   readonly memoryEnabled: boolean;
   readonly memoryDatabase?: string;
@@ -85,6 +87,7 @@ export type LocalConfig = {
   readonly modelRetries: number;
   readonly baseURL: string;
   readonly apiKey?: string;
+  readonly streaming?: boolean;
   readonly sessionDirectory?: string;
   readonly memoryEnabled: boolean;
   readonly memoryDatabase?: string;

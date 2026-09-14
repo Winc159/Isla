@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { evaluateCompletionGate, parseTurnDecision, type StepResult } from "../../src/core/agent-loop.js";
 import { ChatSession } from "../../src/core/session.js";
 import type { ModelRequest, ModelResponse, ToolResponse } from "../../src/core/types.js";
+import type { ModelStreamEvent } from "../../src/core/model-stream.js";
 
 describe("agent loop decision compatibility", () => {
   it("keeps parsing legacy decisions during migration", () => {
@@ -35,6 +36,16 @@ describe("v0.2.7.4 step contract", () => {
 });
 
 describe("agent loop", () => {
+  it("consumes native provider stream and commits the assembled response", async () => {
+    const events: ModelStreamEvent[] = [
+      { type: "text_delta", index: 0, delta: "流式" },
+      { type: "text_delta", index: 0, delta: "回答" },
+      { type: "finish", reason: "stop", model: "stream-model" },
+    ];
+    const provider = { id: "fake", model: "stream-model", streamingEnabled: true, generate: async () => ({ text: "unused" }), generateStream: async function* () { yield* events; } };
+    await expect(new ChatSession(provider, { enableTools: false }).send("你好")).resolves.toMatchObject({ text: "流式回答", model: "stream-model" });
+  });
+
   it("starts with all tools and continues after a tool result", async () => {
     const requests: ModelRequest[] = [];
     let calls = 0;
