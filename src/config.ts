@@ -11,6 +11,7 @@ export interface WebFetchConfig {
   readonly maxBodyChars: number;
   readonly maxOutputChars: number;
   readonly maxRedirects: number;
+  readonly allowSearchResultUrls: boolean;
 }
 export interface WebSearchConfig {
   readonly enabled: boolean;
@@ -129,12 +130,14 @@ export interface ProfileWebFetchSettingsV1 {
   readonly maxBodyChars?: number;
   readonly maxOutputChars?: number;
   readonly maxRedirects?: number;
+  readonly allowSearchResultUrls?: boolean;
 }
 export interface ProfileWebSearchSettingsV1 { readonly enabled?: boolean; readonly provider?: 'deepseek-official'; readonly maxResults?: number; readonly timeoutMs?: number; readonly maxOutputChars?: number; }
 export interface ProfileToolsSettingsV1 { readonly webFetch?: ProfileWebFetchSettingsV1; readonly webSearch?: ProfileWebSearchSettingsV1; }
 
 interface StartupProfileBaseV1 {
   readonly model: string;
+  readonly sessionDirectory?: string;
   readonly workspace?: string;
   readonly runtime?: ProfileRuntimeSettingsV1;
   readonly memory?: ProfileMemorySettingsV1;
@@ -190,6 +193,7 @@ export function profileToAppConfig(profile: StartupProfileV1): AppConfig {
   const common = {
     provider: profile.provider,
     model: profile.model,
+    ...(profile.sessionDirectory ? { sessionDirectory: profile.sessionDirectory } : {}),
     ...(profile.workspace ? { workspaceRoot: profile.workspace } : {}),
     timeoutMs: runtime.timeoutMs ?? 600000,
     debug: (appearance.logLevel ?? 'normal') === 'debug',
@@ -221,12 +225,13 @@ function isRecord(value: unknown): value is UnknownRecord { return Boolean(value
 
 function parseProfile(name: string, value: unknown, onWarning?: (message: string) => void): StartupProfileV1 {
   if (!isRecord(value)) throw new Error(`Isla profile ${name} must be an object`);
-  warnUnknown(value, ['provider', 'model', 'apiKey', 'baseURL', 'workspace', 'runtime', 'memory', 'appearance', 'tools'], `profile ${name}`, onWarning);
+  warnUnknown(value, ['provider', 'model', 'apiKey', 'baseURL', 'workspace', 'sessionDirectory', 'runtime', 'memory', 'appearance', 'tools'], `profile ${name}`, onWarning);
   const provider = value.provider;
   const model = nonEmptyString(value.model, `Isla profile ${name}.model`);
   const workspace = value.workspace === undefined ? undefined : nonEmptyString(value.workspace, `Isla profile ${name}.workspace`);
   const base = {
     model,
+    ...(value.sessionDirectory ? { sessionDirectory: nonEmptyString(value.sessionDirectory, `Isla profile ${name}.sessionDirectory`) } : {}),
     ...(workspace ? { workspace } : {}),
     ...(value.runtime !== undefined ? { runtime: parseRuntime(name, value.runtime, onWarning) } : {}),
     ...(value.memory !== undefined ? { memory: parseMemory(name, value.memory, onWarning) } : {}),
@@ -256,7 +261,7 @@ function parseWebSearch(name: string, value: unknown, onWarning?: (message: stri
 
 function parseWebFetch(name: string, value: unknown, onWarning?: (message: string) => void): ProfileWebFetchSettingsV1 {
   if (!isRecord(value)) throw new Error(`Isla profile ${name}.tools.webFetch must be an object`);
-  warnUnknown(value, ['enabled', 'allowedHosts', 'timeoutMs', 'maxResponseBytes', 'maxBodyChars', 'maxOutputChars', 'maxRedirects'], `profile ${name}.tools.webFetch`, onWarning);
+  warnUnknown(value, ['enabled', 'allowedHosts', 'timeoutMs', 'maxResponseBytes', 'maxBodyChars', 'maxOutputChars', 'maxRedirects', 'allowSearchResultUrls'], `profile ${name}.tools.webFetch`, onWarning);
   const enabled = value.enabled === undefined ? false : booleanValue(value.enabled, `Isla profile ${name}.tools.webFetch.enabled`);
   const rawHosts = value.allowedHosts === undefined ? [] : value.allowedHosts;
   if (!Array.isArray(rawHosts)) throw new Error(`Isla profile ${name}.tools.webFetch.allowedHosts must be an array`);
@@ -276,11 +281,11 @@ function parseWebFetch(name: string, value: unknown, onWarning?: (message: strin
   const maxBodyChars = bounded('maxBodyChars', 1, 200_000);
   const maxOutputChars = bounded('maxOutputChars', 1, 200_000);
   const maxRedirects = bounded('maxRedirects', 0, 5);
-  return Object.freeze({ enabled, allowedHosts: Object.freeze(effectiveHosts), ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(maxResponseBytes === undefined ? {} : { maxResponseBytes }), ...(maxBodyChars === undefined ? {} : { maxBodyChars }), ...(maxOutputChars === undefined ? {} : { maxOutputChars }), ...(maxRedirects === undefined ? {} : { maxRedirects }) });
+  return Object.freeze({ enabled, allowedHosts: Object.freeze(effectiveHosts), allowSearchResultUrls: booleanValue(value.allowSearchResultUrls ?? false, `Isla profile ${name}.tools.webFetch.allowSearchResultUrls`), ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(maxResponseBytes === undefined ? {} : { maxResponseBytes }), ...(maxBodyChars === undefined ? {} : { maxBodyChars }), ...(maxOutputChars === undefined ? {} : { maxOutputChars }), ...(maxRedirects === undefined ? {} : { maxRedirects }) });
 }
 
 function normalizeWebFetchConfig(value: ProfileWebFetchSettingsV1): WebFetchConfig {
-  return Object.freeze({ enabled: value.enabled ?? true, allowedHosts: Object.freeze([...(value.allowedHosts ?? ['*'])]), timeoutMs: value.timeoutMs ?? DEFAULT_WEB_FETCH.timeoutMs, maxResponseBytes: value.maxResponseBytes ?? DEFAULT_WEB_FETCH.maxResponseBytes, maxBodyChars: value.maxBodyChars ?? DEFAULT_WEB_FETCH.maxBodyChars, maxOutputChars: value.maxOutputChars ?? DEFAULT_WEB_FETCH.maxOutputChars, maxRedirects: value.maxRedirects ?? DEFAULT_WEB_FETCH.maxRedirects });
+  return Object.freeze({ enabled: value.enabled ?? true, allowedHosts: Object.freeze([...(value.allowedHosts ?? ['*'])]), allowSearchResultUrls: value.allowSearchResultUrls ?? false, timeoutMs: value.timeoutMs ?? DEFAULT_WEB_FETCH.timeoutMs, maxResponseBytes: value.maxResponseBytes ?? DEFAULT_WEB_FETCH.maxResponseBytes, maxBodyChars: value.maxBodyChars ?? DEFAULT_WEB_FETCH.maxBodyChars, maxOutputChars: value.maxOutputChars ?? DEFAULT_WEB_FETCH.maxOutputChars, maxRedirects: value.maxRedirects ?? DEFAULT_WEB_FETCH.maxRedirects });
 }
 
 function normalizeWebSearchConfig(value: ProfileWebSearchSettingsV1, apiKey: string, model: string): WebSearchConfig {

@@ -22,6 +22,15 @@ describe("web_fetch tool boundary", () => {
     expect(calls).toBe(0);
   });
 
+  it("uses a search URL only when the explicit bridge is enabled", async () => {
+    const source = "https://search.example.com/article";
+    const executor = { fetch: async () => result };
+    const disabled = createWebFetchTool(executor, config);
+    await expect(disabled.execute(JSON.stringify({ url: source }), { webFetchAllowedUrls: [source] })).rejects.toThrow("allowlist");
+    const enabled = createWebFetchTool(executor, { ...config, allowSearchResultUrls: true });
+    await expect(enabled.execute(JSON.stringify({ url: source }), { webFetchAllowedUrls: [source] })).resolves.toMatchObject({ details: { type: "web_fetch" } });
+  });
+
   it("passes the signal and returns bounded structured details", async () => {
     const controller = new AbortController();
     let received: AbortSignal | undefined;

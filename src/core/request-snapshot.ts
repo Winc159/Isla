@@ -6,13 +6,14 @@ export function stableSerialize(value: unknown): string {
   return JSON.stringify(sortValue(value));
 }
 
-export function createRequestSnapshot(request: ModelRequest, provider: string, model: string, promptVersion = "v0", retrievedSourceIds: readonly string[] = []): ModelRequestSnapshot {
+export function createRequestSnapshot(request: ModelRequest, provider: string, model: string, promptVersion = "v0", retrievedSourceIds: readonly string[] = [], phase?: ModelRequestSnapshot["phase"]): ModelRequestSnapshot {
   const snapshot = {
     provider, model, promptVersion,
     messages: request.messages,
     ...(request.tools ? { tools: [...request.tools].sort((left, right) => left.name.localeCompare(right.name)) } : {}),
     ...(request.toolChoice ? { toolChoice: request.toolChoice } : {}),
     retrievedSourceIds: [...retrievedSourceIds],
+    ...(phase ? { phase } : {}),
   };
   return { ...snapshot, requestHash: hash(snapshot) };
 }

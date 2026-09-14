@@ -12,6 +12,8 @@ export interface TaskBrief {
   readonly confirmedConstraints: readonly ConfirmedConstraint[];
   readonly openQuestions: readonly string[];
   readonly assumptions: readonly string[];
+  /** Runtime-owned progress marker; absent in pre-v0.2.7.3 sessions. */
+  readonly clarificationTurns?: number;
 }
 
 export interface EvidenceRequirement {
@@ -76,7 +78,13 @@ function parseTaskBrief(value: unknown, messages: readonly Message[]): TaskBrief
     confirmedConstraints,
     openQuestions: parseStringArray(value.openQuestions, "task.openQuestions", MAX_ITEMS),
     assumptions: parseStringArray(value.assumptions, "task.assumptions", MAX_ITEMS),
+    ...(value.clarificationTurns === undefined ? {} : { clarificationTurns: parseNonNegativeInteger(value.clarificationTurns, "task.clarificationTurns") }),
   };
+}
+
+function parseNonNegativeInteger(value: unknown, name: string): number {
+  if (!Number.isInteger(value) || (value as number) < 0) throw new Error(`${name} 无效`);
+  return value as number;
 }
 
 function parseStringArray(value: unknown, name: string, max: number): string[] {

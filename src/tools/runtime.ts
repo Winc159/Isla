@@ -10,13 +10,13 @@ export class ToolRuntime {
     private readonly registry: ToolRegistry,
     private readonly options: { readonly approvalPolicy?: ApprovalPolicy | undefined; readonly approvalService?: ApprovalService | undefined; readonly permissionPreset?: PermissionPreset | undefined; readonly onApproved?: ((toolName: string) => void) | undefined } = {},
   ) {}
-  async execute(call: ToolCall, options: { readonly signal?: AbortSignal } = {}): Promise<ToolExecutionResult> {
+  async execute(call: ToolCall, options: { readonly signal?: AbortSignal; readonly webFetchAllowedUrls?: readonly string[] } = {}): Promise<ToolExecutionResult> {
     if (options.signal?.aborted) return cancelledResult();
     const tool = this.registry.get(call.name);
     if (!tool) return { ok: false, code: "UNKNOWN_TOOL", message: `Unknown tool: ${call.name}` };
     let summary = `Execute ${call.name}`;
     try {
-      if (tool.describe) summary = await tool.describe(call.arguments);
+      if (tool.describe) summary = await tool.describe(call.arguments, options);
       if (options.signal?.aborted) return cancelledResult();
     } catch (error) {
       if (options.signal?.aborted) return cancelledResult();

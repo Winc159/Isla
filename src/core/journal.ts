@@ -13,6 +13,7 @@ export interface ModelRequestSnapshot {
   readonly toolChoice?: ModelRequest["toolChoice"];
   readonly retrievedSourceIds: readonly string[];
   readonly requestHash: string;
+  readonly phase?: "legacy" | "understand" | "decision_fallback" | "decision_repair" | "execute_tools" | "synthesize";
 }
 
 export interface ModelAttemptRecord {

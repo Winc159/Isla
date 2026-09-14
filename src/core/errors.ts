@@ -56,6 +56,8 @@ export function normalizeProviderError(error: unknown, provider: string): Runtim
   if (status === 429 || /rate.?limit|too many requests/i.test(message)) return new RuntimeError({ code: "PROVIDER_RATE_LIMIT", recoverable: true, message: `${provider} 模型服务请求过于频繁。` }, { cause: error });
   if (/timeout|timed out|deadline/i.test(name) || /timeout|timed out|deadline/i.test(message)) return new RuntimeError({ code: "PROVIDER_TIMEOUT", recoverable: true, message: `${provider} 模型服务请求超时。` }, { cause: error });
   if (/network|connection|fetch|socket|dns|econn|enotfound/i.test(name) || /network|connection|fetch|socket|dns|econn|enotfound/i.test(message)) return new RuntimeError({ code: "PROVIDER_NETWORK", recoverable: true, message: `${provider} 模型服务网络请求失败。` }, { cause: error });
-  const safeDetail = message.replace(/(?:api[_-]?key|authorization|bearer)\s*[:=]?\s*[^\s,;]+/gi, "[redacted]").slice(0, 240);
-  return new RuntimeError({ code: status !== undefined ? "PROVIDER_INVALID_RESPONSE" : "UNKNOWN", recoverable: false, message: status === undefined ? `${provider} 模型服务请求失败。` : `${provider} 模型服务返回了无法处理的响应（HTTP ${status}）：${safeDetail}` }, { cause: error });
+  // An HTTP response body is provider-controlled and may contain secrets or
+  // private account data even when it does not spell out "api key". Keep the
+  // public error limited to the status code.
+  return new RuntimeError({ code: status !== undefined ? "PROVIDER_INVALID_RESPONSE" : "UNKNOWN", recoverable: false, message: status === undefined ? `${provider} 模型服务请求失败。` : `${provider} 模型服务返回了无法处理的响应（HTTP ${status}）。` }, { cause: error });
 }

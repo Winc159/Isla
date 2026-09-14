@@ -128,7 +128,7 @@ export async function runCli(
     draft = '';
     history.push(line);
     const startedAt = performance.now();
-    const stopLoading = startLoading(output, startedAt);
+    const stopLoading = startLoading(output, startedAt, '生成中', logLevel !== 'debug');
     const interrupt = interactive ? createCliInterruptController(session, output) : undefined;
     interrupt?.start();
     try {
@@ -214,7 +214,8 @@ function writeSessionHistory(output: Writable, session: StoredSession): void {
   output.write('\n');
 }
 
-function startLoading(output: Writable, startedAt: number, label = '生成中'): () => void {
+function startLoading(output: Writable, startedAt: number, label = '生成中', enabled = true): () => void {
+  if (!enabled) return () => {};
   if (!(output as Writable & { isTTY?: boolean }).isTTY) return () => {};
   const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let frame = 0;

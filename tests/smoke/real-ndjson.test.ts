@@ -21,7 +21,7 @@ function writeTrace(line: string): void {
   if (tracePath) appendFileSync(tracePath, `${new Date().toISOString()} ${line}\n`, "utf8");
 }
 
-type Event = { type: string; id?: string; tool?: string; text?: string; approvalId?: string; approved?: boolean; ok?: boolean; code?: string; sessionId?: string; message?: string; error?: string; capabilities?: { webFetch?: boolean; webSearch?: boolean } };
+type Event = { type: string; id?: string; tool?: string; callId?: string; query?: string; url?: string; text?: string; approvalId?: string; approved?: boolean; ok?: boolean; code?: string; sessionId?: string; message?: string; error?: string; capabilities?: { webFetch?: boolean; webSearch?: boolean } };
 
 class Driver {
   readonly events: Event[] = [];
@@ -56,7 +56,7 @@ class Driver {
     if (existing) return Promise.resolve(existing);
     return new Promise((resolve, reject) => {
       let failurePoll: NodeJS.Timeout;
-      const timer = setTimeout(() => { clearInterval(failurePoll); reject(new Error(`timeout waiting for ${type}${id ? `:${id}` : ""}; events=${this.events.map(event => JSON.stringify({ type: event.type, id: event.id, code: event.code, message: event.message ?? event.error, text: event.type === "response_end" ? event.text?.slice(0, 120) : undefined })).join(",")}; stderr=${this.stderr.join("").slice(-500)}`)); }, timeout);
+      const timer = setTimeout(() => { clearInterval(failurePoll); reject(new Error(`timeout waiting for ${type}${id ? `:${id}` : ""}; diagnostics=${formatDiagnostics(this.events)}; stderr=${this.stderr.join("").slice(-500)}`)); }, timeout);
       const done = (event: Event) => { clearTimeout(timer); clearInterval(failurePoll); resolve(event); };
       failurePoll = setInterval(() => {
         const failure = this.events.slice(from).find(event => event.type === "error" && (id === undefined || event.id === id));
@@ -78,6 +78,27 @@ class Driver {
     if (!event.text?.trim()) throw new Error(`empty response for ${id}`);
     return event;
   }
+  async waitResponseApprovingNetwork(id: string, timeout = 180_000): Promise<Event> {
+    const deadline = Date.now() + timeout;
+    const approved = new Set<string>();
+    let sequence = 0;
+    while (Date.now() < deadline) {
+      const failure = this.events.find(event => event.type === "error" && event.id === id);
+      if (failure) throw new Error(`response error ${id}: ${failure.code ?? "unknown"} ${failure.message ?? failure.error ?? ""}`);
+      const response = this.events.find(event => event.type === "response_end" && event.id === id);
+      if (response) {
+        if (!response.text?.trim()) throw new Error(`empty response for ${id}`);
+        return response;
+      }
+      for (const approval of this.events.filter(event => event.type === "approval_request" && event.id === id && event.approvalId)) {
+        if (approved.has(approval.approvalId!)) continue;
+        approved.add(approval.approvalId!);
+        this.send({ type: "approval_response", id: `${id}-approval-${++sequence}`, approvalId: approval.approvalId, approved: true });
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    throw new Error(`timeout waiting for ${id}; diagnostics=${formatDiagnostics(this.events)}; stderr=${this.stderr.join("").slice(-500)}`);
+  }
   async close(): Promise<number | null> {
     if (!this.child.stdin.destroyed) this.child.stdin.end();
     return await new Promise(resolve => {
@@ -86,6 +107,13 @@ class Driver {
     });
   }
   abort(): void { if (!this.child.killed) this.child.kill(); }
+}
+
+function formatDiagnostics(events: readonly Event[]): string {
+  return events.map(event => {
+    if (event.type === "tool_start") return `${event.type}:${event.tool}${event.query ? ` query=${JSON.stringify(event.query)}` : ""}${event.url ? ` url=${event.url}` : ""}`;
+    return `${event.type}${event.tool ? `:${event.tool}` : ""}${event.code ? `:${event.code}` : ""}${event.message ? `:${event.message}` : ""}`;
+  }).join(" | ");
 }
 
 async function runRound(round: number): Promise<void> {
@@ -185,13 +213,13 @@ describe.skipIf(!enabled || !configured)("real Agent Loop clarification driver",
 });
 
 describe.skipIf(!enabled || !configured)("real Agent Loop web planning driver", () => {
-  it("uses approved public pages only after clarification", async () => {
+  it("autonomously searches, reads, analyzes, and synthesizes a planning request", async () => {
     const root = await mkdtemp(join(tmpdir(), `isla-agent-web-${randomUUID()}-`));
     const sessions = await mkdtemp(join(tmpdir(), `isla-agent-web-sessions-${randomUUID()}-`));
     const configDir = await mkdtemp(join(tmpdir(), `isla-agent-web-config-${randomUUID()}-`));
     const configPath = join(configDir, "config.json");
     const source = JSON.parse(await readFile(join(process.env.USERPROFILE ?? "", ".isla", "config.json"), "utf8"));
-    source.profiles.eval = { ...source.profiles.deepseek, runtime: { ...(source.profiles.deepseek.runtime ?? {}), timeoutMs: 600_000 }, tools: { webSearch: { enabled: true, maxResults: 5, timeoutMs: 60_000 }, webFetch: { enabled: true, allowedHosts: ["www.gov.cn", "www.mct.gov.cn"] } }, appearance: { logLevel: "quiet" } };
+    source.profiles.eval = { ...source.profiles.deepseek, sessionDirectory: sessions, memory: { ...(source.profiles.deepseek.memory ?? {}), database: join(configDir, "memory.sqlite") }, runtime: { ...(source.profiles.deepseek.runtime ?? {}), timeoutMs: 600_000 }, tools: { webSearch: { enabled: true, maxResults: 5, timeoutMs: 60_000 }, webFetch: { enabled: true, allowedHosts: ["deny.invalid"], allowSearchResultUrls: true } }, appearance: { logLevel: "quiet" } };
     await writeFile(configPath, JSON.stringify({ version: 1, defaultProfile: "eval", profiles: { eval: source.profiles.eval } }), "utf8");
     const driver = new Driver(root, sessions, join(configDir, "memory.sqlite"), configPath);
     try {
@@ -199,21 +227,16 @@ describe.skipIf(!enabled || !configured)("real Agent Loop web planning driver", 
       const ready = driver.events.find(event => event.type === "ready");
       expect(ready?.capabilities?.webFetch).toBe(true);
       expect(ready?.capabilities?.webSearch).toBe(true);
-      driver.send({ type: "prompt", id: "clarify-web", text: "去重庆取车，然后自驾回广州，按照这个路线自驾游。" });
-      const first = await driver.waitResponse("clarify-web");
-      expect(first.outcome).toBe("needs_user");
-      expect(driver.events.filter(event => event.type === "tool_start")).toHaveLength(0);
-      driver.send({ type: "prompt", id: "continue-web", text: "补充：计划 5 天，预算适中，2 人 1 名驾驶员，优先自然风景，接受高速。请继续原任务，并查找当前可引用来源。" });
-      const searchApproval = await driver.waitApproval(90_000, driver.events.length - 1);
-      expect(searchApproval.approvalId).toBeTruthy();
-      driver.send({ type: "approval_response", id: "continue-web-approval", approvalId: searchApproval.approvalId, approved: true });
-      const fetchApproval = await driver.waitApproval(90_000, driver.events.length - 1);
-      expect(fetchApproval.approvalId).toBeTruthy();
-      driver.send({ type: "approval_response", id: "continue-web-fetch-approval", approvalId: fetchApproval.approvalId, approved: true });
-      const second = await driver.waitResponse("continue-web");
+      driver.send({ type: "prompt", id: "plan-web", text: "国庆 10 月 1 日从重庆渝北提车，3 个人自驾回广州天河，10 月 6 日到即可，想在湘西多玩，其他路线和景点由你推荐。请直接给一版可修改的完整方案。" });
+      const second = await driver.waitResponseApprovingNetwork("plan-web");
       expect(second.text?.trim()).toBeTruthy();
+      // response_end omits the default completed outcome; an absent outcome
+      // is the protocol's completed state.
+      expect(second.outcome ?? "completed").toBe("completed");
       expect(driver.events.some(event => event.type === "tool_start" && event.tool === "web_search")).toBe(true);
       expect(driver.events.some(event => event.type === "tool_end" && event.tool === "web_search" && event.ok === true)).toBe(true);
+      expect(driver.events.some(event => event.type === "tool_start" && event.tool === "web_fetch")).toBe(true);
+      expect(driver.events.some(event => event.type === "tool_end" && event.tool === "web_fetch" && event.ok === true)).toBe(true);
     } finally {
       await driver.close();
       await rm(root, { recursive: true, force: true }); await rm(sessions, { recursive: true, force: true }); await rm(configDir, { recursive: true, force: true });

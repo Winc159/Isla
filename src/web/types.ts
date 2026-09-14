@@ -29,6 +29,7 @@ export interface WebFetchConfigLike {
   readonly allowedHosts: readonly string[];
   readonly maxBodyChars: number;
   readonly maxOutputChars: number;
+  readonly allowSearchResultUrls?: boolean;
 }
 
 export interface WebSearchRequest {

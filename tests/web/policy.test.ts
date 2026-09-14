@@ -12,6 +12,13 @@ describe("web fetch policy", () => {
     expect(() => validateFetchUrl("https://user:pass@docs.example.com/a", hosts)).toThrow("凭据");
   });
 
+  it("allows only an exact temporary search URL when supplied", () => {
+    const source = "https://search.example.com/article?id=1";
+    expect(validateFetchUrl(`${source}#section`, hosts, [source]).toString()).toBe(source);
+    expect(() => validateFetchUrl("https://search.example.com/other", hosts, [source])).toThrow("allowlist");
+    expect(() => validateFetchUrl("https://search.example.com/article?id=2", hosts, [source])).toThrow("allowlist");
+  });
+
   it("allows same-origin redirects and blocks cross-origin redirects", () => {
     const base = new URL("https://docs.example.com/start");
     expect(resolveRedirect("/next", base, hosts).toString()).toBe("https://docs.example.com/next");

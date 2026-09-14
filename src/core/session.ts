@@ -27,6 +27,34 @@ import {
 } from "./context.js";
 export const DEFAULT_MAX_CONTEXT_TURNS = 20;
 export const DEFAULT_MAX_TOOL_ROUNDS = 8;
+type ModelRequestPhase = "legacy" | "understand" | "decision_fallback" | "decision_repair" | "execute_tools" | "synthesize";
+const SUBMIT_DECISION_TOOL: ToolDefinition = {
+  name: "submit_decision",
+  description: "提交对当前用户任务的结构化决策。此工具只记录决策，不执行外部动作。",
+  parameters: {
+    type: "object",
+    properties: {
+      kind: { type: "string", enum: ["answer", "clarify", "execute"] },
+      text: { type: "string" },
+      questions: { type: "array", items: { type: "string" }, maxItems: 4 },
+      objective: { type: "string" },
+      task: {
+        type: "object",
+        properties: {
+          goal: { type: "string" },
+          confirmedConstraints: { type: "array", items: { type: "object", properties: { text: { type: "string" }, sourceMessageIndex: { type: "integer" } }, required: ["text", "sourceMessageIndex"], additionalProperties: false } },
+          openQuestions: { type: "array", items: { type: "string" } },
+          assumptions: { type: "array", items: { type: "string" } },
+        },
+        required: ["goal", "confirmedConstraints", "openQuestions", "assumptions"],
+        additionalProperties: false,
+      },
+      evidenceRequirement: { type: "object", properties: { external: { type: "string", enum: ["none", "preferred", "required"] }, topics: { type: "array", items: { type: "string" }, maxItems: 8 } }, required: ["external", "topics"], additionalProperties: false },
+    },
+    required: ["kind", "task"],
+    additionalProperties: false,
+  },
+};
 export interface ChatSessionOptions {
   readonly systemPrompt?: string;
   readonly messages?: readonly Message[];
@@ -42,7 +70,7 @@ export interface ChatSessionOptions {
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
   readonly projectRoot?: string;
   readonly onToolsUsed?: (tools: readonly string[]) => void;
-  readonly onToolStarted?: (tool: string, callId: string) => void;
+  readonly onToolStarted?: (tool: string, callId: string, argumentsJson?: string) => void;
   readonly onToolFinished?: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly enableTools?: boolean;
   readonly agentLoop?: boolean;
@@ -111,7 +139,7 @@ export class ChatSession {
   private readonly onSessionEvent: ((event: SessionEvent) => Promise<void>) | undefined;
   private readonly projectRoot: string | undefined;
   private readonly onToolsUsed: ((tools: readonly string[]) => void) | undefined;
-  private readonly onToolStarted: ((tool: string, callId: string) => void) | undefined;
+  private readonly onToolStarted: ((tool: string, callId: string, argumentsJson?: string) => void) | undefined;
   private readonly onToolFinished: ((tool: string, callId: string, result: ToolExecutionResult) => void) | undefined;
   private readonly enableTools: boolean;
   private readonly agentLoop: boolean;
@@ -149,19 +177,24 @@ export class ChatSession {
     await active.promise.catch(() => undefined);
   }
 
-  private async generateWithAvailableTools(request: { messages: Message[] }, signal: AbortSignal): Promise<ModelResponse> {
+  private async generateWithAvailableTools(request: { messages: Message[] }, signal: AbortSignal, requiredTool?: string): Promise<ModelResponse> {
     const provider = this.provider;
     if (!this.enableTools || !provider.generateWithTools) return provider.generate(request, { signal });
     let current = request.messages;
     const evidence: string[] = [];
+    const searchResultUrls = new Set<string>();
     const failures = new Map<string, number>();
     const successfulWrites = new Set<string>();
     const tools: readonly ToolDefinition[] = this.toolRegistry.definitions();
     for (let round = 0; round < DEFAULT_MAX_TOOL_ROUNDS; round += 1) {
-      const response = await this.generateModel({ messages: current, tools }, true, signal);
-      if (!response.toolCalls?.length) {
+      const mustSearch = requiredTool === "web_search" && !evidence.some(item => item.startsWith("web_search:"));
+      const mustFetch = requiredTool === "web_search" && !mustSearch && !evidence.some(item => item.startsWith("web_fetch:")) && tools.some(tool => tool.name === "web_fetch");
+      const requiredToolChoice = mustSearch ? requiredTool : mustFetch ? "web_fetch" : undefined;
+      const response = await this.generateModel({ messages: current, tools, ...(requiredToolChoice ? { toolChoice: { name: requiredToolChoice } } : {}) }, true, signal, "execute_tools");
+      if (!response.toolCalls?.length && !mustSearch && !mustFetch) {
         return { ...response, ...(evidence.length ? { evidence } : {}), ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}) };
       }
+      if (!response.toolCalls?.length) return { text: mustSearch ? "未能发起必要的 Web Search。" : "未能读取必要的 Web Search 来源。", outcome: "blocked", evidence, model: response.model ?? provider.model };
       const assistantToolMessage = { role: "assistant" as const, content: response.assistantContent ?? "", toolCalls: response.toolCalls };
       const next = [...current, assistantToolMessage];
       await this.appendMessage(assistantToolMessage);
@@ -169,7 +202,7 @@ export class ChatSession {
         const call = response.toolCalls[callIndex]!;
         const writeKey = `${call.name}:${call.arguments}`;
         await this.onSessionEvent?.({ type: "tool_call", callId: call.id, tool: call.name, arguments: call.arguments });
-        this.onToolStarted?.(call.name, call.id);
+        this.onToolStarted?.(call.name, call.id, call.arguments);
         if (call.name === "write_text_file" && successfulWrites.has(writeKey)) {
           const duplicateResult: ToolExecutionResult = { ok: true, content: "相同写入已在本轮成功执行，未重复写入。" };
           this.onToolFinished?.(call.name, call.id, duplicateResult);
@@ -182,9 +215,10 @@ export class ChatSession {
         let terminalResponse: ModelResponse | undefined;
         let execution: ToolExecutionResult = { ok: false, code: "EXECUTION_FAILED", message: "Tool execution interrupted" };
         try {
-          execution = await this.toolRuntime.execute(call, { signal });
+          execution = await this.toolRuntime.execute(call, { signal, webFetchAllowedUrls: [...searchResultUrls] });
           if (execution.ok && (call.name === "list_directory" || call.name === "read_text_file")) evidence.push(call.name);
           if (execution.ok && execution.details?.type === "web_search") {
+            for (const source of execution.details.sources) searchResultUrls.add(source.url);
             evidence.push(`web_search:${execution.details.sources.map(source => source.url).join(",") || "no-sources"}`);
           }
           if (execution.ok && execution.details?.type === "web_fetch") {
@@ -246,22 +280,22 @@ export class ChatSession {
     return { text: "工具调用达到本轮上限，已停止继续执行。", outcome: "blocked", model: provider.model };
   }
 
-  private generateModel(request: ModelRequest & { readonly tools: readonly ToolDefinition[] }, withTools: true, signal: AbortSignal): Promise<ToolResponse>;
-  private generateModel(request: ModelRequest, withTools: false, signal: AbortSignal): Promise<ModelResponse>;
-  private async generateModel(request: ModelRequest, withTools: boolean, signal: AbortSignal): Promise<ModelResponse | ToolResponse> {
+  private generateModel(request: ModelRequest & { readonly tools: readonly ToolDefinition[] }, withTools: true, signal: AbortSignal, phase?: ModelRequestPhase): Promise<ToolResponse>;
+  private generateModel(request: ModelRequest, withTools: false, signal: AbortSignal, phase?: ModelRequestPhase): Promise<ModelResponse>;
+  private async generateModel(request: ModelRequest, withTools: boolean, signal: AbortSignal, phase: ModelRequestPhase = "legacy"): Promise<ModelResponse | ToolResponse> {
     const turn = this.journal.turns.at(-1);
     for (let attempt = 0; ; attempt += 1) {
-      const record: ModelAttemptRecord = { attempt: attempt + 1, step: turn?.attempts.length ?? 0, startedAt: new Date().toISOString(), status: "running", request: createRequestSnapshot(request, this.provider.id, this.provider.model, "v0", [...this.retrievedProjectSources].sort()) };
+      const record: ModelAttemptRecord = { attempt: attempt + 1, step: turn?.attempts.length ?? 0, startedAt: new Date().toISOString(), status: "running", request: createRequestSnapshot(request, this.provider.id, this.provider.model, "v0.2.7.3", [...this.retrievedProjectSources].sort(), phase) };
       if (turn) { (turn.attempts as ModelAttemptRecord[]).push(record); await this.persistState(false); }
       try {
         if (signal.aborted) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
         const response = withTools && this.provider.generateWithTools ? await this.provider.generateWithTools(request, { signal }) : await this.provider.generate(request, { signal });
         record.status = "succeeded"; record.endedAt = new Date().toISOString(); await this.persistState(false);
-        this.onDiagnostic?.({ code: "MODEL_REQUEST_SUCCEEDED", component: "provider", severity: "debug", detail: `attempt=${attempt + 1};elapsedMs=${Date.parse(record.endedAt) - Date.parse(record.startedAt)};withTools=${withTools}` });
+        this.onDiagnostic?.({ code: "MODEL_REQUEST_SUCCEEDED", component: "provider", severity: "debug", detail: `phase=${phase};attempt=${attempt + 1};elapsedMs=${Date.parse(record.endedAt) - Date.parse(record.startedAt)};withTools=${withTools}` });
         return response;
       } catch (error) {
         record.status = signal.aborted || (isRuntimeError(error) && error.code === "TURN_CANCELLED") ? "aborted" : "failed"; record.endedAt = new Date().toISOString(); if (isRuntimeError(error)) record.error = error.toRecord(); await this.persistState(false);
-        this.onDiagnostic?.({ code: "MODEL_REQUEST_FAILED", component: "provider", severity: "warning", detail: `attempt=${attempt + 1};elapsedMs=${Date.parse(record.endedAt) - Date.parse(record.startedAt)};code=${isRuntimeError(error) ? error.code : "UNKNOWN"};withTools=${withTools}` });
+        this.onDiagnostic?.({ code: "MODEL_REQUEST_FAILED", component: "provider", severity: "warning", detail: `phase=${phase};attempt=${attempt + 1};elapsedMs=${Date.parse(record.endedAt) - Date.parse(record.startedAt)};code=${isRuntimeError(error) ? error.code : "UNKNOWN"};withTools=${withTools}` });
         if (signal.aborted || (isRuntimeError(error) && error.code === "TURN_CANCELLED")) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消." });
         if (attempt >= this.modelRetries || !isRuntimeError(error) || !error.recoverable || !["PROVIDER_TIMEOUT", "PROVIDER_NETWORK", "PROVIDER_RATE_LIMIT"].includes(error.code)) throw error;
       }
@@ -337,10 +371,10 @@ export class ChatSession {
     const understand = { messages: [{ role: "system" as const, content: "请返回单个 JSON（json）决策对象，不要输出其他内容。" }, ...composeRequestMessages([...history, ...taskContext], [], "understand", memoryContext ? { memory: memoryContext } : undefined)] };
     let decisionResponse: ModelResponse;
     try {
-      decisionResponse = await this.generateModel({ messages: understand.messages, responseFormat: { type: "json_object" } }, false, signal);
+      decisionResponse = await this.generateModel({ messages: understand.messages, responseFormat: { type: "json_object" } }, false, signal, "understand");
     } catch (error) {
       if (!isRuntimeError(error) || error.code !== "PROVIDER_EMPTY_RESPONSE") throw error;
-      decisionResponse = await this.generateModel({ messages: [...understand.messages, { role: "system", content: "JSON 输出为空。请改用普通回答接口，但仍只返回单个 json 决策对象。" }] }, false, signal);
+      decisionResponse = await this.generateModel({ messages: [...understand.messages, { role: "system", content: "JSON 输出为空。请改用普通回答接口，但仍只返回单个 json 决策对象。" }] }, false, signal, "decision_fallback");
     }
     let decision: TurnDecision;
     let repairAttempted = false;
@@ -350,34 +384,60 @@ export class ChatSession {
       repairAttempted = true;
       let repair: ModelResponse;
       try {
-        repair = await this.generateModel({ messages: [...understand.messages, { role: "system", content: "上一次输出无法解析。请只返回符合要求的单个 JSON（json）决策对象，不要添加任何解释。" }], responseFormat: { type: "json_object" } }, false, signal);
+        repair = await this.generateModel({ messages: [...understand.messages, { role: "system", content: "上一次输出无法解析。请只返回符合要求的单个 JSON（json）决策对象，不要添加任何解释。" }], responseFormat: { type: "json_object" } }, false, signal, "decision_repair");
       } catch (error) {
         if (!isRuntimeError(error) || error.code !== "PROVIDER_EMPTY_RESPONSE") throw error;
-        repair = await this.generateModel({ messages: [...understand.messages, { role: "system", content: "请改用普通回答接口，只返回单个 json 决策对象。" }] }, false, signal);
+        repair = await this.generateModel({ messages: [...understand.messages, { role: "system", content: "请改用普通回答接口，只返回单个 json 决策对象。" }] }, false, signal, "decision_repair");
       }
       try { decision = parseTurnDecision(repair.text, this.messages); }
       catch {
-        const input = this.messages.at(-1)?.content ?? "";
-        if (/旅行|自驾|行程|路线|规划|预算|景点/.test(input)) {
-          decision = { kind: "clarify", questions: ["请补充总天数、出发日期、人数/驾驶员和预算；这些条件会显著影响方案。"], task: { goal: input, confirmedConstraints: [], openQuestions: ["天数、日期、人数、预算"], assumptions: [] } };
-        } else {
-          // A provider may return its own control JSON (for example
-          // {"decision":"noop"}) instead of our decision envelope. Never
-          // expose that internal-looking payload as the user-facing answer;
-          // fall back to the normal response path for simple requests.
-          const fallbackRequest = { messages: composeRequestMessages(history, this.capabilities, "legacy", memoryContext ? { memory: memoryContext } : undefined) };
-          const fallback = await this.generateModel(fallbackRequest, false, signal);
-          return { text: fallback.text, ...(fallback.model ? { model: fallback.model } : {}) };
-        }
+        if (this.provider.generateWithTools) {
+          const submitted = await this.generateModel({ messages: [...understand.messages, { role: "system", content: "必须调用 submit_decision 提交决策。" }], tools: [SUBMIT_DECISION_TOOL], toolChoice: { name: SUBMIT_DECISION_TOOL.name } }, true, signal, "decision_repair");
+          const call = submitted.toolCalls?.find(item => item.name === SUBMIT_DECISION_TOOL.name);
+          if (call) {
+            try { decision = parseTurnDecision(call.arguments, this.messages); }
+            catch { return await this.generateDecisionFallback(history, memoryContext, signal); }
+          } else return await this.generateDecisionFallback(history, memoryContext, signal);
+        } else return await this.generateDecisionFallback(history, memoryContext, signal);
       }
     }
-    // Once a clarification turn has established a task, a follow-up that
-    // supplies concrete constraints must advance the task instead of letting
-    // a provider repeat its previous questions.
-    if (decision.kind === "clarify" && /补充|\d+\s*(天|日)|预算|人|驾驶员|高速|日期|出发/.test(this.messages.at(-1)?.content ?? "")) {
-      const prior = this.task ?? decision.task;
-      decision = { kind: "execute", objective: prior.goal, evidenceRequirement: { external: "required", topics: ["旅行规划"] }, task: { ...prior, openQuestions: [], confirmedConstraints: [...prior.confirmedConstraints, { text: this.messages.at(-1)?.content ?? "", sourceMessageIndex: this.messages.length - 1 }] } };
+    // A clarification is a bounded checkpoint, not a questionnaire. Once a
+    // task has already asked for clarification, a follow-up must advance with
+    // visible assumptions unless it introduces a genuinely new hard block.
+    const prior = this.task;
+    const latestInput = this.messages.at(-1)?.content ?? "";
+    const clarificationTurns = prior?.clarificationTurns ?? 0;
+    if (decision.kind === "answer" && decision.task.openQuestions.length > 0) {
+      decision = {
+        kind: "clarify",
+        questions: [`为了形成可执行结果，请补充：${decision.task.openQuestions.join("、")}。也可以让我采用合理默认值继续。`],
+        task: decision.task,
+      };
     }
+    if (decision.kind === "clarify" && prior && clarificationTurns >= 1) {
+      decision = {
+        kind: "execute",
+        objective: prior.goal,
+        evidenceRequirement: { external: "preferred", topics: [] },
+        task: {
+          ...prior,
+          openQuestions: [],
+          confirmedConstraints: latestInput.trim()
+            ? [...prior.confirmedConstraints, { text: latestInput, sourceMessageIndex: this.messages.length - 1 }]
+            : prior.confirmedConstraints,
+          assumptions: [...prior.assumptions, ...decision.task.openQuestions.map(question => `未确认，采用合理默认值：${question}`)],
+        },
+      };
+    }
+    const normalizedTask: TaskBrief = {
+      ...decision.task,
+      clarificationTurns: decision.kind === "clarify" ? clarificationTurns + 1 : clarificationTurns,
+    };
+    decision = decision.kind === "answer"
+      ? { ...decision, task: normalizedTask }
+      : decision.kind === "clarify"
+        ? { ...decision, task: normalizedTask }
+        : { ...decision, task: normalizedTask };
     this.task = decision.task;
     await this.persistState(false);
     const turn = this.journal.turns.at(-1);
@@ -393,12 +453,18 @@ export class ChatSession {
     }
     if (turn) (turn.actions as TurnActionRecord[]).push({ type: "phase", phase: "execute_tools" });
     const executeMessages = composeRequestMessages(history, this.capabilities, "execute_tools", memoryContext ? { memory: memoryContext } : undefined);
-    const executed = await this.generateWithAvailableTools({ messages: executeMessages }, signal);
+    const executed = await this.generateWithAvailableTools({ messages: executeMessages }, signal, decision.evidenceRequirement.external === "required" && this.capabilities.some(capability => capability.tools.some(tool => tool.definition.name === "web_search")) ? "web_search" : undefined);
     if (signal.aborted) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
     if (turn) (turn.actions as TurnActionRecord[]).push({ type: "phase", phase: "synthesize" });
     const synthesisMessages = composeRequestMessages(this.messages, [], "synthesize", { ...(memoryContext ? { memory: memoryContext } : {}), evidence: this.formatEvidenceContext(decision.evidenceRequirement, executed.evidence ?? []) });
-    const synthesis = await this.generateModel({ messages: synthesisMessages }, false, signal);
+    const synthesis = await this.generateModel({ messages: synthesisMessages }, false, signal, "synthesize");
     return { ...synthesis, ...(executed.evidence ? { evidence: executed.evidence } : {}), ...(executed.outcome ? { outcome: executed.outcome } : {}) };
+  }
+
+  private async generateDecisionFallback(history: readonly Message[], memoryContext: string | undefined, signal: AbortSignal): Promise<ModelResponse> {
+    const fallbackRequest = { messages: composeRequestMessages(history, this.capabilities, "legacy", memoryContext ? { memory: memoryContext } : undefined) };
+    const fallback = await this.generateModel(fallbackRequest, false, signal, "decision_fallback");
+    return { text: fallback.text, ...(fallback.model ? { model: fallback.model } : {}) };
   }
 
   private formatEvidenceContext(requirement: EvidenceRequirement, evidence: readonly string[]): string {

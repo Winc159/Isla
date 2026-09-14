@@ -4,8 +4,8 @@ import type { ToolPermission } from "../approval/types.js";
 export interface Tool {
   readonly definition: ToolDefinition;
   readonly permission?: ToolPermission;
-  describe?(argumentsJson: string): string | Promise<string>;
-  execute(argumentsJson: string, options?: { readonly signal?: AbortSignal }): Promise<string | ToolOutput>;
+  describe?(argumentsJson: string, options?: { readonly signal?: AbortSignal; readonly webFetchAllowedUrls?: readonly string[] }): string | Promise<string>;
+  execute(argumentsJson: string, options?: { readonly signal?: AbortSignal; readonly webFetchAllowedUrls?: readonly string[] }): Promise<string | ToolOutput>;
 }
 
 export interface ProjectSearchToolSource { readonly id: string; readonly path: string; readonly startLine: number; readonly endLine: number; }

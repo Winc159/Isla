@@ -9,7 +9,7 @@ import type { ToolExecutionResult } from "../tools/types.js";
 import { isRuntimeError, type RuntimeErrorCode } from "../core/errors.js";
 import type { ProtocolCapabilities } from "./types.js";
 export interface ProtocolSessionEvents {
-  readonly onToolStarted: (tool: string, callId: string) => void;
+  readonly onToolStarted: (tool: string, callId: string, argumentsJson?: string) => void;
   readonly onToolFinished: (tool: string, callId: string, result: ToolExecutionResult) => void;
 }
 export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly onNewSession?: () => void; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string } = {}): Promise<void> {
@@ -22,7 +22,7 @@ export async function runProtocol(input: Readable, output: import("node:stream")
   let activeId: string | undefined;
   const approvalService = options.approvalService ?? (options.createSession ? new ProtocolApprovalService((approvalId, request) => writer.write({ type: "approval_request", id: activeId ?? "", approvalId, tool: request.toolName, permission: request.permission.kind, summary: request.summary })) : undefined);
   const events: ProtocolSessionEvents = {
-    onToolStarted: (tool, callId) => writer.write({ type: "tool_start", id: activeId ?? "", tool }),
+    onToolStarted: (tool, callId, argumentsJson) => writer.write({ type: "tool_start", id: activeId ?? "", tool, callId, ...toolTraceFields(tool, argumentsJson) }),
     onToolFinished: (tool, callId, result) => writer.write({ type: "tool_end", id: activeId ?? "", tool, ok: result.ok, ...(!result.ok && result.code ? { code: result.code } : {}) }),
   };
   let currentSession = options.createSession ? await options.createSession(approvalService as ProtocolApprovalService, events) : session;
@@ -80,6 +80,16 @@ export async function runProtocol(input: Readable, output: import("node:stream")
     })().finally(() => { active = undefined; activeId = undefined; });
   }
   await writer.flush();
+}
+
+function toolTraceFields(tool: string, argumentsJson?: string): { readonly query?: string; readonly url?: string } {
+  if (tool !== "web_search" && tool !== "web_fetch") return {};
+  try {
+    const args = JSON.parse(argumentsJson ?? "") as Record<string, unknown>;
+    if (tool === "web_search" && typeof args.query === "string") return { query: args.query.slice(0, 500) };
+    if (tool === "web_fetch" && typeof args.url === "string") return { url: args.url.slice(0, 2000) };
+  } catch { /* tool_end carries the validation failure */ }
+  return {};
 }
 
 function classifyPromptError(error: unknown): RuntimeErrorCode | "PERSISTENCE_FAILED" | "PROMPT_FAILED" {

@@ -21,14 +21,14 @@ export interface HttpFetchDeps {
 export class HttpFetchProvider {
   constructor(private readonly config: HttpFetchConfig, private readonly deps: HttpFetchDeps = {}) {}
 
-  async fetch(request: WebFetchRequest, signal?: AbortSignal): Promise<WebFetchResult> {
+  async fetch(request: WebFetchRequest, signal?: AbortSignal, allowedUrls: readonly string[] = []): Promise<WebFetchResult> {
     const controller = new AbortController();
     const onAbort = () => controller.abort(signal?.reason);
     if (signal?.aborted) throw new WebFetchError("TURN_CANCELLED", "当前回合已取消。");
     signal?.addEventListener("abort", onAbort, { once: true });
     const timer = setTimeout(() => controller.abort("ISLA_WEB_FETCH_TIMEOUT"), this.config.timeoutMs);
     try {
-      return await this.followAndRead(request.url, controller.signal);
+      return await this.followAndRead(request.url, controller.signal, allowedUrls);
     } catch (error) {
       if (signal?.aborted) throw new WebFetchError("TURN_CANCELLED", "当前回合已取消。", error);
       if (controller.signal.aborted && controller.signal.reason === "ISLA_WEB_FETCH_TIMEOUT") throw new WebFetchError("WEB_FETCH_TIMEOUT", "网络获取超时。", error);
@@ -40,8 +40,8 @@ export class HttpFetchProvider {
     }
   }
 
-  private async followAndRead(initialUrl: string, signal: AbortSignal): Promise<WebFetchResult> {
-    let current = validateFetchUrl(initialUrl, this.config.allowedHosts);
+  private async followAndRead(initialUrl: string, signal: AbortSignal, allowedUrls: readonly string[]): Promise<WebFetchResult> {
+    let current = validateFetchUrl(initialUrl, this.config.allowedHosts, allowedUrls);
     const requestedUrl = current.toString();
     let redirects = 0;
     for (;;) {
@@ -53,7 +53,7 @@ export class HttpFetchProvider {
           if (redirects >= this.config.maxRedirects) throw new WebFetchError("WEB_REDIRECT_BLOCKED", "超过重定向次数上限。");
           const location = request.response.headers.get("location");
           if (!location) throw new WebFetchError("WEB_REDIRECT_BLOCKED", "重定向缺少 Location。");
-          const target = resolveRedirect(location, current, this.config.allowedHosts);
+          const target = resolveRedirect(location, current, this.config.allowedHosts, allowedUrls);
           if (!isSameOrigin(target, current)) throw new WebFetchError("WEB_REDIRECT_BLOCKED", "不允许跨源重定向。");
           await request.response.body?.cancel();
           current = target;

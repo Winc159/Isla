@@ -7,7 +7,7 @@ import { WebFetchError } from "../web/errors.js";
 import { validateFetchUrl } from "../web/policy.js";
 
 export interface WebFetchExecutor {
-  fetch(request: WebFetchRequest, options?: { readonly signal?: AbortSignal }): Promise<WebFetchResult>;
+  fetch(request: WebFetchRequest, options?: { readonly signal?: AbortSignal; readonly webFetchAllowedUrls?: readonly string[] }): Promise<WebFetchResult>;
 }
 
 export function createWebFetchTool(executor: WebFetchExecutor, config: WebFetchConfigLike): Tool {
@@ -23,14 +23,14 @@ export function createWebFetchTool(executor: WebFetchExecutor, config: WebFetchC
         additionalProperties: false,
       },
     },
-    describe(argumentsJson: string): string {
+    describe(argumentsJson: string, options = {}): string {
       const args = parseArguments(argumentsJson);
-      const url = validateFetchUrl(args.url, config.allowedHosts);
+      const url = validateFetchUrl(args.url, config.allowedHosts, config.allowSearchResultUrls ? options.webFetchAllowedUrls : []);
       return `获取网络资源 ${url.origin}${url.pathname}${url.search ? "?…" : ""}`;
     },
     async execute(argumentsJson: string, options = {}): Promise<string | ToolOutput> {
       const args = parseArguments(argumentsJson);
-      const requested = validateFetchUrl(args.url, config.allowedHosts);
+      const requested = validateFetchUrl(args.url, config.allowedHosts, config.allowSearchResultUrls ? options.webFetchAllowedUrls : []);
       try {
         const result = await executor.fetch({ url: requested.toString() }, options);
         const rendered = renderWebFetchResult(result, config.maxOutputChars);

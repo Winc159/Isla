@@ -37,7 +37,7 @@ export interface SessionEntryOptions {
   readonly interactive: boolean;
   readonly approvalPolicy?: import('./approval/types.js').ApprovalPolicy;
   readonly approvalService?: import('./approval/types.js').ApprovalService;
-  readonly onToolStarted?: (tool: string, callId: string) => void;
+  readonly onToolStarted?: (tool: string, callId: string, argumentsJson?: string) => void;
   readonly onToolFinished?: (tool: string, callId: string, result: ToolExecutionResult) => void;
 }
 

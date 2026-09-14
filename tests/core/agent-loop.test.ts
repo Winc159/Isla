@@ -140,6 +140,29 @@ describe("agent loop", () => {
     expect(generateCalls).toBe(3);
   });
 
+  it("advances any task after the bounded clarification checkpoint", async () => {
+    let generateCalls = 0;
+    let toolCalls = 0;
+    const provider = {
+      id: "fake", model: "fake",
+      async generate(): Promise<ModelResponse> {
+        generateCalls += 1;
+        if (generateCalls === 1) return { text: JSON.stringify({ kind: "clarify", questions: ["交付日期？"], task: { goal: "制定采购比较方案", confirmedConstraints: [], openQuestions: ["交付日期"], assumptions: [] } }) };
+        if (generateCalls === 2) return { text: JSON.stringify({ kind: "clarify", questions: ["更偏好哪个品牌？"], task: { goal: "制定采购比较方案", confirmedConstraints: [], openQuestions: ["品牌偏好"], assumptions: [] } }) };
+        return { text: "已采用合理默认值给出采购方案" };
+      },
+      async generateWithTools(): Promise<ToolResponse> {
+        toolCalls += 1;
+        return { text: "没有更多工具需要调用" };
+      },
+    };
+    const session = new ChatSession(provider, { enableTools: true, agentLoop: true, projectRoot: process.cwd() });
+    await expect(session.send("帮我制定采购比较方案")).resolves.toMatchObject({ outcome: "needs_user" });
+    await expect(session.send("下周交付，其余条件由你判断")).resolves.toMatchObject({ text: "已采用合理默认值给出采购方案" });
+    expect(toolCalls).toBe(1);
+    expect(generateCalls).toBe(3);
+  });
+
   it("cancels during understand without entering tools", async () => {
     let rejectRequest: ((error: Error) => void) | undefined;
     let toolCalls = 0;
