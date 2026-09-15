@@ -18,13 +18,22 @@ class RetryProvider implements ModelProvider {
 describe("model retry policy", () => {
   it("retries one recoverable provider failure", async () => {
     const provider = new RetryProvider(new RuntimeError({ code: "PROVIDER_NETWORK", recoverable: true, message: "网络暂时不可用" }));
-    await expect(new ChatSession(provider, { modelRetries: 1 }).send("你好")).resolves.toMatchObject({ text: "重试成功" });
+    const events: string[] = [];
+    await expect(new ChatSession(provider, { modelRetries: 1, onModelStepEvent: event => { if (event.type === "model_step_end") events.push(event.result); } }).send("你好")).resolves.toMatchObject({ text: "重试成功" });
     expect(provider.calls).toBe(2);
+    expect(events).toEqual(["retry", "candidate_yield"]);
   });
 
   it("does not retry a non-recoverable provider failure", async () => {
     const provider = new RetryProvider(new RuntimeError({ code: "PROVIDER_AUTH", recoverable: false, message: "认证失败" }));
     await expect(new ChatSession(provider, { modelRetries: 1 }).send("你好")).rejects.toMatchObject({ code: "PROVIDER_AUTH" });
     expect(provider.calls).toBe(1);
+  });
+
+  it("reports a cancelled step exactly once", async () => {
+    const provider = new RetryProvider(new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "已取消" }));
+    const events: string[] = [];
+    await expect(new ChatSession(provider, { onModelStepEvent: event => { if (event.type === "model_step_end") events.push(event.result); } }).send("你好")).rejects.toMatchObject({ code: "TURN_CANCELLED" });
+    expect(events).toEqual(["cancelled"]);
   });
 });

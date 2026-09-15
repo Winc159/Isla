@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ModelStreamAssembler } from "../../src/core/model-stream.js";
+import { ModelStepRunner } from "../../src/core/model-step.js";
 
 describe("ModelStreamAssembler", () => {
   it("assembles text, usage and a terminal event", () => {
@@ -41,5 +42,31 @@ describe("ModelStreamAssembler", () => {
   it("does not convert non-success finishes into a successful response", () => {
     const cancelled = new ModelStreamAssembler();
     expect(() => cancelled.add({ type: "finish", reason: "cancelled" })).toThrow("取消");
+  });
+});
+
+describe("ModelStepRunner", () => {
+  it("emits provisional text events while preserving the assembled response", async () => {
+    const events: unknown[] = [];
+    const response = await new ModelStepRunner().run({ messages: [{ role: "user", content: "hi" }] }, {
+      provider: {
+        id: "fake", model: "fake", streamingEnabled: true,
+        generate: async () => ({ text: "unused" }),
+        generateStream: async function* () {
+          yield { type: "text_delta", index: 0, delta: "hel" } as const;
+          yield { type: "text_delta", index: 0, delta: "lo" } as const;
+          yield { type: "finish", reason: "stop" } as const;
+        },
+      },
+      step: 0, attempt: 1, withTools: false, signal: new AbortController().signal,
+      onEvent: event => events.push(event),
+    });
+    expect(response.text).toBe("hello");
+    expect(events).toEqual([
+      { type: "model_step_start", step: 0, attempt: 1 },
+      { type: "model_delta", step: 0, attempt: 1, text: "hel", provisional: true },
+      { type: "model_delta", step: 0, attempt: 1, text: "lo", provisional: true },
+      { type: "model_step_end", step: 0, attempt: 1, result: "candidate_yield" },
+    ]);
   });
 });

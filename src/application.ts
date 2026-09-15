@@ -5,7 +5,7 @@ import { LocalEmbeddingProvider, OpenAIEmbeddingProvider } from './memory/embedd
 import type { AppConfig } from './config.js';
 
 export interface DiagnosticSink { emit(event: DiagnosticEvent): void; }
-export interface DiagnosticEvent { readonly code: string; readonly component: string; readonly severity?: 'warning' | 'error' | 'debug'; readonly detail?: string; }
+export interface DiagnosticEvent { readonly code: string; readonly component: string; readonly severity?: 'warning' | 'error' | 'debug'; readonly detail?: string; readonly domain?: import('./core/errors.js').RuntimeErrorDomain; }
 
 export function createStderrDiagnosticSink(level: 'quiet' | 'normal' | 'debug' = 'normal', output: { write(chunk: string): void } = process.stderr): DiagnosticSink {
   const rank = { debug: 0, warning: 1, error: 2 } as const;

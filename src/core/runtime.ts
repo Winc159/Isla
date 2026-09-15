@@ -49,4 +49,8 @@ export class IslaRuntime {
     if (!provider) throw new Error(`Provider not found: ${options.providerId}`);
     return new ChatSession(provider, options);
   }
+
+  getProviderCapabilities(providerId: string): import("./types.js").ProviderCapabilities | undefined {
+    return this.providers.get(providerId)?.capabilities;
+  }
 }

@@ -1,4 +1,4 @@
-# Isla v0.2.8 当前设计取舍
+# Isla v0.2.9 当前设计取舍
 
 - 原生流式优先，但不伪造“假流式”；Provider 没有可用原生流式时走一次性请求。
 - OpenAI Responses 原生流式默认开启；DeepSeek Responses Tool streaming 因真实 HTTP 400 默认关闭，显式配置才启用；Local 默认关闭。

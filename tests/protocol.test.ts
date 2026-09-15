@@ -37,6 +37,19 @@ describe("NDJSON protocol", () => {
     await writer.flush();
     expect(JSON.parse(output)).toEqual({ type: "ready", provider: "fake", model: "fake-model" });
   });
+  it("writes provisional model step events without changing the response contract", async () => {
+    let output = "";
+    const writer = new ProtocolWriter(new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } }));
+    writer.write({ type: "model_step_start", id: "p1", step: 1, attempt: 1 });
+    writer.write({ type: "model_delta", id: "p1", step: 1, attempt: 1, text: "增量", provisional: true });
+    writer.write({ type: "model_step_end", id: "p1", step: 1, attempt: 1, result: "candidate_yield" });
+    await writer.flush();
+    expect(output.trim().split("\n").map(line => JSON.parse(line))).toEqual([
+      { type: "model_step_start", id: "p1", step: 1, attempt: 1 },
+      { type: "model_delta", id: "p1", step: 1, attempt: 1, text: "增量", provisional: true },
+      { type: "model_step_end", id: "p1", step: 1, attempt: 1, result: "candidate_yield" },
+    ]);
+  });
   it("flushes queued output before returning", async () => {
     let output = "";
     const writer = new ProtocolWriter(new Writable({ write(chunk, _encoding, callback) { setTimeout(() => { output += chunk.toString(); callback(); }, 10); } }));
@@ -52,6 +65,24 @@ describe("NDJSON protocol", () => {
     const events = output.trim().split("\n").map(line => JSON.parse(line) as { type: string });
     expect(events.map(event => event.type)).toEqual(["ready", "response_start", "response_end", "bye"]);
     expect(JSON.parse(output.trim().split("\n")[2])).toMatchObject({ type: "response_end", elapsedMs: expect.any(Number) });
+  });
+  it("forwards native model step events through NDJSON", async () => {
+    let output = "";
+    const out = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });
+    const provider = {
+      id: "stream-fake", model: "stream-model", streamingEnabled: true,
+      generate: async () => ({ text: "unused" }),
+      generateStream: async function* () {
+        yield { type: "text_delta", index: 0, delta: "流" } as const;
+        yield { type: "finish", reason: "stop", model: "stream-model" } as const;
+      },
+    };
+    await runProtocol(Readable.from(['{"type":"prompt","id":"p1","text":"你好"}\n{"type":"exit","id":"e1"}\n']), out, undefined, "stream-fake", "stream-model", {
+      createSession: (_approval, events) => new ChatSession(provider, { onModelStepEvent: events.onModelStepEvent }),
+    });
+    const events = output.trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>);
+    expect(events.map(event => event.type)).toEqual(["ready", "response_start", "model_step_start", "model_delta", "model_step_end", "response_end", "bye"]);
+    expect(events[3]).toMatchObject({ type: "model_delta", id: "p1", text: "流", provisional: true });
   });
   it("reports an explicit and accurate capability snapshot in ready", async () => {
     let output = "";

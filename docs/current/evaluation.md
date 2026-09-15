@@ -1,4 +1,4 @@
-# Isla v0.2.8 当前评估结论
+# Isla v0.2.9 当前评估结论
 
 更新时间：2026-09-14
 
@@ -14,7 +14,9 @@ NDJSON 真实评测已授权并通过 3/3：普通完成场景重复运行、Web
 
 DeepSeek Responses Tool streaming 的真实请求返回 HTTP 400，已作为明确边界处理：默认关闭，只有显式 `streaming: true` 才尝试；生产默认路径不受影响。OpenAI 原生流式适配已通过离线 fixture，未使用真实 OpenAI 凭据进行网络评测。
 
-离线门禁：68 个测试文件通过，295 passed、6 skipped；TypeScript typecheck、build、pack check、`git diff --check` 均通过。
+离线门禁：68 个测试文件通过，302 passed、6 skipped；TypeScript typecheck、build、pack check、`git diff --check` 均通过。
+
+本轮真实评测已按显式 smoke 开关执行；由于当前环境未提供 `DEEPSEEK_API_KEY` 与 `ISLA_MODEL`，DeepSeek Provider 和 NDJSON 真实用例安全跳过，未发起网络请求。凭据就绪后可直接重跑同一脚本，不需要修改实现。
 
 ## 解释
 

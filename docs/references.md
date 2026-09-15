@@ -44,6 +44,9 @@
 - [DeepSeek Responses API](https://api-docs.deepseek.com/guides/responses_api/) — 语义 SSE、单调 `sequence_number`、Function Call delta 和 `completed | incomplete | failed` 终态；用于 v0.2.8 DeepSeek 流契约，查看日期 2026-09-14。
 - [DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/) — Thinking + Tool Calls 的 `reasoning_content` 回传要求；v0.2.8 第一版继续关闭 thinking，查看日期 2026-09-14。
 - [DSH LLM Streaming](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/llm-streaming.md) — Provider-neutral chunk、共享 assembler、Tool Call index 和唯一 finish；v0.2.8 采用不变量，不复制 ContentBlock/Event/Cordis 框架，查看日期 2026-09-14。
+- [DSH Architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md) — durable Session Event、live Agent Event 与 Capability Event 的职责域，以及 request freeze、assistant settlement 和 UI observation；v0.2.9 采用事实/观察分离和 attempt settlement，不复制 Event Map、Agent Registry 或 waterfall，查看日期 2026-09-15。
+- [DSH Core](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/core.md) — Agent Loop、Session、System Prompt、Tool Registry 和 LLM seam 的所有权边界；v0.2.9 只提取 Isla 已出现的 Model Step 与 Request Context 内部职责，拒绝 Cordis 和完整 Agent handle，查看日期 2026-09-15。
+- [DSH Compaction](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/compaction.md) — token pressure、Tool Pair 边界、pruning、summary 与 overflow recovery；v0.2.9 记录为后续重评依据，本版因缺少真实上下文压力而暂缓，查看日期 2026-09-15。
 - [LangGraph Memory](https://langchain-ai.github.io/langgraph/how-tos/memory/manage-conversation-history/) — Thread 持久化、裁剪和滚动摘要；采用派生摘要，拒绝 Graph 编排和删除原文；查看日期 2026-09-11。
 - [Letta Memory Architecture](https://github.com/letta-ai/skills/blob/main/letta/letta-api-client/memory-architecture.md) — Core Memory、消息窗口、归档和语义检索分层；直接影响 v0.2.1 的四层记忆模型；查看日期 2026-09-11。
 

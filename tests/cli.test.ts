@@ -50,6 +50,29 @@ describe("cli", () => {
     expect(err).toBe("");
   });
 
+  it("renders native streaming deltas once in an interactive TTY", async () => {
+    const p = {
+      id: "stream", model: "stream-model", streamingEnabled: true,
+      capabilities: { toolCalling: false, nativeStreaming: true, streamingToolCalls: false },
+      generate: async () => ({ text: "unused" }),
+      generateStream: async function* () {
+        yield { type: "text_delta", index: 0, delta: "流式" } as const;
+        yield { type: "text_delta", index: 0, delta: "回答" } as const;
+        yield { type: "finish", reason: "stop", model: "stream-model" } as const;
+      },
+    };
+    const runtime = new IslaRuntime().use({ name: "stream", setup: c => c.registerProvider(p) });
+    const input = interactiveInput();
+    let out = "";
+    const running = runCli(input, writable(text => { out += text; }, true), writable(() => {}), runtime, "stream", "stream-model", undefined, false, 20, new MemorySessionStore());
+    input.write("你好\r");
+    await new Promise(resolve => setTimeout(resolve, 40));
+    input.write("\x1b");
+    await running;
+    expect(out).toContain("isla> 流式回答");
+    expect(out.match(/isla> 流式回答/g)).toHaveLength(1);
+  });
+
   it("prints command metadata and input shortcuts with /help", async () => {
     const p = new FakeProvider([]);
     const r = new IslaRuntime().use({ name: "fake", setup: c => c.registerProvider(p) });

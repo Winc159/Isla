@@ -8,9 +8,11 @@ import { performance } from "node:perf_hooks";
 import type { ToolExecutionResult } from "../tools/types.js";
 import { isRuntimeError, type RuntimeErrorCode } from "../core/errors.js";
 import type { ProtocolCapabilities } from "./types.js";
+import type { ModelStepEvent } from "../core/events.js";
 export interface ProtocolSessionEvents {
   readonly onToolStarted: (tool: string, callId: string, argumentsJson?: string) => void;
   readonly onToolFinished: (tool: string, callId: string, result: ToolExecutionResult) => void;
+  readonly onModelStepEvent: (event: ModelStepEvent) => void;
 }
 export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly onNewSession?: () => void; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string } = {}): Promise<void> {
   const writer = new ProtocolWriter(output);
@@ -24,6 +26,12 @@ export async function runProtocol(input: Readable, output: import("node:stream")
   const events: ProtocolSessionEvents = {
     onToolStarted: (tool, callId, argumentsJson) => writer.write({ type: "tool_start", id: activeId ?? "", tool, callId, ...toolTraceFields(tool, argumentsJson) }),
     onToolFinished: (tool, callId, result) => writer.write({ type: "tool_end", id: activeId ?? "", tool, ok: result.ok, ...(!result.ok && result.code ? { code: result.code } : {}) }),
+    onModelStepEvent: event => {
+      const id = activeId ?? "";
+      if (event.type === "model_step_start") writer.write({ type: "model_step_start", id, step: event.step, attempt: event.attempt });
+      else if (event.type === "model_delta") writer.write({ type: "model_delta", id, step: event.step, attempt: event.attempt, text: event.text, provisional: true });
+      else writer.write({ type: "model_step_end", id, step: event.step, attempt: event.attempt, result: event.result });
+    },
   };
   let currentSession = options.createSession ? await options.createSession(approvalService as ProtocolApprovalService, events) : session;
   if (!currentSession) throw new Error("Protocol session is not configured");

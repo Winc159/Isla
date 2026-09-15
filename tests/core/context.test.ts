@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { RequestContextBuilder } from "../../src/core/request-context.js";
 import type { Message } from "../../src/core/types.js";
 import { buildContextProjection, estimateMessageChars, splitConversationUnits } from "../../src/core/context.js";
 
@@ -61,5 +62,19 @@ describe("context projection", () => {
   it("rejects invalid projection limits", () => {
     expect(() => buildContextProjection([], { maxTurns: 0, maxChars: 10 })).toThrow("maxContextTurns");
     expect(() => buildContextProjection([], { maxTurns: 1, maxChars: 0 })).toThrow("maxContextChars");
+  });
+
+  it("builds a deterministic agent request without mutating history", () => {
+    const history: Message[] = [{ role: "system", content: "system" }, { role: "user", content: "继续" }];
+    const builder = new RequestContextBuilder({ capabilities: [] });
+    const request = builder.build(history, "agent_step", "偏好简洁", {
+      goal: "完成任务", confirmedConstraints: [], openQuestions: [], assumptions: [],
+    });
+    expect(request.messages).toEqual(expect.arrayContaining([
+      history[0], history[1],
+      expect.objectContaining({ role: "system", content: expect.stringContaining("偏好简洁") }),
+      expect.objectContaining({ role: "system", content: expect.stringContaining("完成任务") }),
+    ]));
+    expect(history).toEqual([{ role: "system", content: "system" }, { role: "user", content: "继续" }]);
   });
 });

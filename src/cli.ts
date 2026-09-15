@@ -85,9 +85,24 @@ export async function runCli(
     );
   }
   const interactive = isInteractiveInput(input);
-  let session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch);
+  let session: ChatSession;
   const history: string[] = [];
   let draft = '';
+  const streamingDisplay = interactive && (output as Writable & { isTTY?: boolean }).isTTY === true && runtime.getProviderCapabilities(providerId)?.nativeStreaming === true;
+  const streamState = { sawDelta: false, hadToolStep: false };
+  const onModelStepEvent = (event: import('./core/events.js').ModelStepEvent): void => {
+    if (!streamingDisplay) return;
+    if (event.type === 'model_step_start') return;
+    if (event.type === 'model_delta') {
+      if (!streamState.sawDelta) output.write('isla> ');
+      streamState.sawDelta = true;
+      output.write(event.text);
+    } else if (event.result === 'capability_calls') {
+      streamState.hadToolStep = true;
+      if (streamState.sawDelta) output.write('\n');
+    }
+  };
+  session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent);
 
   const handleLine = async (line: string): Promise<'continue' | 'exit'> => {
     const command = findCliCommand(line);
@@ -114,7 +129,7 @@ export async function runCli(
       }
       if (result.type === 'switch-session') {
         storedSession = result.session;
-        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch);
+        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent);
         output.write('\x1b[2J\x1b[3J\x1b[H');
         writeHeader(output, providerId, model, workspaceRoot);
         if (result.replayHistory) writeSessionHistory(output, storedSession);
@@ -128,19 +143,22 @@ export async function runCli(
     draft = '';
     history.push(line);
     const startedAt = performance.now();
-    const stopLoading = startLoading(output, startedAt, '生成中', logLevel !== 'debug');
+    streamState.sawDelta = false;
+    streamState.hadToolStep = false;
+    const stopLoading = startLoading(output, startedAt, '生成中', logLevel !== 'debug' && !streamingDisplay);
     const interrupt = interactive ? createCliInterruptController(session, output) : undefined;
     interrupt?.start();
     try {
       const response = await session.send(line);
       stopLoading();
-      output.write('isla> ');
-      output.write(`${response.text}\n`);
+      if (streamState.sawDelta && !streamState.hadToolStep) output.write('\n');
+      else output.write(`isla> ${response.text}\n`);
       if (logLevel !== 'quiet') output.write(`耗时 ${formatElapsed(startedAt)}\n`);
       output.write('\n');
       if (response.projectSources?.length) output.write(`参考：\n${response.projectSources.map(source => `- ${source.path}:${source.startLine}`).join("\n")}\n\n`);
     } catch (error) {
       stopLoading();
+      if (streamState.sawDelta) output.write('\n');
       if (debug) {
         const name = error instanceof Error ? error.name : 'UnknownError';
         const message = error instanceof Error ? error.message : 'Unknown error';
@@ -268,9 +286,10 @@ function createPersistentSession(
   diagnostics?: (event: import('./application.js').DiagnosticEvent) => void,
   webFetch?: import('./config.js').WebFetchConfig,
   webSearch?: import('./config.js').WebSearchConfig,
+  onModelStepEvent?: (event: import('./core/events.js').ModelStepEvent) => void,
 ) {
   const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}) });
-  return factory.create({ stored: storedSession, input, output, interactive, ...(interactive ? { approvalService: new CliApprovalService(input, output) } : {}) });
+  return factory.create({ stored: storedSession, input, output, interactive, ...(interactive ? { approvalService: new CliApprovalService(input, output) } : {}), ...(onModelStepEvent ? { onModelStepEvent } : {}) });
 }
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
@@ -297,13 +316,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       let useExistingProtocolSession = true;
       await runProtocol(process.stdin, process.stdout, undefined, config.provider, config.model, {
         ...(config.workspaceRoot ? { workspace: config.workspaceRoot } : {}),
-        capabilities: { toolCalling: true, cancellation: true, streaming: false, webFetch: config.webFetch?.enabled === true, webSearch: config.webSearch?.enabled === true },
+        capabilities: { toolCalling: runtime.getProviderCapabilities(config.provider)?.toolCalling === true, cancellation: true, streaming: runtime.getProviderCapabilities(config.provider)?.nativeStreaming === true, streamingToolCalls: runtime.getProviderCapabilities(config.provider)?.streamingToolCalls === true, webFetch: config.webFetch?.enabled === true, webSearch: config.webSearch?.enabled === true },
         createSession: async (approvalService, events) => {
           if (!useExistingProtocolSession) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []);
           useExistingProtocolSession = false;
           const activeStored = protocolStored;
           if (!activeStored) throw new Error('Protocol session is not configured');
-          return sessionFactory.create({ stored: activeStored, interactive: false, approvalPolicy: 'ask', approvalService, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished });
+          return sessionFactory.create({ stored: activeStored, interactive: false, approvalPolicy: 'ask', approvalService, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished, onModelStepEvent: events.onModelStepEvent });
         },
         sessionId: () => protocolStored?.id ?? 'unknown',
       });

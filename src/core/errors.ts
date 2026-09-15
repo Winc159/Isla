@@ -14,6 +14,8 @@ export type RuntimeErrorCode =
   | "TURN_CANCELLED"
   | "UNKNOWN";
 
+export type RuntimeErrorDomain = "configuration" | "provider" | "protocol" | "session" | "persistence" | "approval" | "capability" | "security" | "cancelled" | "limit" | "unknown";
+
 export type TurnCancelReason =
   | { readonly kind: "user" }
   | { readonly kind: "disconnect" }
@@ -43,6 +45,18 @@ export class RuntimeError extends Error {
 
 export function isRuntimeError(error: unknown): error is RuntimeError {
   return error instanceof RuntimeError;
+}
+
+export function getRuntimeErrorDomain(error: unknown): RuntimeErrorDomain {
+  const code = isRuntimeError(error) ? error.code : undefined;
+  if (code === "TURN_CANCELLED" || code === "INTERRUPTED") return "cancelled";
+  if (code === "PERSISTENCE_FAILED") return "persistence";
+  if (code === "USER_REJECTED" || code === "PERMISSION_DENIED") return "approval";
+  if (code === "SANDBOX_DENIED") return "security";
+  if (code === "TOOL_FAILED") return "capability";
+  if (code === "PROVIDER_TIMEOUT" || code === "PROVIDER_NETWORK" || code === "PROVIDER_RATE_LIMIT" || code === "PROVIDER_AUTH" || code === "PROVIDER_EMPTY_RESPONSE" || code === "PROVIDER_INVALID_RESPONSE") return "provider";
+  if (code === "UNKNOWN") return "unknown";
+  return "unknown";
 }
 
 export function normalizeProviderError(error: unknown, provider: string): RuntimeError {

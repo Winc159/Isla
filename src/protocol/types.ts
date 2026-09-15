@@ -10,6 +10,9 @@ export type ProtocolToolErrorCode = "UNKNOWN_TOOL" | "INVALID_ARGUMENTS" | "PERM
 export type ProtocolEvent =
   | { readonly type: "ready"; readonly provider: string; readonly model: string; readonly workspace?: string; readonly capabilities?: ProtocolCapabilities }
   | { readonly type: "response_start"; readonly id: string }
+  | { readonly type: "model_step_start"; readonly id: string; readonly step: number; readonly attempt: number }
+  | { readonly type: "model_delta"; readonly id: string; readonly step: number; readonly attempt: number; readonly text: string; readonly provisional: true }
+  | { readonly type: "model_step_end"; readonly id: string; readonly step: number; readonly attempt: number; readonly result: "capability_calls" | "candidate_yield" | "failed" | "cancelled" | "retry" }
   | { readonly type: "response_end"; readonly id: string; readonly text: string; readonly elapsedMs: number; readonly projectSources?: readonly { readonly path: string; readonly startLine: number }[] }
   | { readonly type: "response_cancelled"; readonly id: string; readonly elapsedMs: number }
   | { readonly type: "cancel_ack"; readonly id: string; readonly targetId: string; readonly accepted: boolean }
@@ -24,6 +27,7 @@ export interface ProtocolCapabilities {
   readonly toolCalling: boolean;
   readonly cancellation: boolean;
   readonly streaming: boolean;
+  readonly streamingToolCalls?: boolean;
   readonly webFetch?: boolean;
   readonly webSearch?: boolean;
 }

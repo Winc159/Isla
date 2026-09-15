@@ -1,6 +1,6 @@
-# Isla v0.2.8 架构提案：Unified Agent Stream
+# Isla v0.2.9 架构提案：Runtime Consolidation
 
-状态：已完成收口
+状态：已完成实现
 前置基线：v0.2.7.4 Capability Action Loop 完整收口
 日期：2026-09-14
 

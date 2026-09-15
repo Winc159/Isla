@@ -1,6 +1,6 @@
-# Isla v0.2.8 测试计划：Unified Agent Stream
+# Isla v0.2.9 测试计划：Runtime Consolidation
 
-状态：已完成收口
+状态：已完成实现；真实 Provider 评测按凭据可用性执行
 架构依据：`docs/current/architecture.md`
 实施依据：`docs/current/implementation.md`
 

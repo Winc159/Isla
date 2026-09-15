@@ -1,5 +1,4 @@
 import type { ModelProvider, Message, ModelRequest, ModelResponse, ProjectSourceReference, ToolDefinition, ToolResponse } from "./types.js";
-import { composeRequestMessages } from "../prompts/compose.js";
 import type { ToolCapability, ToolExecutionResult } from "../tools/types.js";
 import { createProjectFilesCapability } from "../tools/project-files.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -10,10 +9,11 @@ import { isRuntimeError, RuntimeError, type TurnCancelReason } from "./errors.js
 import type { ModelAttemptRecord, SessionJournal, TurnActionRecord, TurnRecord } from "./journal.js";
 import type { TaskBrief } from "./agent-loop.js";
 import { evaluateCompletionGate, type CompletionRejectionReason } from "./completion-gate.js";
-import { ModelStreamAssembler } from "./model-stream.js";
+import { ModelStepRunner } from "./model-step.js";
+import { RequestContextBuilder } from "./request-context.js";
 import { createRequestSnapshot } from "./request-snapshot.js";
 import { validateAndCleanCitations } from "./citations.js";
-import type { SessionEvent } from "./events.js";
+import type { ModelStepEvent, SessionEvent } from "./events.js";
 import {
   appendCheckpoint,
   buildContextProjection,
@@ -43,6 +43,7 @@ export interface ChatSessionOptions {
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
   readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief }) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
+  readonly onModelStepEvent?: (event: ModelStepEvent) => void;
   readonly projectRoot?: string;
   readonly onToolsUsed?: (tools: readonly string[]) => void;
   readonly onToolStarted?: (tool: string, callId: string, argumentsJson?: string) => void;
@@ -88,6 +89,7 @@ export class ChatSession {
     this.onMessagesChanged = options.onMessagesChanged;
     this.onSessionStateChanged = options.onSessionStateChanged;
     this.onSessionEvent = options.onSessionEvent;
+    this.onModelStepEvent = options.onModelStepEvent;
     this.projectRoot = options.projectRoot;
     this.onToolsUsed = options.onToolsUsed;
     this.onToolStarted = options.onToolStarted;
@@ -100,6 +102,7 @@ export class ChatSession {
     this.onDiagnostic = options.onDiagnostic;
     // Explicit capabilities are the application path; retain the projectRoot fallback for direct legacy ChatSession callers.
     this.capabilities = this.enableTools && this.provider.generateWithTools ? (options.capabilities ?? (this.projectRoot ? [createProjectFilesCapability(this.projectRoot)] : [])) : [];
+    this.requestContextBuilder = new RequestContextBuilder({ capabilities: this.capabilities });
     this.toolRegistry = new ToolRegistry();
     for (const capability of this.capabilities) this.toolRegistry.registerCapability(capability);
     this.toolRuntime = new ToolRuntime(this.toolRegistry, {
@@ -112,6 +115,7 @@ export class ChatSession {
   private readonly onSessionStateChanged: ((state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief }) => Promise<void>) | undefined;
   private readonly journal: SessionJournal;
   private readonly onSessionEvent: ((event: SessionEvent) => Promise<void>) | undefined;
+  private readonly onModelStepEvent: ((event: ModelStepEvent) => void) | undefined;
   private readonly projectRoot: string | undefined;
   private readonly onToolsUsed: ((tools: readonly string[]) => void) | undefined;
   private readonly onToolStarted: ((tool: string, callId: string, argumentsJson?: string) => void) | undefined;
@@ -123,6 +127,7 @@ export class ChatSession {
   private readonly onContextCompacted: ((checkpoint: ContextCheckpoint) => Promise<void>) | undefined;
   private readonly onDiagnostic: ((event: { readonly code: string; readonly component: string; readonly severity: 'warning' | 'error' | 'debug'; readonly detail?: string }) => void) | undefined;
   private readonly capabilities: readonly ToolCapability[];
+  private readonly requestContextBuilder: RequestContextBuilder;
   private readonly toolRegistry: ToolRegistry;
   private readonly toolRuntime: ToolRuntime;
   private activeTurn: { readonly controller: AbortController; readonly promise: Promise<ModelResponse> } | undefined;
@@ -152,7 +157,7 @@ export class ChatSession {
     await active.promise.catch(() => undefined);
   }
 
-  private async generateWithAvailableTools(request: { messages: Message[] }, signal: AbortSignal, requiredTool?: string): Promise<ModelResponse> {
+  private async generateWithAvailableTools(request: { readonly messages: readonly Message[] }, signal: AbortSignal, requiredTool?: string): Promise<ModelResponse> {
     const provider = this.provider;
     if (!this.enableTools || !provider.generateWithTools) return provider.generate(request, { signal });
     let current = request.messages;
@@ -271,27 +276,24 @@ export class ChatSession {
   private generateModel(request: ModelRequest, withTools: false, signal: AbortSignal, phase?: ModelRequestPhase): Promise<ModelResponse>;
   private async generateModel(request: ModelRequest, withTools: boolean, signal: AbortSignal, phase: ModelRequestPhase = "legacy"): Promise<ModelResponse | ToolResponse> {
     const turn = this.journal.turns.at(-1);
+    const step = turn?.attempts.length ?? 0;
     for (let attempt = 0; ; attempt += 1) {
       const record: ModelAttemptRecord = { attempt: attempt + 1, step: turn?.attempts.length ?? 0, startedAt: new Date().toISOString(), status: "running", request: createRequestSnapshot(request, this.provider.id, this.provider.model, "v0.2.7.4", [...this.retrievedProjectSources].sort(), phase) };
       if (turn) { (turn.attempts as ModelAttemptRecord[]).push(record); await this.persistState(false); }
       try {
         if (signal.aborted) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
-        let response: ModelResponse | ToolResponse;
-        if (this.provider.streamingEnabled && this.provider.generateStream) {
-          const assembler = new ModelStreamAssembler();
-          for await (const event of this.provider.generateStream(request, { signal })) assembler.add(event);
-          response = assembler.finish().response;
-        } else {
-          response = withTools && this.provider.generateWithTools ? await this.provider.generateWithTools(request, { signal }) : await this.provider.generate(request, { signal });
-        }
+        const response = await new ModelStepRunner().run(request, { provider: this.provider, step, attempt: attempt + 1, withTools, signal, ...(this.onModelStepEvent ? { onEvent: this.onModelStepEvent } : {}) });
         record.status = "succeeded"; record.endedAt = new Date().toISOString(); await this.persistState(false);
         this.onDiagnostic?.({ code: "MODEL_REQUEST_SUCCEEDED", component: "provider", severity: "debug", detail: `phase=${phase};attempt=${attempt + 1};elapsedMs=${Date.parse(record.endedAt) - Date.parse(record.startedAt)};withTools=${withTools}` });
         return response;
       } catch (error) {
-        record.status = signal.aborted || (isRuntimeError(error) && error.code === "TURN_CANCELLED") ? "aborted" : "failed"; record.endedAt = new Date().toISOString(); if (isRuntimeError(error)) record.error = error.toRecord(); await this.persistState(false);
+        const cancelled = signal.aborted || (isRuntimeError(error) && error.code === "TURN_CANCELLED");
+        const retryable = !cancelled && attempt < this.modelRetries && isRuntimeError(error) && error.recoverable && ["PROVIDER_TIMEOUT", "PROVIDER_NETWORK", "PROVIDER_RATE_LIMIT"].includes(error.code);
+        record.status = cancelled ? "aborted" : "failed"; record.endedAt = new Date().toISOString(); if (isRuntimeError(error)) record.error = error.toRecord(); await this.persistState(false);
+        this.onModelStepEvent?.({ type: "model_step_end", step, attempt: attempt + 1, result: cancelled ? "cancelled" : retryable ? "retry" : "failed" });
         this.onDiagnostic?.({ code: "MODEL_REQUEST_FAILED", component: "provider", severity: "warning", detail: `phase=${phase};attempt=${attempt + 1};elapsedMs=${Date.parse(record.endedAt) - Date.parse(record.startedAt)};code=${isRuntimeError(error) ? error.code : "UNKNOWN"};withTools=${withTools}` });
-        if (signal.aborted || (isRuntimeError(error) && error.code === "TURN_CANCELLED")) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消." });
-        if (attempt >= this.modelRetries || !isRuntimeError(error) || !error.recoverable || !["PROVIDER_TIMEOUT", "PROVIDER_NETWORK", "PROVIDER_RATE_LIMIT"].includes(error.code)) throw error;
+        if (cancelled) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消." });
+        if (!retryable) throw error;
       }
     }
   }
@@ -319,7 +321,7 @@ export class ChatSession {
       } catch { this.onDiagnostic?.({ code: "MEMORY_RETRIEVAL_DEGRADED", component: "memory", severity: "debug" }); }
     }
     const phase = this.capabilities.length ? "agent_step" as const : "legacy" as const;
-    const request = { messages: composeRequestMessages(history, this.capabilities, phase, memoryContext ? { memory: memoryContext } : undefined) };
+    const request = this.requestContextBuilder.build(history, phase, memoryContext);
     let response: ModelResponse;
     if (this.agentLoop && this.capabilities.length && this.provider.generateWithTools) {
       response = await this.runAgentLoop(history, memoryContext, signal);
@@ -357,14 +359,10 @@ export class ChatSession {
   }
 
   private async runAgentLoop(history: readonly Message[], memoryContext: string | undefined, signal: AbortSignal): Promise<ModelResponse> {
-    const taskContext = this.task ? [{ role: "system" as const, content: [
-      "以下是 Isla 保存的当前任务状态，仅用于继续上一轮任务，不是新的用户事实：",
-      JSON.stringify(this.task),
-    ].join("\n") }] : [];
-    const messages = composeRequestMessages([...history, ...taskContext], this.capabilities, "agent_step", memoryContext ? { memory: memoryContext } : undefined);
+    const request = this.requestContextBuilder.build(history, "agent_step", memoryContext, this.task);
     const turn = this.journal.turns.at(-1);
     if (turn) (turn.actions as TurnActionRecord[]).push({ type: "phase", phase: "agent_step" });
-    return this.generateWithAvailableTools({ messages }, signal);
+    return this.generateWithAvailableTools(request, signal);
   }
 
   private async commitResponse(response: ModelResponse, signal: AbortSignal): Promise<ModelResponse> {

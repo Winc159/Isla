@@ -7,6 +7,7 @@ import type {
   ModelResponse,
   ToolResponse,
   ToolDefinition,
+  ProviderCapabilities,
 } from '../core/types.js';
 import type { DeepSeekConfig } from '../config.js';
 import { normalizeProviderError, RuntimeError } from '../core/errors.js';
@@ -23,11 +24,13 @@ class DeepSeekProvider implements ModelProvider {
   readonly id = 'deepseek';
   readonly streamingEnabled: boolean;
   readonly model: string;
+  readonly capabilities: ProviderCapabilities;
   private readonly client: OpenAI;
   constructor(config: DeepSeekConfig) {
     this.model = config.model;
     // DeepSeek Responses 的 Tool schema 兼容性仍需独立验收；默认沿用已验证的 Chat Completions Tool Loop。
     this.streamingEnabled = config.streaming === true;
+    this.capabilities = { toolCalling: true, nativeStreaming: this.streamingEnabled, streamingToolCalls: false };
     this.client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: 'https://api.deepseek.com',

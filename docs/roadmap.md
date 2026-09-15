@@ -277,6 +277,25 @@
 
 设计、步骤与测试归档见 `docs/proposals/v0.2.8/`；当前执行基线已迁入 `docs/current/`。
 
+## v0.2.9：Runtime Consolidation（候选，v0.2 最终版本）
+
+触发条件：v0.2.8 已完成 Provider 原生流与 Runtime 内部组装，但 CLI/NDJSON 尚未形成增量闭环；Provider 能力、Model Step、请求装配、错误诊断和文档版本需要在继续增加能力前统一。
+
+候选范围：
+
+- 完成进程内 `model_step_start / model_delta / model_step_end`；
+- NDJSON 和 TTY CLI 消费真实 provisional delta，`response_end` 仍是唯一权威提交；
+- one-shot Provider 不产生假 delta；
+- 提取由现有职责驱动的 `ModelStepRunner` 与 `RequestContextBuilder`，不全面重写 `ChatSession`；
+- 使用显式 Provider capability snapshot，保证能力报告与实际路由一致；
+- 统一 retry、取消、failed、blocked、持久化和安全诊断语义；
+- 建立覆盖 Provider、模型路径、Turn、Tool、状态、Surface、数据与安全的 v0.2 最终回归矩阵；
+- 修正 package、README、当前文档和实际实现之间的版本与范围不一致。
+
+本版暂缓 Local Provider Tool Calling、Context Budget、新 compaction、Shell、浏览器、MCP、并行 Tool、后台任务和子 Agent。只有真实设备、上下文溢出或新能力需求出现后再独立设计。
+
+候选设计、步骤与测试见 `docs/proposals/v0.2.9/`。提案确认前，当前唯一执行基线仍是 `docs/current/` 的 v0.2.8。
+
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。

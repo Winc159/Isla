@@ -204,3 +204,40 @@ Isla 早期关闭了文本 streaming，因为完整文本、Tool Call 和 Tool �
 继续拒绝：Cordis、完整事件溯源 Session、通用事件总线、monorepo package seam、复制 DSH 源码或把 DSH 作为依赖。
 
 重新评估条件：v0.2.7.4 必须先完整收口；OpenAI 文本流可作为默认原生能力；DeepSeek Tool streaming 只有完成当前 Responses Tool schema 的 HTTP 400 修复并通过真实回归后才能启用；不支持原生流的 Local Provider 不得报告 streaming 能力。当前稳定决策是 DeepSeek 默认 one-shot Tool Loop。候选设计见 `docs/proposals/v0.2.8/`。
+
+## v0.2.9 候选补充：Runtime Consolidation
+
+v0.2.8 已验证 Provider-neutral stream 与共享 assembler，但尚未把真实 delta 贯通到进程内 observer、NDJSON 和 TTY CLI。与此同时，Provider 能力仍部分依赖方法存在性推断，`ChatSession` 已同时承担请求装配、模型 Step、Tool Loop、提交和维护职责。v0.2 系列最后一个版本需要先收口这些已经出现的边界，再进入新的 Agent 能力阶段。
+
+本轮采用：
+
+- DSH 将 durable session fact 与 live agent observation 分离的不变量；
+- 完整 assistant settlement 与 provisional chunk 分离；
+- request 发送前冻结，但取消信号保持 live；
+- attempt 对成功、失败、取消和 retry 具有明确 settlement；
+- Provider Adapter、模型 Step、Agent Loop、Tool Runtime 和输出 Surface 分责；
+- 当前路由的能力声明必须与实际实现和配置一致。
+
+本轮调整：
+
+- DSH 通过 Agent handle、Session Event Map 和 waterfall 暴露生命周期；Isla 只提取内部 `ModelStepRunner`、`RequestContextBuilder` 和窄观察回调；
+- DSH 持久化完整 stream settlement；Isla 继续只保存有效完整 assistant，失败 attempt 与 delta 仅留下安全元数据；
+- DSH capability seam 跨 package 和 Cordis service；Isla 使用单 package 内显式只读 capability snapshot；
+- DSH UI 从事件溯源 Session 投影；Isla CLI/NDJSON 消费进程内事件，StoredSession messages 仍是模型可见正文事实源。
+
+本轮暂缓：
+
+- Context Budget、token meter、compaction 与 Tool Result pruner；
+- Session Query、Agent Registry、Inbox、steering、Goal、Job、Workflow 和 Subagent；
+- 通用 Tool middleware、并行执行、事件重放和 stream chunk 持久化；
+- Local Provider Tool Calling、在线模型发现和动态能力协商。
+
+本轮拒绝：
+
+- Cordis、monorepo package seam、“万物皆插件”和全局事件总线；
+- 为假想 v0.3 能力重写 Session；
+- 把 provisional observer 事件加入模型历史；
+- 切片完整 one-shot 回答制造假流式；
+- 复制 DSH 源码、目录或命名。
+
+重新评估条件：出现第二种真实并发入口、长期活动资源或跨进程执行后才讨论 Agent Registry/Job；真实长会话、小窗口模型或 Provider context overflow 出现后才讨论 Context Budget/compaction；能力需要独立安装与分发后才讨论完整 capability manifest。候选设计见 `docs/proposals/v0.2.9/`。

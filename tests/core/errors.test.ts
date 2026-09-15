@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RuntimeError, isRuntimeError, normalizeProviderError } from "../../src/core/errors.js";
+import { RuntimeError, getRuntimeErrorDomain, isRuntimeError, normalizeProviderError } from "../../src/core/errors.js";
 import { FakeProvider } from "../support/fake-provider.js";
 
 describe("RuntimeError", () => {
@@ -38,5 +38,12 @@ describe("RuntimeError", () => {
     const controller = new AbortController();
     await provider.generate({ messages: [] }, { signal: controller.signal });
     expect(provider.signals).toEqual([controller.signal]);
+  });
+
+  it("classifies stable runtime errors without changing their public codes", () => {
+    expect(getRuntimeErrorDomain(new RuntimeError({ code: "PROVIDER_NETWORK", recoverable: true, message: "网络失败" }))).toBe("provider");
+    expect(getRuntimeErrorDomain(new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "已取消" }))).toBe("cancelled");
+    expect(getRuntimeErrorDomain(new RuntimeError({ code: "SANDBOX_DENIED", recoverable: false, message: "拒绝" }))).toBe("security");
+    expect(getRuntimeErrorDomain(new Error("未知错误"))).toBe("unknown");
   });
 });
