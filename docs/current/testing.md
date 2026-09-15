@@ -1,8 +1,8 @@
 # Isla v0.3.0 测试计划：Bailian Provider and Model Discovery
 
-状态：设计已确认，尚未执行
+状态：离线矩阵已执行；授权真实 Bailian 文本、Tool Calling、模型目录和 NDJSON 多轮场景已验证
 
-默认全部离线。真实百炼测试必须同时具备显式开关、有效本地 Profile 和用户授权。
+默认全部离线。真实百炼测试仍必须同时具备显式开关、有效本地 Profile 和用户授权；已完成的真实验证不改变这一默认门禁。
 
 ## 1. Batch A：配置
 
@@ -54,7 +54,7 @@ OpenAI、DeepSeek、Local Profile 和现有 `--env` smoke 编排无回归。
 
 ### BAILIAN-TEXT-006 能力
 
-Batch A 报告 `toolCalling=false`、`nativeStreaming=false`、`streamingToolCalls=false`；one-shot 不产生 `model_delta`。
+最终实现报告 `toolCalling=true`、`nativeStreaming=config.streaming===true`、`streamingToolCalls=false`；one-shot 不产生 `model_delta`，普通文本 streaming 才产生 provisional `model_delta`。
 
 ## 3. Batch B：模型目录客户端
 
@@ -180,7 +180,7 @@ ISLA_RUN_REAL_BAILIAN_SMOKE=1
 -两个独立普通提示；
 -一轮多轮上下文；
 -非空回答和唯一终态；
--不声称 streaming。
+-仅在 Profile 显式启用且实际收到原生 delta 时声称 streaming。
 
 ### REAL-BAILIAN-TOOL
 
@@ -218,3 +218,14 @@ ISLA_RUN_REAL_BAILIAN_SMOKE=1
 -配置、缓存、日志和构建产物隐私扫描；
 -未授权时所有真实 smoke 保持 skip；
 -文档状态与实际 Batch 一致。
+
+## 10. 2026-09-15 基线结果
+
+- TypeScript typecheck：通过；
+- 全量离线测试：71 个测试文件通过，4 个真实 smoke 文件跳过；312 passed，6 skipped；
+- build：通过；
+- 真实 Bailian 普通请求、one-shot Tool Calling、模型目录和 NDJSON 多轮会话：此前已在用户授权和本地 Profile 下通过；
+- 本次收口未重新发起任何真实 Provider 请求；
+- `pack:check`：通过；发布包为 `@winc159/isla@0.2.9`，共 179 个文件；
+
+当前覆盖缺口：TTY `/models` 的输出和 stale cache 组合主要由组件测试与真实操作覆盖，尚无完整 CLI subprocess 专项测试；Bailian 的 Tool 能力也尚未按模型 ID 收窄验证。

@@ -1,6 +1,6 @@
 # Isla v0.3.0 当前设计取舍
 
-状态：设计已确认，待实施。
+状态：已实现并完成基线收口。
 
 - Provider 对外 ID 使用 `bailian`，不使用 `qwen` 或含义过宽的 `ali`。
 - Provider 表示平台与协议适配；Qwen、DeepSeek、GLM、Kimi 等是模型或模型族，不为每个模型新增 Provider。
@@ -21,3 +21,12 @@
 - 不新增 Shell、MCP、并行 Tool、子 Agent、后台任务、多模态或平台内置 Agent 工具。
 
 v0.2.9 的 Session 可重建、有效 assistant 才提交、provisional delta 不持久化、能力声明真实保守、唯一终态、取消和安全边界全部继续有效。
+
+## v0.3.0 落地补充
+
+- Bailian 普通文本 streaming 通过 Profile `streaming` 显式启用，默认关闭；
+- `streamingToolCalls=false`，所以任何带工具的 Model Step 自动回退 one-shot；
+- 模型目录支持 TTY、`--models` 和 NDJSON，只读查询不修改当前 Session；
+- `models_use` 写回当前 Bailian Profile 并返回 `effective: "next_start"`；`--env` 模式因没有 Profile 存储上下文而稳定失败；
+- 当前实现尚未落实按模型 ID 收窄 Tool Calling，仍以 Bailian Provider 级 `toolCalling=true` 运行。该偏差已记录，但本次收口不据此引入未经确认的能力策略抽象；
+- 跨 Provider 切换继续要求新会话和已有 Profile，不允许在普通 NDJSON 请求中传递 API Key。

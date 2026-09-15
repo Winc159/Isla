@@ -296,16 +296,18 @@
 
 历史设计、步骤与测试见 `docs/proposals/v0.2.9/`。当前执行设计基线已进入 `docs/current/` 的 v0.3.0。
 
-## v0.3.0：Bailian Provider and Model Discovery（设计已确认，待实施）
+## v0.3.0：Bailian Provider and Model Discovery（已实现并完成基线收口）
 
 现实需求：阿里云百炼同时托管 Qwen 与多个第三方模型，Isla 需要按平台接入而不是为每个模型建立 Provider；同时需要收敛 Profile/env 双配置入口，并通过官方 API 发现当前账号与地域可用模型。
 
-按独立停点实施：
+已按独立停点完成：
 
 1. Batch A：新增 `bailian` Provider 的 OpenAI-compatible Chat Completions 普通文本路径；Profile 成为正常用户唯一配置事实源，`--env` 降为开发/CI/迁移兼容入口。
 2. Batch B：接入官方 `GET /api/v1/models`，提供分页、搜索、非敏感缓存以及 TTY/无 TTY 等价入口；普通启动不强制刷新，目录不自动修改 Profile。
 3. Batch C：选择一个官方支持且用户可用的 Qwen 模型，完成 one-shot Function Calling Tool Loop；只有验证过的路由才声明 Tool Calling。
-4. Batch D：仅在官方 SSE fixture 与真实文本/Tool 回归分别通过后评估原生 streaming。
+4. Batch D：普通文本 native streaming 已实现；streaming Tool Calls 保持关闭，带工具请求回退 one-shot。
+
+已知偏差：当前 Bailian `toolCalling` 仍是 Provider 级声明，尚未按模型 ID 收窄；该问题留给后续统一模型目录/能力策略设计，不在本次收口中扩大实现。
 
 硬边界：Provider 表示平台和协议；模型 ID 属于启动配置；真实模型差异按需求增加窄策略。不实现每模型 Provider、动态路由、自动额度轮换、Responses 内置工具、DashScope 原生生成、多模态、Shell、MCP、并行 Tool、子 Agent 或后台任务。
 

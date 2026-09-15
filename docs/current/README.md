@@ -8,13 +8,23 @@
 - [evaluation.md](./evaluation.md)：当前已验证事实与尚未验证声明
 - [decisions.md](./decisions.md)：已确认取舍与重新评估条件
 
-状态：v0.3.0 Batch A 已实现，Batch B 模型目录客户端已实现，目录 CLI/缓存与后续 Batch 尚未完成。当前 package 版本仍为 v0.2.9；进入每个 Batch 前必须保持上一基线可运行。
+状态：v0.3.0 已实现并完成基线收口。当前 package 版本仍为 v0.2.9；版本号升级留给独立发布步骤。
 
-v0.3.0 按以下顺序推进：
+v0.3.0 已按以下顺序完成：
 
 1. Batch A：`bailian` 平台文本接入与配置事实源收敛；
 2. Batch B：官方模型目录发现；
 3. Batch C：首个经验证的 Qwen one-shot Tool Calling；
-4. Batch D：仅在官方 fixture 与真实回归通过后评估原生 streaming。
+4. Batch D：普通文本 native streaming 已实现；带工具请求因 `streamingToolCalls=false` 保持 one-shot 回退。
+
+当前还包括：
+
+- TTY `/models` 查询、搜索和显式模型保存；
+- `--models` 无 TTY 查询；
+- NDJSON `models_list`、`models_use` 与 `model_changed`；
+- 成功目录缓存以及网络失败时的 stale cache 回退；
+- Bailian one-shot Tool Loop。
+
+已知边界：Provider 和模型在一次运行中保持固定，模型保存只对下次启动生效；跨 Provider 切换、DeepSeek/OpenAI 统一模型目录、持久化 Memory 真实端到端验证、Context Budget/Compaction 和 streaming Tool Calls 尚未实现。
 
 本版不为每个模型新增 Provider。Provider 表示平台与协议适配，模型 ID 和模型族兼容差异分别属于启动配置与窄模型策略。

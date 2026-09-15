@@ -1,10 +1,19 @@
 # Isla v0.3.0 实施顺序：Bailian Provider and Model Discovery
 
-状态：Batch A 已实现；Batch B1 已实现；Batch B2 待实施
+状态：v0.3.0 已实现并完成基线收口
 
 架构依据：`docs/current/architecture.md`
 
-每次只实施一个可独立验证的 Batch。未经用户再次确认，不扩大到下一 Batch；未经明确授权，不发起真实百炼请求。
+以下内容保留原实施顺序，作为 v0.3.0 的实现记录。后续新增能力仍须每次只实施一个可独立验证的 Batch；未经用户再次确认，不扩大范围或发起真实 Provider 请求。
+
+## 当前落地摘要
+
+- Batch A：Bailian Profile、普通文本 Provider 和配置入口已实现；
+- Batch B：模型目录客户端、TTY `/models`、`--models`、NDJSON、成功缓存和 stale cache 回退已实现；
+- Batch C：标准 Chat Completions one-shot Tool Loop 已实现并完成真实只读 Tool 验证；
+- Batch D：可选普通文本 streaming 已实现；Tool 请求仍按能力声明回退 one-shot；
+- 模型保存只影响下次启动；`--env` 没有 Profile 存储上下文，因此不支持持久化模型切换；
+- 当前未实现按模型收窄 Bailian Tool Calling 能力，这是下一阶段需要重新设计确认的已知偏差。
 
 ## 0. 前置检查
 

@@ -1,6 +1,6 @@
 # Isla v0.3.0 架构：Bailian Provider and Model Discovery
 
-状态：设计已确认，待实施
+状态：已实现并完成基线收口
 
 前置基线：v0.2.9 Runtime Consolidation
 
@@ -207,3 +207,11 @@ v0.3.0 前三批完成需要：
 7. OpenAI、DeepSeek、Local、Session、Tool、取消、CLI 和 NDJSON 无回归；
 8. typecheck、全量离线测试、build、pack、diff check 与隐私扫描通过；
 9. 文档和实际 Batch 状态一致。
+
+## 13. 实际落地说明
+
+v0.3.0 最终落地包含 Bailian Chat Completions、one-shot Tool Loop、可选普通文本 streaming、官方模型目录、非敏感缓存、TTY/无 TTY/NDJSON 模型入口，以及只对下次启动生效的 Profile 模型保存。
+
+与最初设计相比，当前实现存在一项已知偏差：`toolCalling` 目前按 Bailian Provider 声明为 `true`，尚未实现第 7 节设想的按模型 ID 和验证记录收窄能力。真实 Qwen 路径已经验证，但这不能证明 Bailian 目录中的所有模型都支持同一 Tool 协议。后续统一 Provider Model Catalog 或模型能力策略设计必须重新处理这一点；本次收口不扩大或重写现有契约。
+
+普通文本 streaming 只有在 Profile `streaming=true` 时启用。由于 `streamingToolCalls=false`，带工具的请求由 `ModelStepRunner` 自动回退到稳定的 one-shot 路径，流中即使存在 Tool Call delta 解析能力也不会被当前 Agent Tool Loop 使用。
