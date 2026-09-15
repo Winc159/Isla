@@ -10,13 +10,13 @@
 
 普通规划不强制 Search；用户明确要求外部资料、参考项目或核实时，模型应优先使用 Web Search。当前 Web Search 是通用来源发现能力，不保证覆盖指定搜索平台。
 
-NDJSON 真实评测已授权并通过 3/3：普通完成场景重复运行、Web 规划 Driver、多轮反馈修订。该结果验证的是稳定的一次性 Tool Loop 与协议闭环，不代表 DeepSeek Responses Tool streaming 已可用。
+NDJSON 真实评测已授权并通过 4/4：普通完成场景重复运行、Web 规划 Driver、多轮反馈修订，以及 DeepSeek Provider 两个独立提示的 smoke。该结果验证的是稳定的一次性 Tool Loop 与协议闭环，不代表 DeepSeek Responses Tool streaming 已可用。
 
 DeepSeek Responses Tool streaming 的真实请求返回 HTTP 400，已作为明确边界处理：默认关闭，只有显式 `streaming: true` 才尝试；生产默认路径不受影响。OpenAI 原生流式适配已通过离线 fixture，未使用真实 OpenAI 凭据进行网络评测。
 
 离线门禁：68 个测试文件通过，302 passed、6 skipped；TypeScript typecheck、build、pack check、`git diff --check` 均通过。
 
-本轮真实评测已按显式 smoke 开关执行；由于当前环境未提供 `DEEPSEEK_API_KEY` 与 `ISLA_MODEL`，DeepSeek Provider 和 NDJSON 真实用例安全跳过，未发起网络请求。凭据就绪后可直接重跑同一脚本，不需要修改实现。
+本轮真实评测已使用现有 `.env` 与用户配置中的 DeepSeek 凭据完成：Provider smoke 1/1、NDJSON/Agent Loop 3/3，合计 4/4 通过。测试进程未输出或保存 API Key、Authorization 或完整 Provider payload。
 
 ## 解释
 
