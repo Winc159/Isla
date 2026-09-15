@@ -18,6 +18,7 @@ import { runSetupWizard } from './cli/setup-wizard.js';
 import { createApplication, createStderrDiagnosticSink } from './application.js';
 import { createSessionFactory } from './session-factory.js';
 import type { ChatSession } from './core/session.js';
+import { listBailianModels } from './models/bailian-catalog.js';
 
 export interface CliInterruptController {
   start(): void;
@@ -303,6 +304,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       }
     }
     const { runtime, config, startup } = await loadRuntime();
+    if (startup.models) process.exit(0);
     const application = createApplication(config, runtime, { diagnostics: createStderrDiagnosticSink(config.logLevel ?? (config.debug ? 'debug' : 'normal'), process.stderr) });
     const memoryRuntime = application.memory;
     try {
@@ -325,6 +327,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
           return sessionFactory.create({ stored: activeStored, interactive: false, approvalPolicy: 'ask', approvalService, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished, onModelStepEvent: events.onModelStepEvent });
         },
         sessionId: () => protocolStored?.id ?? 'unknown',
+        ...(config.provider === 'bailian' ? { listModels: query => listBailianModels(config.baseURL, config.apiKey, query ? { name: query } : {}), useModel: async nextModel => { const store = new ConfigStore(startup.configPath ?? defaultConfigPath()); const loaded = await store.load(); const name = startup.profileName ?? (loaded.status === 'ready' ? loaded.config.defaultProfile : undefined); if (loaded.status !== 'ready' || !name || loaded.config.profiles[name]?.provider !== 'bailian') throw new Error('Bailian Profile 不可用'); await store.save({ ...loaded.config, profiles: { ...loaded.config.profiles, [name]: { ...loaded.config.profiles[name]!, model: nextModel } } }, loaded.revision); } } : {}),
       });
       application.close();
       process.exit(0);

@@ -19,7 +19,10 @@ export class ModelStepRunner {
     try {
       if (signal.aborted) throw new Error("aborted");
       let response: ModelResponse | ToolResponse;
-      if (provider.streamingEnabled && provider.generateStream) {
+      // Providers may expose text streaming while still requiring the stable
+      // one-shot tool-call protocol. Keep tool turns on that protocol unless
+      // streaming tool calls are explicitly supported.
+      if (provider.streamingEnabled && provider.generateStream && (!withTools || provider.capabilities?.streamingToolCalls)) {
         const assembler = new ModelStreamAssembler();
         for await (const event of provider.generateStream(request, { signal })) {
           if (event.type === "text_delta" && event.delta) onEvent?.({ type: "model_delta", step, attempt, text: event.delta, provisional: true });

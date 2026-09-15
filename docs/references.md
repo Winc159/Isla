@@ -12,6 +12,11 @@
 
 ## Model Provider
 
+- [阿里云百炼产品说明](https://help.aliyun.com/zh/model-studio/what-is-model-studio/) — 百炼同时提供 Qwen 与第三方模型，影响 v0.3.0 的平台 Provider 身份；采用 `bailian`，不按模型建立 Provider；查看日期 2026-09-15。
+- [百炼 Base URL 总览](https://help.aliyun.com/zh/model-studio/base-url) — 地域、API Key、共享/专属域名和协议路径边界；v0.3.0 要求 Profile 显式提供 Base URL，不静默推断或跨地域回退；查看日期 2026-09-15。
+- [百炼 OpenAI-compatible Chat](https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions) — Chat Completions 消息、Function Calling 与 endpoint；采用为 v0.3.0 首条生产协议，Responses 与原生 DashScope 暂缓；查看日期 2026-09-15。
+- [百炼模型列表 API](https://help.aliyun.com/zh/model-studio/list-models) — `/api/v1/models` 分页、筛选、capabilities、features、上下文与价格；采用为显式模型发现，不作为启动硬依赖或已验证 Runtime 能力；查看日期 2026-09-15。
+- [百炼 Function Calling](https://help.aliyun.com/zh/model-studio/qwen-function-calling) — 不同模型家族的工具调用支持和额外字段差异；v0.3.0 采用保守模型策略，拒绝一个通用能力位覆盖全部模型；查看日期 2026-09-15。
 - [OpenAI Responses API](https://developers.openai.com/api/reference/typescript/resources/responses/methods/create) — OpenAI 文本响应接口。
 - [OpenAI Node Responses Guide](https://github.com/openai/openai-node/blob/main/docs/responses.md) — `output_text` 与会话延续方式。
 - [OpenAI Node Client Configuration](https://github.com/openai/openai-node/blob/main/docs/configuration.md) — timeout、retry 与 request ID。

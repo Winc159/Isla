@@ -9,12 +9,13 @@ import type { ToolExecutionResult } from "../tools/types.js";
 import { isRuntimeError, type RuntimeErrorCode } from "../core/errors.js";
 import type { ProtocolCapabilities } from "./types.js";
 import type { ModelStepEvent } from "../core/events.js";
+import type { BailianModelCatalogEntry } from "../models/bailian-catalog.js";
 export interface ProtocolSessionEvents {
   readonly onToolStarted: (tool: string, callId: string, argumentsJson?: string) => void;
   readonly onToolFinished: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly onModelStepEvent: (event: ModelStepEvent) => void;
 }
-export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly onNewSession?: () => void; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string } = {}): Promise<void> {
+export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly onNewSession?: () => void; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string; readonly listModels?: (query?: string) => Promise<readonly BailianModelCatalogEntry[]>; readonly useModel?: (model: string) => Promise<void> } = {}): Promise<void> {
   const writer = new ProtocolWriter(output);
   writer.write({ type: "ready", provider, model, ...(options.workspace ? { workspace: options.workspace } : {}), ...(options.capabilities ? { capabilities: options.capabilities } : {}) });
   const ids = new Set<string>();
@@ -62,6 +63,16 @@ export async function runProtocol(input: Readable, output: import("node:stream")
         const accepted = currentSession.cancelActiveTurn?.({ kind: "user" }) ?? false;
         writer.write({ type: "cancel_ack", id: request.id, targetId: request.targetId, accepted });
       }
+      continue;
+    }
+    if (request.type === "models_list") {
+      if (!options.listModels) writer.write({ type: "error", id: request.id, code: "UNSUPPORTED", message: "当前 Provider 不支持模型目录", recoverable: false });
+      else try { writer.write({ type: "models_list", id: request.id, models: await options.listModels(request.query) } as never); } catch { writer.write({ type: "error", id: request.id, code: "MODEL_CATALOG_FAILED", message: "模型目录查询失败", recoverable: true }); }
+      continue;
+    }
+    if (request.type === "models_use") {
+      if (!options.useModel) writer.write({ type: "error", id: request.id, code: "UNSUPPORTED", message: "当前 Provider 不支持切换模型", recoverable: false });
+      else try { await options.useModel(request.model); writer.write({ type: "model_changed", id: request.id, model: request.model, effective: "next_start" } as never); } catch { writer.write({ type: "error", id: request.id, code: "MODEL_CHANGE_FAILED", message: "模型切换失败", recoverable: true }); }
       continue;
     }
     if (request.type === "new_session") {

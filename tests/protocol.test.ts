@@ -25,6 +25,8 @@ async function waitForOutput(read: () => string, expected: string): Promise<void
 describe("NDJSON protocol", () => {
   it("parses valid requests and rejects invalid input", () => {
     expect(parseProtocolRequest('{"type":"prompt","id":"1","text":"你好"}')).toMatchObject({ type: "prompt" });
+    expect(parseProtocolRequest('{"type":"models_list","id":"m1","query":"qwen"}')).toMatchObject({ type: "models_list", query: "qwen" });
+    expect(parseProtocolRequest('{"type":"models_use","id":"m2","model":"qwen-plus"}')).toMatchObject({ type: "models_use", model: "qwen-plus" });
     expect(() => parseProtocolRequest("bad")).toThrow("INVALID_JSON");
     expect(() => parseProtocolRequest('{"type":"prompt","id":"1","text":""}')).toThrow("INVALID_REQUEST");
     expect(() => parseProtocolRequest('{"type":"approval_response","id":"1","approvalId":"","approved":true}')).toThrow("INVALID_REQUEST");
@@ -36,6 +38,15 @@ describe("NDJSON protocol", () => {
     writer.write({ type: "ready", provider: "fake", model: "fake-model" });
     await writer.flush();
     expect(JSON.parse(output)).toEqual({ type: "ready", provider: "fake", model: "fake-model" });
+  });
+  it("lists and switches models through NDJSON callbacks", async () => {
+    let output = "";
+    const out = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });
+    let selected = "";
+    await runProtocol(Readable.from(['{"type":"models_list","id":"m1","query":"qwen"}\n{"type":"models_use","id":"m2","model":"qwen-plus"}\n{"type":"exit","id":"e1"}\n']), out, new ChatSession(new FakeProvider([])), "bailian", "qwen-plus", { listModels: async () => [{ id: "qwen-plus", capabilities: [], features: [] }], useModel: async model => { selected = model; } });
+    const events = output.trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>);
+    expect(events).toEqual(expect.arrayContaining([{ type: "models_list", id: "m1", models: [{ id: "qwen-plus", capabilities: [], features: [] }] }, { type: "model_changed", id: "m2", model: "qwen-plus", effective: "next_start" }]));
+    expect(selected).toBe("qwen-plus");
   });
   it("writes provisional model step events without changing the response contract", async () => {
     let output = "";

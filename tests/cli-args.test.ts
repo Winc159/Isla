@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseCliStartupArgs } from '../src/cli-args.js';
 
 describe('CLI startup arguments', () => {
+  it('accepts the non-interactive model catalog flag', () => expect(parseCliStartupArgs(['--models'])).toMatchObject({ models: true }));
   it('parses profile, config, env and protocol options', () => {
     expect(parseCliStartupArgs(['--profile', 'main', '--config', 'config.json', '--protocol', 'ndjson'])).toEqual({ profileName: 'main', configPath: 'config.json', useEnv: false, protocol: 'ndjson' });
     expect(parseCliStartupArgs(['--env'])).toEqual({ useEnv: true });

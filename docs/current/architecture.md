@@ -1,286 +1,209 @@
-# Isla v0.2.9 架构提案：Runtime Consolidation
+# Isla v0.3.0 架构：Bailian Provider and Model Discovery
 
-状态：已完成实现
-前置基线：v0.2.7.4 Capability Action Loop 完整收口
-日期：2026-09-14
+状态：设计已确认，待实施
+
+前置基线：v0.2.9 Runtime Consolidation
+
+日期：2026-09-15
 
 ## 1. 现实问题
 
-Isla 当前 Provider 只向 Runtime 返回完整 `ModelResponse` 或 `ToolResponse`。CLI 在整个模型请求结束前无法展示模型进展，NDJSON 只能观察 Turn 和 Tool 生命周期，不能观察模型 Step 的真实开始、增量与终止。
+Isla 当前直接支持 OpenAI、DeepSeek 与 Local Provider。阿里云百炼同时托管 Qwen、DeepSeek、GLM、Kimi、MiniMax 等模型，如果按模型家族建立 Provider，会把平台认证、地域地址、协议和模型差异重复实现，也无法合理承载百炼动态增长的模型目录。
 
-早期文本流式输出因无法和 Tool Loop 保持一致语义而关闭。v0.2.7.4 已把模型控制流收敛为：
+当前 Profile config 与完整 env 配置又形成两套并列入口。继续为新 Provider 扩展两套字段会增加日常维护、文档和测试负担。
 
-```text
-Capability Calls → Observation → 下一 Agent Step
-无 Tool Call → 候选 Yield → Completion Gate → Yield To User
-```
+v0.3.0 因此解决三个已经出现的需求：
 
-因此现在可以在不恢复旧分阶段 Agent、不引入事件溯源 Session 的前提下，统一一个模型 Step 内的文本、Tool Call、usage、终态和取消。
+1. 以百炼平台而不是 Qwen 模型命名 Provider；
+2. 以本地 Profile config 作为日常启动配置的唯一事实源；
+3. 通过百炼官方模型 API 发现当前账号和地域可用模型，而不是在代码中维护静态列表。
 
 ## 2. 官方接口事实
 
-### 2.1 OpenAI
+百炼提供 OpenAI-compatible Chat Completions、OpenAI-compatible Responses、Anthropic-compatible Messages 与 DashScope 原生接口。v0.3.0 首条生产路径选择 Chat Completions，因为它与 Isla 当前完整消息历史、Tool Call/Result 配对和请求可重建契约直接匹配。
 
-OpenAI Responses API 在 `stream: true` 时返回语义事件流。当前与 Isla 第一版直接相关的事件包括：
-
-- `response.output_text.delta`：最终可见文本增量；
-- `response.function_call_arguments.delta`：Function Call 参数增量；
-- `response.function_call_arguments.done`：包含完整参数、名称和输出位置；
-- `response.completed`：成功终态和完整 Response；
-- `response.incomplete`：达到输出限制等非完整终态；
-- `response.failed` 或 `error`：失败信息。
-
-事件包含 `sequence_number`，Function Call 事件还包含 `item_id` 和 `output_index`。Isla Adapter 使用 Provider 原生标识完成关联，不假设事件只能按单一文本顺序出现。
+百炼官方提供 `GET /api/v1/models`，支持分页并返回模型 ID、模型作者、推理服务商、capabilities、features、上下文窗口与价格。地域、API Key、模型可用范围和 Base URL 相互关联，不能由 Runtime 猜测。
 
 官方参考：
 
-- https://developers.openai.com/api/reference/typescript/resources/beta/subresources/responses/methods/create
-- https://platform.openai.com/docs/api-reference/responses-streaming
+- https://help.aliyun.com/zh/model-studio/what-is-model-studio/
+- https://help.aliyun.com/zh/model-studio/base-url
+- https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions
+- https://help.aliyun.com/zh/model-studio/list-models
+- https://help.aliyun.com/zh/model-studio/qwen-function-calling
 
-### 2.2 DeepSeek
+## 3. 身份与职责
 
-DeepSeek 当前同时支持 OpenAI Chat Completions 和 Responses API。最新 Responses API 支持 `stream: true` 的语义 SSE，包括文本增量、Function Call 参数增量以及 `response.completed | response.incomplete | response.failed` 终态；事件携带单调递增的 `sequence_number`，流末尾没有 `data: [DONE]`。
+三层身份必须分离：
 
-官方参考：
+```text
+Provider platform: bailian
+Protocol path: OpenAI-compatible Chat Completions
+Model: qwen / deepseek / glm / kimi / minimax / other model ID
+```
 
-- https://api-docs.deepseek.com/guides/responses_api/
-- https://api-docs.deepseek.com/guides/function_calling
-- https://api-docs.deepseek.com/guides/tool_calls/
-- https://api-docs.deepseek.com/guides/thinking_mode/
+`BailianProvider` 负责：
 
-DeepSeek Thinking + Tool Calls 要求后续请求完整回传 `reasoning_content`。v0.2.8 第一版继续保持当前生产路径的 thinking disabled，不顺带改变推理内容持久化契约。
+- API Key 与 Base URL；
+- Chat Completions 请求和响应转换；
+- timeout、AbortSignal、usage 与错误归一化；
+- Provider capability snapshot。
 
-### 2.3 Local Provider
+模型 ID 负责选择一次运行使用的模型。模型族差异只有在官方规则或真实请求证明存在时，才进入窄兼容策略；不得为每个模型创建 Provider，也不得预建完整模型策略框架。
 
-Local Provider 只保证 OpenAI-compatible Chat Completions，并不保证目标局域网服务支持 `stream: true`、Tool Call delta 或一致的终态格式。因此本版不推断本地流式能力，不做逐字播放式假流式。
+## 4. 配置事实源
 
-OpenAI 云 Provider 默认启用原生流；DeepSeek 默认保持已验证的 Chat Completions one-shot Tool Loop，只有显式 `streaming: true` 时启用 Responses 流，因为当前 Tool schema 映射仍需独立兼容性验收。两者均可通过 `streaming: false` 回退到 one-shot。Local Provider 只有显式配置 `streaming: true` 且服务确实支持原生流时才报告 `streaming: true`，否则继续使用 one-shot `generate()`。
+`~/.isla/config.json` 的 Profile 是正常用户启动的唯一配置事实源。Profile 保存完整启动快照，包括 provider、model、API Key、Base URL、workspace、runtime、memory、tools 与 appearance。
 
-## 3. 目标与非目标
+环境变量只用于：
 
-目标：
+- `--env` 显式开发/CI兼容入口；
+- 真实 smoke 的显式开关；
+- 测试配置路径与临时目录。
 
-1. 定义 Provider-neutral 的模型 Step 流协议；
-2. OpenAI Responses 和 DeepSeek Responses Adapter 把官方事件转换为统一事件；
-3. 单一 Assembler 从统一事件产生现有 `ToolResponse`；
-4. Agent Loop 在流式和 one-shot Provider 下保持相同 `capability_calls | yield` 语义；
-5. CLI 和 NDJSON 能区分暂态模型增量与最终提交；
-6. 取消、失败、重试、Completion Gate 和 Session 持久化保持原子边界；
-7. Provider 能力准确报告，不支持流式时不伪装。
+正常 Profile 启动不得隐式字段级合并 env；缺少必填字段必须在网络请求前失败。v0.3.0 不立即删除已有 `--env`，先把它降级为开发兼容入口，避免破坏现有脚本。
 
-非目标：
+建议的 Bailian Profile：
 
-- 不引入 Realtime API、WebSocket 或语音；
-- 不展示或保存完整思维链；
-- 不启用 DeepSeek thinking mode；
-- 不新增并行 Tool、后台任务、steering、Inbox 或子 Agent；
-- 不把 `StoredSession.messages` 改成事件溯源日志；
-- 不持久化 token 级 delta；
-- 不让 NDJSON/CLI 展示事件进入模型历史；
-- 不删除现有 one-shot Provider 接口。
+```json
+{
+  "provider": "bailian",
+  "model": "qwen3.8-max",
+  "apiKey": "<local-secret>",
+  "baseURL": "https://<workspace-id>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+}
+```
 
-## 4. Provider 契约
+Base URL 必须显式配置；Isla 不硬编码北京地域、不推断 Workspace ID，也不在失败时切换共享域名、地域或 Provider。
 
-第一版在现有接口上增加可选原生流能力：
+## 5. Batch A：平台文本路径
+
+Batch A 只增加 Bailian Chat Completions 普通文本回答：
+
+```text
+RequestContextBuilder
+→ ModelStepRunner
+→ BailianProvider.generate()
+→ POST {baseURL}/chat/completions
+→ 完整 ModelResponse
+→ 现有 Agent Loop / Completion Gate / Session commit
+```
+
+初始能力声明：
 
 ```ts
-interface ModelProvider {
+{
+  toolCalling: false,
+  nativeStreaming: false,
+  streamingToolCalls: false
+}
+```
+
+Batch A 不发送 Tools，不产生假 delta，不接入 Responses API，也不改变 Session、Journal、NDJSON 终态和 Runtime 核心契约。
+
+## 6. Batch B：模型目录
+
+模型发现是应用层只读服务，不属于 `ModelProvider.generate()`，也不进入模型可见历史。
+
+```ts
+interface ModelCatalogEntry {
   readonly id: string;
-  readonly model: string;
-  readonly streamingEnabled?: boolean;
-  generate(request: ModelRequest, options?: ModelCallOptions): Promise<ModelResponse>;
-  generateWithTools?(request: ModelRequest, options?: ModelCallOptions): Promise<ToolResponse>;
-  generateStream?(
-    request: ModelRequest,
-    options?: ModelCallOptions,
-  ): AsyncIterable<ModelStreamEvent>;
+  readonly name: string;
+  readonly provider?: string;
+  readonly inferenceProvider?: string;
+  readonly capabilities: readonly string[];
+  readonly features: readonly string[];
+  readonly contextWindow?: number;
+  readonly maxInputTokens?: number;
+  readonly maxOutputTokens?: number;
 }
 ```
 
-`generateStream()` 同时覆盖有 Tool 和无 Tool 请求，是否传 Tools 仍由 `ModelRequest.tools` 决定。旧 Provider 和测试替身无需立即实现它。
+模型目录要求：
 
-建议的最小事件：
+- 调用地域对应的 `/api/v1/models`；
+- 支持分页、名称搜索和确定性排序；
+- 提供 TTY 与无 TTY 等价路径；
+- 可保存不含凭据的最近成功缓存；
+- 查询失败不阻断已配置模型启动；
+- 不自动修改 Profile，不在会话中动态切换模型；
+- 不把 price 或模型描述解释成固定免费额度；
+- 不把目录中的 capability/feature 直接等同于已经真实验证的 Runtime Tool/streaming 能力。
+
+普通启动不强制刷新目录。刷新必须由用户命令、首次模型选择或显式自动化请求触发。
+
+## 7. Batch C：首个 Qwen Tool Calling
+
+Batch C 选择一个官方明确支持标准 Function Calling、且用户配置中可用的 Qwen 模型，增加 one-shot Tool Loop：
+
+```text
+messages + tools + tool_choice
+→ 完整 Chat Completion
+→ structured tool_calls
+→ 现有 Tool Runtime / Approval
+→ assistant tool-call + tool result
+→ 下一 Model Step
+```
+
+通过离线 fixture 与真实 smoke 后，该已验证路由才声明：
 
 ```ts
-type ModelStreamEvent =
-  | { readonly type: "text_delta"; readonly index: number; readonly delta: string }
-  | {
-      readonly type: "tool_call_delta";
-      readonly index: number;
-      readonly id?: string;
-      readonly name?: string;
-      readonly argumentsDelta: string;
-    }
-  | { readonly type: "usage"; readonly usage: TokenUsage }
-  | {
-      readonly type: "finish";
-      readonly reason: "stop" | "tool_calls" | "max_tokens" | "failed" | "cancelled";
-      readonly model?: string;
-      readonly error?: RuntimeErrorRecord;
-    };
-```
-
-约束：
-
-- `index` 是一次 Provider 响应内的稳定组装键，不跨 Step 使用；
-- Adapter 可以使用 OpenAI/DeepSeek 的 `output_index`、`item_id` 或 Chat Completions 的 Tool Call index 映射；
-- Tool arguments 在完成前只作为字符串累计，不增量解析或执行；
-- 每次流必须恰好产生一个 `finish`，之后不得再产生事件；
-- Adapter 将网络异常、官方 failed/incomplete、取消统一映射为稳定终态；
-- 流创建前发生的同步配置错误允许直接抛出；
-- `max_tokens` 不是成功 Yield，不能保存为完整 assistant。
-
-## 5. Step Assembler
-
-Runtime 只提供一个 Assembler，OpenAI、DeepSeek 和未来 Local Adapter 不各自实现业务组装。
-
-Assembler 负责：
-
-1. 验证事件顺序和唯一终态；
-2. 按 index 累积文本；
-3. 按 index 累积 Tool Call id、name 和 arguments；
-4. 检查 Tool Call 完整性和 id 唯一性；
-5. 保存最后一个有效 usage 快照；
-6. 在成功 finish 后产生完整 `ToolResponse`；
-7. 在 failed、cancelled、max_tokens 或协议无效时产生稳定 RuntimeError。
-
-Assembler 不负责：
-
-- 执行 Tool；
-- 判断是否 Yield；
-- 判断 Completion Gate；
-- 写 Session；
-- 向 CLI 或 NDJSON 直接输出。
-
-## 6. Agent Loop 集成
-
-每个模型 Step：
-
-```text
-step_start
-→ Provider generateStream（若存在且启用）
-→ ModelStreamEvent*
-→ Assembler
-→ 完整 ToolResponse
-→ capability_calls 或候选 yield
-```
-
-没有原生流能力时继续：
-
-```text
-step_start
-→ generateWithTools / generate
-→ 完整 ToolResponse
-→ capability_calls 或候选 yield
-```
-
-两条路径在 Assembler 之后必须等价。Runtime 不把完整 one-shot 结果拆成多条 `text_delta`。
-
-## 7. 暂态展示与权威提交
-
-模型 delta 是暂态观察，不是已提交 assistant 消息。为避免 Completion Gate 拒绝候选 Yield 后造成错误语义，对外事件使用 `model_delta`，不使用暗示最终回答的 `response_delta`。
-
-```text
-model_step_start
-model_delta(provisional=true)*
-model_step_end(result=capability_calls|candidate_yield|failed)
-completion_rejected? / tool events?
-response_end   ← 唯一权威用户交付
-```
-
-规则：
-
-- CLI 可实时展示 `model_delta`，但必须以明确的生成中样式表示暂态；
-- 若该 Step 后续产生 Tool Call，中间文本仍只是该 Step 的模型内容，不结束 Turn；
-- 若 Completion Gate 拒绝候选 Yield，CLI 显示“完成条件未满足，继续处理”，不得发出 `response_end`；
-- 只有最终 Gate 通过且 Session assistant 提交成功后，才能发出 `response_end`；
-- NDJSON 客户端只应以 `response_end`、`response_cancelled` 或 `error` 判断 Turn 终态。
-
-## 8. Session、Journal 与重建
-
-- `StoredSession.messages` 继续是模型可见对话正文的唯一持久化事实源；
-- token delta 不写入 `messages`；
-- 成功组装的 Tool Call assistant message 和 Tool Result 继续成对保存；
-- 最终 assistant 仍只在有效 Yield 后保存；
-- Journal 记录 `step_start`、`model_result`、usage 摘要、终态和耗时，不记录完整 delta 正文；
-- request snapshot 继续保存实际请求的安全投影与 hash；
-- 进程崩溃后不尝试从 Journal delta 恢复半截 assistant，也不自动重放请求或 Tool。
-
-## 9. 重试、取消与背压
-
-- 同一 Turn AbortSignal 传给流创建和迭代；
-- 取消后 Adapter 产生 cancelled 终态或抛出可归一化的 Abort，Runtime 最终只报告一次取消；
-- retry 必须创建新的 assembler；失败 attempt 的 delta 不得进入新 attempt 的组装结果；
-- CLI/NDJSON sink 过慢时写入必须有界等待，不能无限缓存模型 delta；
-- v0.2.8 不为此引入通用事件总线；Session 回调和现有 ProtocolWriter 足以承载第一版；
-- Tool Call 只有在完整 finish 和参数校验后才可进入 Approval/执行。
-
-## 10. 能力报告
-
-`ProtocolCapabilities.streaming` 表示当前实际 Provider 路由能产生原生模型增量，而不是 Isla 能把完整文本分段输出。
-
-- OpenAI Responses Adapter 实现并启用原生流：`true`；
-- DeepSeek Responses Adapter 实现并启用原生流：`true`；
-- Local 未确认或关闭原生流：`false`；
-- one-shot fallback 永远不能把该字段报告为 `true`。
-
-必要时增加更精确的内部能力：
-
-```ts
-interface ProviderCapabilities {
-  readonly toolCalling: boolean;
-  readonly nativeStreaming: boolean;
-  readonly streamingToolCalls: boolean;
+{
+  toolCalling: true,
+  nativeStreaming: false,
+  streamingToolCalls: false
 }
 ```
 
-本版不通过实际付费请求自动探测能力；能力由所选 Adapter 和显式配置决定。
+未知模型、存在额外请求字段要求的模型族或未通过验证的路径保持保守能力。GLM、Kimi 等真实差异出现时增加窄策略，不修改 Provider 身份。
 
-## 11. DSH 参考取舍
+## 8. Batch D：候选 streaming
 
-采用：
+Streaming 不属于 v0.3.0 前三批完成条件。只有同时满足以下条件才开始：
 
-- Provider-neutral 流事件；
-- 单一共享 Assembler；
-- 文本和多个 Tool Call 可交错并按稳定 index 组装；
-- Tool arguments 保留原始 JSON；
-- usage 先于唯一 finish；
-- Provider 流与 Agent Loop、Tool 执行职责分离；
-- 成功组装的 assistant message 才进入持久历史。
+1. 官方协议给出目标模型的 SSE 事件形状；
+2. 文本、Tool Call、usage、终态和取消具有离线 fixture；
+3. 真实文本流通过；
+4. Tool streaming 真实通过后才声明 `streamingToolCalls=true`；
+5. 继续复用现有 `ModelStreamAssembler`，不复制 OpenAI Provider 后改名。
 
-暂缓：
+## 9. 共享协议代码边界
 
-- ContentBlock 扩展体系；
-- reasoning delta 的持久化和回传；
-- token 级 Session Event；
--流式重放、Session fork 和 adapter-private replay state；
--通用 stream middleware。
+只有 DeepSeek 与 Bailian 实际共同使用且语义相同的纯转换才允许抽取，例如 Chat messages、Tool schema、tool choice、usage 与结构化 Tool Call 转换。Provider 特有的 endpoint、thinking、DSML、模型策略和错误上下文留在各自 Adapter。
 
-拒绝：
+不引入 Provider 基类、服务定位器、协议注册中心或多层继承。
 
-- Cordis、完整 SessionEventMap、事件总线和 monorepo package seam；
-- 为流式输出改变 Isla 的最小 ApplicationContext；
-- 把 DSH 作为运行时依赖或复制其源码。
+## 10. 安全与隐私
 
-参考：
+- API Key 只存在于本地私有配置和内存中的已解析启动快照；
+- 不输出 Authorization、完整 Provider payload、私人消息或完整模型目录响应；
+- 模型目录缓存不保存凭据、请求 header 或账号标识；
+- 真实请求必须同时具备显式开关、有效本地配置和用户授权；
+- 需要用户配置时提供可复制模板，但不得要求用户把 API Key 粘贴到对话中；
+- 用户只需在本地完成配置并告知“已配置”。
 
-- https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/llm-streaming.md
-- https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/core.md
-- https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/agent-lifecycle.md
+## 11. 非目标
+
+- 不为每个模型创建 Provider；
+- 不实现会话内动态模型路由；
+- 不启用百炼智能模型路由；
+- 不接入 Responses 内置 Web、MCP、Code Interpreter；
+- 不接入 DashScope 原生生成协议；
+- 不实现多模态、Embedding、Rerank、图像、音视频；
+- 不新增并行 Tool、子 Agent、后台任务或通用 capability registry；
+- 不把模型目录变成启动硬依赖；
+- 不自动消费所谓免费额度，也不根据价格自动轮换模型。
 
 ## 12. 完成信号
 
-只有同时满足以下条件才可宣布 v0.2.8 完成：
+v0.3.0 前三批完成需要：
 
-1. OpenAI 或 DeepSeek 至少一个真实 Provider 产生原生文本 delta；
-2. OpenAI 和 DeepSeek 官方事件均有离线 Adapter fixture 测试；
-3. 文本、多个 Tool Call、usage 和终态由同一 Assembler 组装；
-4. one-shot Provider 不产生假 delta，Action Loop 语义不变；
-5. Tool Call 参数未完成前绝不执行；
-6. Completion Gate 拒绝不会生成权威 `response_end`；
-7. failed、incomplete、cancelled 和 retry 不保存半截 assistant；
-8. CLI 暂态展示与最终提交可区分；
-9. NDJSON 新事件向后兼容，终态仍唯一；
-10. Session、Memory、Approval、Web、取消和 Tool 配对无回归；
-11. 默认测试完全离线；
-12. typecheck、全量测试、build、pack、diff check 和隐私扫描通过。
+1. Bailian 普通文本请求离线与授权真实 smoke 通过；
+2. Profile 为文档和正常 CLI 的唯一日常配置入口；
+3. 官方模型目录可由 TTY 与无 TTY 路径查询；
+4. 目录失败不影响已配置模型启动；
+5. 一个 Qwen 模型的 one-shot Tool Loop 通过离线与授权真实验证；
+6. 能力声明与实际验证路径一致；
+7. OpenAI、DeepSeek、Local、Session、Tool、取消、CLI 和 NDJSON 无回归；
+8. typecheck、全量离线测试、build、pack、diff check 与隐私扫描通过；
+9. 文档和实际 Batch 状态一致。

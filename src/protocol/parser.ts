@@ -9,5 +9,7 @@ export function parseProtocolRequest(line: string): ProtocolRequest {
   if (item.type === "approval_response" && typeof item.approvalId === "string" && item.approvalId.trim() && typeof item.approved === "boolean" && (item.remember === undefined || typeof item.remember === "boolean")) return item as ProtocolRequest;
   if (item.type === "cancel" && typeof item.targetId === "string" && item.targetId.trim()) return item as ProtocolRequest;
   if (item.type === "new_session" || item.type === "exit") return item as ProtocolRequest;
+  if (item.type === "models_list" && (item.query === undefined || typeof item.query === "string")) return item as ProtocolRequest;
+  if (item.type === "models_use" && typeof item.model === "string" && item.model.trim()) return item as ProtocolRequest;
   throw new Error("INVALID_REQUEST");
 }

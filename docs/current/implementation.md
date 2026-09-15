@@ -1,193 +1,166 @@
-# Isla v0.2.9 实施顺序：Runtime Consolidation
+# Isla v0.3.0 实施顺序：Bailian Provider and Model Discovery
 
-状态：已完成实现；真实 Provider 评测未因缺少凭据发起网络请求
+状态：Batch A 已实现；Batch B1 已实现；Batch B2 待实施
+
 架构依据：`docs/current/architecture.md`
 
-本版本已完成 Provider 原生流协议、Assembler、OpenAI 适配和可选 DeepSeek Responses 适配。Runtime 在 Provider 未开启流式或流式不可用时保留稳定的一次性 Tool Loop；CLI/NDJSON 增量事件输出不属于本次收口范围，后续单独评估。
+每次只实施一个可独立验证的 Batch。未经用户再次确认，不扩大到下一 Batch；未经明确授权，不发起真实百炼请求。
 
-## 0. 前置停点
+## 0. 前置检查
 
-开始 v0.2.8 前必须先完成 v0.2.7.4：
+- 当前代码仍为 v0.2.9 可运行基线；
+- 工作区无意外改动；
+- 阅读现有 OpenAI、DeepSeek、Local Provider 与配置测试；
+- 不修改 Session、Model Step、Request Context 或 Tool Runtime 核心契约；
+- 不执行 Git add、commit、push。
 
-- required evidence 具有明确的 Turn-local 状态来源；
-- `step_start`、`model_result`、`completion_rejected` 诊断已按当前设计收口；
-- `docs/current/` 状态与实际实现一致；
-- typecheck、全量离线测试、build、pack 和 diff check 通过；
-- 用户确认把当前基线切换到 v0.2.8。
+## 1. Batch A1：冻结 Bailian 配置契约
 
-未满足时不得把 0.2.7.4 遗留问题包装成 streaming 工作。
+预计涉及：
 
-## 1. Batch A：冻结流协议
-
-预计修改：
-
-- `src/core/types.ts`
-- 新增 `src/core/model-stream.ts`
-- 新增 `tests/core/model-stream.test.ts`
+- `src/config.ts`
+- `src/config-store.ts`
+- 配置向导与配置命令
+- `src/main.ts`
+- 对应配置测试
 
 步骤：
 
-1. 定义 `ModelStreamEvent` 和唯一 finish 语义；
-2. 定义 index、Tool Call id/name/arguments 完整性；
-3. 定义 failed、cancelled、max_tokens 映射；
-4. 为 `ModelProvider` 增加可选 `generateStream()`；
-5. 保留 `generate()` 和 `generateWithTools()` 兼容路径。
+1. 增加 `BailianConfig` 和 `provider: "bailian"` Profile；
+2. `apiKey`、`baseURL`、`model` 均为 Profile 必填字段；
+3. Base URL 只校验为合法 URL，不硬编码地域；
+4. 正常启动只读取完整 Profile，不与 env 字段级合并；
+5. 保留 `--env` 作为显式开发/CI兼容入口；
+6. 配置摘要继续脱敏；
+7. 配置向导只收集本批所需字段，不提前加入协议、thinking 或 streaming 选项。
 
-停点：只增加类型和纯 Assembler，不修改 CLI、NDJSON 或真实 Provider。
+停点：配置可以解析和选择，但尚未注册 Bailian Provider，也不访问网络。
 
-## 2. Batch B：Assembler 离线实现
+## 2. Batch A2：普通文本 Provider
 
-步骤：
+预计新增/修改：
 
-1. 组装连续和交错文本 delta；
-2. 按 index 组装一个或多个 Tool Call；
-3. 完成后只使用完整 arguments；
-4. 收集 usage 和 model；
-5. 拒绝重复 finish、finish 后事件、缺失终态、重复 Tool id；
-6. cancelled/failed/max_tokens 不返回成功 `ToolResponse`。
-
-停点：Fake stream 全部通过，生产 Agent Loop 仍走 one-shot。
-
-## 3. Batch C：OpenAI Responses Adapter
-
-预计修改：
-
-- `src/providers/openai.ts`
-- `tests/providers/openai.test.ts`
+- 新增 `src/providers/bailian.ts`
+- `src/main.ts`
+- 新增 `tests/providers/bailian.test.ts`
+- Application/Protocol capability 测试
 
 步骤：
 
-1. 使用 Responses API `stream: true`；
-2. 映射 output text delta；
-3. 映射 function-call arguments delta/done；
-4. 使用官方 output/item 身份映射到内部 index；
-5. 映射 completed/incomplete/failed/error；
-6. 映射 usage、model 和 AbortSignal；
-7. 使用 MSW/SSE fixture，不访问公网。
+1. 使用 OpenAI-compatible Chat Completions；
+2. endpoint 为 `${baseURL without trailing slash}/chat/completions`；
+3. 发送有序完整消息、model 与 `stream: false`；
+4. 映射文本、model 和 usage；
+5. 传播 AbortSignal，复用现有 Provider 错误归一化；
+6. 空响应稳定失败；
+7. 初始 capabilities 全部保守关闭；
+8. one-shot 路径不产生 `model_delta`。
 
-停点：OpenAI Adapter 可独立产出统一流，Agent Loop 尚不消费。
+停点：只完成普通文本，多轮 Session 可重建；不发送 Tool schema，不查询模型目录。
 
-## 4. Batch D：DeepSeek Responses Adapter
-
-预计修改：
-
-- `src/providers/deepseek.ts`
-- `tests/providers/deepseek.test.ts`
+## 3. Batch A3：配置入口收口
 
 步骤：
 
-1. 将流式路径迁移或新增为 DeepSeek Responses API；
-2. 保留现有 Chat Completions one-shot fallback，直到真实回归通过；
-3. 映射 `response.output_text.delta`；
-4. 映射 `response.function_call_arguments.delta/done`；
-5. 验证递增 sequence_number；
-6. 以 completed/incomplete/failed 为终态，不等待 `[DONE]`；
-7. 第一版保持 thinking disabled；
-8. 保留当前 DSML 兼容路径，但不得从 delta 增量正则解析并执行 Tool。
+1. README 和 CLI 帮助把 Profile 写为正常用户入口；
+2. `--env` 明确标记为开发/CI/迁移兼容入口；
+3. 保留现有 env 测试，防止旧 smoke 脚本立即损坏；
+4. 不在本批删除环境变量字段；
+5. 增加 Profile 与 env 不隐式合并的回归测试。
 
-停点：DeepSeek 官方 fixture 和旧 one-shot 测试均通过。
+停点：Bailian 文本路径与配置收敛均可独立发布；真实 smoke 尚未运行。
 
-## 5. Batch E：Agent Loop 双路径
+## 4. Batch B1：模型目录客户端
 
-预计修改：
+预计新增：
 
-- `src/core/session.ts`
-- `src/core/agent-loop.ts`
-- 对应核心测试
+- `src/models/catalog.ts`
+- `src/models/bailian-catalog.ts`
+- `tests/models/bailian-catalog.test.ts`
 
 步骤：
 
-1. 若 Provider 明确启用 `generateStream()`，模型 Step 使用流路径；
-2. 其他 Provider 原样使用现有 one-shot；
-3. 两条路径都归一化为完整 `ToolResponse`；
-4. Tool Calls 完整组装后才写 assistant Tool message；
-5. 候选 Yield 仍经过 Completion Gate；
-6. retry 为每个 attempt 创建独立 assembler；
-7. 取消和错误继续沿用现有稳定 RuntimeError。
+1. 从 Chat `baseURL` 派生同 host 的 `/api/v1/models`，不复用 `/compatible-mode/v1` 路径；
+2. 使用同一 Profile API Key；
+3. 实现 `page_no`、`page_size`、名称与官方筛选参数；
+4. 逐页读取到官方 total，设置页数和条目上限；
+5. 只投影 Isla 需要的非敏感字段；
+6. 未知字段向前兼容，关键结构缺失稳定失败；
+7. timeout、取消、401、429、5xx 和网络错误归一化；
+8. 不把目录结果注册成 Runtime Provider capability。
 
-停点：相同 Fake 轨迹在 streaming/one-shot 下得到相同最终 Session、Journal 和 Tool 结果。
+停点：纯客户端 fixture 通过，尚未接 CLI。
 
-## 6. Batch F：内部 Step 观察事件
+## 5. Batch B2：模型目录入口与缓存
 
-预计修改：
+要求同时提供：
 
-- `src/core/events.ts`
-- `src/core/journal.ts`
-- `src/session-factory.ts`
+- 交互式 `/models`、`/models search <text>`、`/models refresh`；
+- 无 TTY 等价命令或 NDJSON 请求；
+- 不含凭据的最近成功缓存。
 
-步骤：
+行为：
 
-1. 增加进程内 `model_step_start`、`model_delta`、`model_step_end` 回调；
-2. delta 标记为 provisional；
-3. Journal 只保存 step/attempt/终态/usage/耗时，不保存正文 delta；
-4. 普通诊断不记录 prompt、reasoning、Tool arguments 或完整正文；
-5. 持久化失败不得在已报告最终提交后被隐藏。
+1. 普通启动不刷新；
+2. 首次模型选择或用户显式命令才请求；
+3. 网络失败时可以展示带时间戳的旧缓存；
+4. 缓存缺失时明确报告不可用，不伪造空列表；
+5. 列表只读，不自动改 Profile；
+6. 选择并保存模型必须是独立的显式配置动作，并沿用配置竞争保护；
+7. 当前运行中的 Session 不切换模型，新配置下次启动生效。
 
-## 7. Batch G：NDJSON 协议
+停点：单 Agent 可用无 TTY 路径完成刷新、搜索和结果验证。
 
-预计修改：
+## 6. Batch C1：Qwen Function Calling fixture
 
-- `src/protocol/types.ts`
-- `src/protocol/runner.ts`
-- `src/protocol/writer.ts`
-- 协议测试
-
-新增事件候选：
-
-```json
-{"type":"model_step_start","id":"p1","step":1,"attempt":1}
-{"type":"model_delta","id":"p1","step":1,"text":"...","provisional":true}
-{"type":"model_step_end","id":"p1","step":1,"result":"candidate_yield"}
-```
-
-要求：
-
-- 现有请求类型不变；
-- `response_end` 仍携带完整最终文本；
--旧客户端忽略未知事件后仍可工作；
--取消后无新 delta；
--ProtocolWriter 保持串行和背压，不允许 JSON 行交错；
--`ready.capabilities.streaming` 来自 Provider 真实能力。
-
-## 8. Batch H：CLI 暂态展示
-
-预计修改：
-
-- `src/cli.ts`
-- CLI 输出测试
+开始前由用户从模型目录选择一个可用且官方明确支持 Function Calling 的 Qwen 模型。
 
 步骤：
 
-1. TTY 下实时打印最终可见文本 delta；
-2. 明确标记其处于生成中；
-3. Tool Call 或 completion rejection 后正确换行并显示状态；
-4. 非 TTY 输出保持稳定，不输出动画控制字符；
-5. quiet/debug 与 spinner 不混写；
-6. 不支持原生流时保持当前一次性输出，不做打字机效果。
+1. 映射 ToolDefinition 到 Chat Completions `tools`；
+2. 映射 `auto`、`required` 与指定函数 tool choice；
+3. 读取一个或多个结构化 `tool_calls`；
+4. 保留原始 call id、name 与 arguments 字符串；
+5. 构造后续 assistant Tool Call 与 tool result messages；
+6. 不增量解析、不修复参数、不执行不完整调用；
+7. 与现有 Approval、取消、配对、Completion Gate 集成；
+8. 不加入 Qwen 专属 Provider。
 
-## 9. Batch I：Local Provider 能力边界
+停点：MSW fixture 下完整 one-shot Tool Loop 通过，capabilities 暂不因 fixture 自动扩大到所有 Bailian 模型。
 
-第一版推荐只做显式配置，不做启动网络探测：
+## 7. Batch C2：窄模型能力策略
 
-- 未配置：`nativeStreaming=false`；
-- 配置并选择已验证的 OpenAI-compatible SSE：启用流 Adapter；
-- 协议异常：本 Turn 稳定失败，不静默把半个流降级成新的 one-shot 请求；
-- 下一 Turn 可以继续使用配置的 one-shot fallback，但必须有安全诊断。
+先实现封闭、保守的已验证路由判断。输入至少包含 model ID、目录元数据和本地验证记录；输出只覆盖现有 `ProviderCapabilities`。
 
-是否增加 Local streaming 配置字段属于设计确认点；没有真实局域网模型服务样本前可以整批暂缓。
+规则：
 
-## 10. Batch J：真实评估与收口
+- 普通文本是 Bailian Provider 的基础能力；
+- Tool Calling 只对明确支持且经过验证的模型/模型族开启；
+- 未知模型保持 `toolCalling=false`；
+- GLM、Kimi、thinking 等额外字段不在没有真实需求前实现；
+- 不建立在线能力协商中心或每模型类层次。
 
-真实 Provider 测试只在用户明确授权时运行：
+停点：能力报告与实际请求路径一致，未知模型不会收到不兼容 Tool 参数。
 
-1. OpenAI 普通文本 streaming；
-2. DeepSeek 普通文本 streaming；
-3. DeepSeek Tool Call streaming；
-4. 生成中取消；
-5. Tool 后下一 Step 最终 Yield；
-6. 不支持流式的 Local one-shot 对照。
+## 8. Batch C3：授权真实评估
 
-最终门禁：
+只有用户明确授权并已在本地完成配置后运行：
+
+1. 两个独立普通提示；
+2. 多轮文本对话；
+3. 一个只读 Tool Call；
+4. Tool Result 驱动下一 Step 最终 Yield；
+5. NDJSON one-shot 对照；
+6. 生成中取消或请求取消；
+7. 模型目录查询与所选 model 精确命中。
+
+日志只保存场景、事件类型、step/tool 数量、usage、耗时与稳定错误码。
+
+## 9. Batch D：候选 streaming
+
+Batch D 必须重新设计确认。不得因为 OpenAI SDK 能返回流就直接声明可用；必须先取得目标模型的官方事件 fixture，再验证文本和 Tool streaming 是否分别成立。
+
+## 10. 每批门禁
 
 ```text
 npm run typecheck
@@ -198,6 +171,19 @@ git diff --check
 git status --short
 ```
 
-另执行凭据、Authorization、完整 Provider payload、reasoning 内容和私人数据扫描。
+另执行：
 
-当前收口决策：DeepSeek 原生 streaming Tool 路径在真实评测中返回 HTTP 400，因此不作为默认能力开启；DeepSeek 默认 one-shot Tool Loop 的真实 NDJSON 评测已通过 3/3。后续只有完成独立 Tool schema 兼容性修复和真实回归，才允许打开 DeepSeek `streaming: true`。
+- API Key、Authorization、Workspace ID、完整 payload 和私人正文扫描；
+- OpenAI、DeepSeek、Local 回归；
+- 文档状态核对；
+- 未授权时确认全部真实 smoke 仍为 skip。
+
+## 11. 用户配置协作
+
+离线实现不要求用户提供真实配置。进入 Batch B/C 真实验证前，必须明确告知用户：
+
+1. 需要复制哪个本地模板；
+2. 需要填写 API Key、地域 Base URL、Workspace ID 和 model 的哪些字段；
+3. 文件保存位置与 Git 排除状态；
+4. 不要把 API Key 粘贴到对话；
+5. 将执行哪些真实请求及其可能产生的费用。

@@ -12,8 +12,16 @@ function prompter(overrides: Partial<SetupPrompter> = {}): SetupPrompter {
 }
 
 describe('setup wizard', () => {
+  it('builds a Bailian profile with an explicit base URL', async () => {
+    const config = await buildConfigWithWizard(prompter({
+      ask: async (question, defaultValue) => question === 'Profile name' ? 'bailian' : question.startsWith('Bailian base URL') ? 'https://workspace.example/compatible-mode/v1' : (defaultValue ?? 'qwen-plus'),
+      choose: async (question) => question.startsWith('Provider') ? 'bailian' : 'default',
+    }), undefined);
+    expect(config).toMatchObject({ profiles: { bailian: { provider: 'bailian', model: 'qwen-plus', baseURL: 'https://workspace.example/compatible-mode/v1', apiKey: 'test-only-key' } } });
+  });
+
   it('builds a DeepSeek profile with defaults and does not perform network calls', async () => {
-    const config = await buildConfigWithWizard(prompter({ ask: async (question, defaultValue) => question === 'Profile name' ? 'main' : (defaultValue ?? 'deepseek-chat') }), undefined);
+    const config = await buildConfigWithWizard(prompter({ ask: async (question, defaultValue) => question === 'Profile name' ? 'main' : (defaultValue ?? 'deepseek-chat'), choose: async (question, options, defaultValue) => question.startsWith('Provider') ? 'deepseek' : defaultValue ?? options[0] }), undefined);
     expect(config).toMatchObject({ version: 1, defaultProfile: 'main', profiles: { main: { provider: 'deepseek', model: 'deepseek-chat', apiKey: 'test-only-key', memory: { enabled: true }, appearance: { personality: 'default', logLevel: 'normal' } } } });
   });
 

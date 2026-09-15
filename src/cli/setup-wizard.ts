@@ -2,7 +2,7 @@ import { createInterface } from 'node:readline/promises';
 import type { Readable, Writable } from 'node:stream';
 import type { InteractiveInput } from './command.js';
 import { ConfigStore } from '../config-store.js';
-import type { IslaConfigFileV1, StartupProfileV1 } from '../config.js';
+import { DEFAULT_BAILIAN_MODEL, type IslaConfigFileV1, type StartupProfileV1 } from '../config.js';
 
 export interface SetupPrompter {
   readonly ask: (question: string, defaultValue?: string) => Promise<string | undefined>;
@@ -12,18 +12,19 @@ export interface SetupPrompter {
 }
 
 export async function buildConfigWithWizard(prompter: SetupPrompter, existing?: IslaConfigFileV1): Promise<IslaConfigFileV1 | undefined> {
-  const name = await prompter.ask('Profile name', 'deepseek-main');
+  const name = await prompter.ask('Profile name', 'bailian-main');
   if (!name?.trim()) return undefined;
-  const provider = await prompter.choose('Provider (deepseek/openai/local)', ['deepseek', 'openai', 'local'], 'deepseek') as 'deepseek' | 'openai' | 'local' | undefined;
+  const provider = await prompter.choose('Provider (bailian/deepseek/openai/local)', ['bailian', 'deepseek', 'openai', 'local'], 'bailian') as 'bailian' | 'deepseek' | 'openai' | 'local' | undefined;
   if (!provider) return undefined;
-  const model = await prompter.ask('Model', provider === 'deepseek' ? 'deepseek-chat' : undefined);
+  const model = provider === 'bailian' ? DEFAULT_BAILIAN_MODEL : await prompter.ask('Model', provider === 'deepseek' ? 'deepseek-chat' : undefined);
   if (!model?.trim()) return undefined;
   let profile: StartupProfileV1;
-  if (provider === 'local') {
-    const baseURL = await prompter.ask('Local base URL', 'http://localhost:11434/v1');
+  if (provider === 'local' || provider === 'bailian') {
+    const baseURL = await prompter.ask(provider === 'local' ? 'Local base URL' : 'Bailian base URL (请输入你的地域/Workspace 专属地址)', provider === 'local' ? 'http://localhost:11434/v1' : undefined);
     if (!baseURL?.trim()) return undefined;
-    const apiKey = await prompter.secret('Local API key (optional, press Enter to skip)');
-    profile = { provider, model: model.trim(), baseURL: baseURL.trim(), ...(apiKey ? { apiKey } : {}) };
+    const apiKey = await prompter.secret(provider === 'local' ? 'Local API key (optional, press Enter to skip)' : 'Bailian API key');
+    if (provider === 'bailian' && !apiKey?.trim()) return undefined;
+    profile = { provider, model: model.trim(), baseURL: baseURL.trim(), ...(apiKey ? { apiKey } : {}) } as StartupProfileV1;
   } else {
     const apiKey = await prompter.secret(`${provider} API key`);
     if (!apiKey?.trim()) return undefined;

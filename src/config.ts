@@ -24,6 +24,7 @@ export interface WebSearchConfig {
 }
 
 const DEFAULT_WEB_FETCH = { timeoutMs: 30_000, maxResponseBytes: 1_000_000, maxBodyChars: 60_000, maxOutputChars: 80_000, maxRedirects: 3 } as const;
+export const DEFAULT_BAILIAN_MODEL = 'qwen-plus';
 
 export type OpenAIConfig = {
   readonly provider: 'openai';
@@ -75,6 +76,32 @@ export type DeepSeekConfig = {
   readonly webFetch?: WebFetchConfig;
   readonly webSearch?: WebSearchConfig;
 };
+export type BailianConfig = {
+  readonly provider: 'bailian';
+  readonly model: string;
+  readonly systemPrompt?: string;
+  readonly timeoutMs: number;
+  readonly debug: boolean;
+  readonly maxContextTurns: number;
+  readonly maxContextChars: number;
+  readonly contextRetainTurns: number;
+  readonly modelRetries: number;
+  readonly apiKey: string;
+  readonly baseURL: string;
+  readonly streaming?: boolean;
+  readonly sessionDirectory?: string;
+  readonly memoryEnabled: boolean;
+  readonly memoryDatabase?: string;
+  readonly embeddingProvider?: 'openai' | 'local';
+  readonly embeddingModel?: string;
+  readonly embeddingBaseURL?: string;
+  readonly embeddingApiKey?: string;
+  readonly personality?: 'default' | 'minimal';
+  readonly logLevel?: 'quiet' | 'normal' | 'debug';
+  readonly workspaceRoot?: string;
+  readonly webFetch?: WebFetchConfig;
+  readonly webSearch?: WebSearchConfig;
+};
 export type LocalConfig = {
   readonly provider: 'local';
   readonly model: string;
@@ -101,7 +128,7 @@ export type LocalConfig = {
   readonly webFetch?: WebFetchConfig;
   readonly webSearch?: WebSearchConfig;
 };
-export type AppConfig = OpenAIConfig | DeepSeekConfig | LocalConfig;
+export type AppConfig = OpenAIConfig | DeepSeekConfig | BailianConfig | LocalConfig;
 
 export interface ProfileRuntimeSettingsV1 {
   readonly timeoutMs?: number;
@@ -151,6 +178,7 @@ interface StartupProfileBaseV1 {
 export type StartupProfileV1 =
   | (StartupProfileBaseV1 & { readonly provider: 'deepseek'; readonly apiKey: string })
   | (StartupProfileBaseV1 & { readonly provider: 'openai'; readonly apiKey: string })
+  | (StartupProfileBaseV1 & { readonly provider: 'bailian'; readonly apiKey: string; readonly baseURL: string; readonly streaming?: boolean })
   | (StartupProfileBaseV1 & { readonly provider: 'local'; readonly baseURL: string; readonly apiKey?: string });
 
 export interface IslaConfigFileV1 {
@@ -221,6 +249,7 @@ export function profileToAppConfig(profile: StartupProfileV1): AppConfig {
     ...(profile.tools?.webSearch?.enabled && profile.provider === 'deepseek' ? { webSearch: normalizeWebSearchConfig(profile.tools.webSearch, profile.apiKey, profile.model) } : {}),
   };
   if (profile.provider === 'local') return { ...common, provider: 'local', baseURL: profile.baseURL, ...(profile.apiKey ? { apiKey: profile.apiKey } : {}) };
+  if (profile.provider === 'bailian') return { ...common, provider: 'bailian', baseURL: profile.baseURL, apiKey: profile.apiKey, ...(profile.streaming === undefined ? {} : { streaming: profile.streaming }) };
   return { ...common, provider: profile.provider, apiKey: profile.apiKey };
 }
 
@@ -228,7 +257,7 @@ function isRecord(value: unknown): value is UnknownRecord { return Boolean(value
 
 function parseProfile(name: string, value: unknown, onWarning?: (message: string) => void): StartupProfileV1 {
   if (!isRecord(value)) throw new Error(`Isla profile ${name} must be an object`);
-  warnUnknown(value, ['provider', 'model', 'apiKey', 'baseURL', 'workspace', 'sessionDirectory', 'runtime', 'memory', 'appearance', 'tools'], `profile ${name}`, onWarning);
+  warnUnknown(value, ['provider', 'model', 'apiKey', 'baseURL', 'streaming', 'workspace', 'sessionDirectory', 'runtime', 'memory', 'appearance', 'tools'], `profile ${name}`, onWarning);
   const provider = value.provider;
   const model = nonEmptyString(value.model, `Isla profile ${name}.model`);
   const workspace = value.workspace === undefined ? undefined : nonEmptyString(value.workspace, `Isla profile ${name}.workspace`);
@@ -242,6 +271,7 @@ function parseProfile(name: string, value: unknown, onWarning?: (message: string
     ...(value.tools !== undefined ? { tools: parseTools(name, value.tools, onWarning) } : {}),
   };
   if (provider === 'deepseek' || provider === 'openai') return { ...base, provider, apiKey: nonEmptyString(value.apiKey, `Isla profile ${name}.apiKey`) };
+  if (provider === 'bailian') return { ...base, provider, baseURL: validURL(value.baseURL, `Isla profile ${name}.baseURL`), apiKey: nonEmptyString(value.apiKey, `Isla profile ${name}.apiKey`), ...(value.streaming === undefined ? {} : { streaming: booleanValue(value.streaming, `Isla profile ${name}.streaming`) }) };
   if (provider === 'local') return { ...base, provider, baseURL: validURL(value.baseURL, `Isla profile ${name}.baseURL`), ...(value.apiKey === undefined ? {} : { apiKey: nonEmptyString(value.apiKey, `Isla profile ${name}.apiKey`) }) };
   throw new Error(`Isla profile ${name}.provider is invalid`);
 }
@@ -361,8 +391,8 @@ type Env = Record<string, string | undefined>;
 export function readConfig(env: Env = process.env): AppConfig {
   const provider = env.ISLA_PROVIDER;
   const model = env.ISLA_MODEL;
-  if (provider !== 'openai' && provider !== 'deepseek' && provider !== 'local')
-    throw new Error('ISLA_PROVIDER must be openai, deepseek, or local');
+  if (provider !== 'openai' && provider !== 'deepseek' && provider !== 'bailian' && provider !== 'local')
+    throw new Error('ISLA_PROVIDER must be openai, deepseek, bailian, or local');
   if (!model?.trim()) throw new Error('ISLA_MODEL is required');
   const rawTimeout = env.ISLA_TIMEOUT_MS ?? '600000';
   const timeoutMs = Number(rawTimeout);
@@ -408,6 +438,12 @@ export function readConfig(env: Env = process.env): AppConfig {
   if (provider === 'deepseek') {
     if (!env.DEEPSEEK_API_KEY) throw new Error('DEEPSEEK_API_KEY is required');
     return { ...common, provider, apiKey: env.DEEPSEEK_API_KEY };
+  }
+  if (provider === 'bailian') {
+    if (!env.DASHSCOPE_API_KEY) throw new Error('DASHSCOPE_API_KEY is required');
+    if (!env.ISLA_BASE_URL) throw new Error('ISLA_BASE_URL is required');
+    try { new URL(env.ISLA_BASE_URL); } catch { throw new Error('ISLA_BASE_URL must be a valid URL'); }
+    return { ...common, provider, apiKey: env.DASHSCOPE_API_KEY, baseURL: env.ISLA_BASE_URL, ...(env.ISLA_BAILIAN_STREAMING === '1' || env.ISLA_BAILIAN_STREAMING === 'true' ? { streaming: true } : {}) };
   }
   if (!env.ISLA_BASE_URL) throw new Error('ISLA_BASE_URL is required');
   try {
