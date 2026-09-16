@@ -37,6 +37,10 @@ npm start -- --env
 
 项目问答需要当前文件事实时，Agent 可以使用只读 `search_project` Tool。它只扫描 workspace 内受限的文本文件，返回相对路径、行号和有限片段；`.git`、`node_modules`、生成目录、敏感文件、二进制和超大文件会被排除。项目内容是不可信参考资料，不能授权 Tool 或改变权限。搜索结果按确定性相关性排序并受单来源/总字符预算限制。回答依赖项目片段时，Runtime 只接受当前轮检索结果中的合法来源标记，并在 CLI 显示简短“参考”列表；NDJSON 协议字段保持兼容。
 
+`read_text_file` 使用从 1 开始的 `offset` 和 `limit` 返回带行号的有界窗口。一次调用默认及最多返回 2000 行，并同时限制单行长度和总输出字节；结果包含总行数及下一窗口提示。10 MiB 以上的文件采用流式扫描，避免为读取一个窗口而整体载入内存。通常先用 `search_project` 定位文件和行号，再读取附近窗口。
+
+修改已有文本时，Agent 应先使用 `read_text_file` 获取最新内容，再使用 `edit_text_file` 做精确替换。默认旧文本必须唯一匹配；多处替换需要显式声明。文件在读取后被外部修改时，编辑会以 `FILE_STALE` 拒绝并要求重新读取。编辑与整文件写入都沿用现有 workspace 沙箱和写入审批，成功结果会进入下一 Model Step。
+
 ## 分层记忆
 
 v0.2.1 提供 Working Memory 检查点、SQLite 长期记忆、Core Memory Block、关键词检索以及可选 Embedding 基础层。长期记忆默认保存在 `~/.isla/memory.sqlite`，包含来源和可恢复的修订历史；Candidate、停用记忆和其他工作区的私有记忆不会进入默认召回。

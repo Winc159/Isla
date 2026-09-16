@@ -1,5 +1,9 @@
 # Isla v0.3.0 实施顺序：Bailian Provider and Model Discovery
 
+> v0.3.2 当前实施 Batch：按 [editing-v0.3.2.md](./editing-v0.3.2.md) 增加安全精确编辑。只修改文件 Tool、共享观察状态、对应测试与文档；不改变 Runtime 核心契约。
+
+> v0.3.2 后续 Batch：按 [bounded-reading-v0.3.2.md](./bounded-reading-v0.3.2.md) 把 `read_text_file` 升级为有界行窗口和大文件流式扫描；继续使用完整文件摘要保护编辑。
+
 状态：v0.3.0 已实现并完成基线收口
 
 架构依据：`docs/current/architecture.md`

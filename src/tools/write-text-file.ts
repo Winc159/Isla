@@ -3,8 +3,9 @@ import { dirname } from "node:path";
 import { SandboxPolicy } from "../sandbox/policy.js";
 import type { Tool } from "./types.js";
 import { invalidArguments } from "./errors.js";
+import type { TextFileObservations } from "./text-file-observations.js";
 
-export function createWriteTextFileTool(rootDirectory: string): Tool {
+export function createWriteTextFileTool(rootDirectory: string, observations?: TextFileObservations): Tool {
   const sandbox = new SandboxPolicy(rootDirectory);
   return {
     permission: { kind: "filesystem-write" },
@@ -27,6 +28,7 @@ export function createWriteTextFileTool(rootDirectory: string): Tool {
       if (options.signal?.aborted) throw new Error("当前回合已取消。");
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, value.content, "utf8");
+      observations?.observe(target, value.content);
       return `已写入 ${value.path}`;
     },
   };

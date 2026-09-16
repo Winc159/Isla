@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ChatSession } from "../../src/core/session.js";
 import { FakeProvider } from "../support/fake-provider.js";
 import type { Message, ModelRequest, ModelResponse, ToolResponse } from "../../src/core/types.js";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 let sessionRoot: string;
@@ -56,7 +56,7 @@ describe("session", () => {
     const p = new ToolProvider([{ text: "最终回答" }]);
     const s = new ChatSession(p, { projectRoot: sessionRoot, enableTools: true });
     await expect(s.send("读取 README")).resolves.toMatchObject({ text: "最终回答" });
-    expect(p.requests.find(request => request.tools)?.tools?.map(tool => tool.name)).toEqual(["list_directory", "read_text_file", "search_project", "write_text_file"]);
+    expect(p.requests.find(request => request.tools)?.tools?.map(tool => tool.name)).toEqual(["list_directory", "read_text_file", "search_project", "edit_text_file", "write_text_file"]);
   });
   it("supports read-only evidence before a discussion", async () => {
     class DiscussionProvider extends FakeProvider {
@@ -71,7 +71,33 @@ describe("session", () => {
     const provider = new DiscussionProvider([]);
     const response = await new ChatSession(provider, { projectRoot: sessionRoot, enableTools: true }).send("讨论如何改进当前项目的审批流程，可以读取相关源码，但不要修改文件");
     expect(response.text).toContain("单一输入泵");
-    expect(provider.requests.find(request => request.tools)?.tools?.map(tool => tool.name)).toEqual(["list_directory", "read_text_file", "search_project", "write_text_file"]);
+    expect(provider.requests.find(request => request.tools)?.tools?.map(tool => tool.name)).toEqual(["list_directory", "read_text_file", "search_project", "edit_text_file", "write_text_file"]);
+  });
+  it("reads, precisely edits, and continues to the next model step", async () => {
+    class EditProvider extends FakeProvider {
+      private calls = 0;
+      async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+        this.requests.push(request);
+        this.calls += 1;
+        if (this.calls === 1) return { text: "", toolCalls: [{ id: "read-edit", name: "read_text_file", arguments: JSON.stringify({ path: "README.md" }) }] };
+        if (this.calls === 2) return { text: "", toolCalls: [{ id: "edit-once", name: "edit_text_file", arguments: JSON.stringify({ path: "README.md", oldText: "fixture", newText: "updated" }) }] };
+        return { text: "精确修改完成" };
+      }
+    }
+    const provider = new EditProvider([]);
+    const approvedTools: string[] = [];
+    const response = await new ChatSession(provider, {
+      projectRoot: sessionRoot,
+      enableTools: true,
+      permissionPreset: "workspace",
+      approvalPolicy: "ask",
+      approvalService: { request: async request => { approvedTools.push(request.toolName); return { approved: true }; } },
+    }).send("把 README 标题中的 fixture 改成 updated");
+    expect(response.text).toBe("精确修改完成");
+    expect(await readFile(join(sessionRoot, "README.md"), "utf8")).toBe("# updated\n");
+    expect(provider.requests).toHaveLength(3);
+    expect(approvedTools).toEqual(["edit_text_file"]);
+    expect(provider.requests[2]?.messages).toContainEqual(expect.objectContaining({ role: "tool", toolCallId: "edit-once", content: "已编辑 README.md；替换 1 处" }));
   });
   it("persists tool calls and results as canonical messages", async () => {
     class ToolProvider extends FakeProvider {

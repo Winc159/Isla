@@ -7,7 +7,7 @@ export type ProtocolRequest =
   | { readonly type: "models_list"; readonly id: string; readonly query?: string }
   | { readonly type: "models_use"; readonly id: string; readonly model: string };
 
-export type ProtocolToolErrorCode = "UNKNOWN_TOOL" | "INVALID_ARGUMENTS" | "PERMISSION_DENIED" | "USER_REJECTED" | "EXECUTION_FAILED" | "SANDBOX_DENIED" | "TURN_CANCELLED" | "WEB_INVALID_URL" | "WEB_HOST_NOT_ALLOWED" | "WEB_BLOCKED_URL" | "WEB_REDIRECT_BLOCKED" | "WEB_FETCH_TOO_LARGE" | "WEB_UNSUPPORTED_CONTENT_TYPE" | "WEB_FETCH_TIMEOUT" | "WEB_NETWORK_ERROR" | "WEB_SEARCH_INVALID_QUERY" | "WEB_SEARCH_UNAVAILABLE" | "WEB_SEARCH_TIMEOUT" | "WEB_SEARCH_RATE_LIMITED" | "WEB_SEARCH_RESPONSE_INVALID" | "WEB_SEARCH_NETWORK_ERROR";
+export type ProtocolToolErrorCode = "UNKNOWN_TOOL" | "INVALID_ARGUMENTS" | "PERMISSION_DENIED" | "USER_REJECTED" | "EXECUTION_FAILED" | "SANDBOX_DENIED" | "TURN_CANCELLED" | "FILE_NOT_OBSERVED" | "FILE_STALE" | "EDIT_NO_MATCH" | "EDIT_MULTIPLE_MATCHES" | "WEB_INVALID_URL" | "WEB_HOST_NOT_ALLOWED" | "WEB_BLOCKED_URL" | "WEB_REDIRECT_BLOCKED" | "WEB_FETCH_TOO_LARGE" | "WEB_UNSUPPORTED_CONTENT_TYPE" | "WEB_FETCH_TIMEOUT" | "WEB_NETWORK_ERROR" | "WEB_SEARCH_INVALID_QUERY" | "WEB_SEARCH_UNAVAILABLE" | "WEB_SEARCH_TIMEOUT" | "WEB_SEARCH_RATE_LIMITED" | "WEB_SEARCH_RESPONSE_INVALID" | "WEB_SEARCH_NETWORK_ERROR";
 
 export type ProtocolEvent =
   | { readonly type: "ready"; readonly provider: string; readonly model: string; readonly workspace?: string; readonly capabilities?: ProtocolCapabilities }

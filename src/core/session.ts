@@ -195,7 +195,7 @@ export class ChatSession {
         const writeKey = `${call.name}:${call.arguments}`;
         await this.onSessionEvent?.({ type: "tool_call", callId: call.id, tool: call.name, arguments: call.arguments });
         this.onToolStarted?.(call.name, call.id, call.arguments);
-        if (call.name === "write_text_file" && successfulWrites.has(writeKey)) {
+        if ((call.name === "write_text_file" || call.name === "edit_text_file") && successfulWrites.has(writeKey)) {
           const duplicateResult: ToolExecutionResult = { ok: true, content: "相同写入已在本轮成功执行，未重复写入。" };
           this.onToolFinished?.(call.name, call.id, duplicateResult);
           await this.onSessionEvent?.({ type: "tool_result", callId: call.id, tool: call.name, result: duplicateResult });
@@ -239,7 +239,7 @@ export class ChatSession {
               (turn.actions as TurnActionRecord[]).push(action);
             }
           }
-          if (execution.ok && call.name === "write_text_file") successfulWrites.add(writeKey);
+          if (execution.ok && (call.name === "write_text_file" || call.name === "edit_text_file")) successfulWrites.add(writeKey);
           result = execution.ok ? execution.content : `[${execution.code}] ${execution.message}`;
           if (!execution.ok) {
             if (execution.code === "USER_REJECTED") {

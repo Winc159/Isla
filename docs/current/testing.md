@@ -1,5 +1,9 @@
 # Isla v0.3.0 测试计划：Bailian Provider and Model Discovery
 
+> v0.3.2 新增门禁：覆盖 `edit_text_file` 单次/全部替换、未读取、陈旧版本、零/多匹配、沙箱、审批、取消、临时文件清理，以及 Tool Result 驱动下一 Model Step。完整契约见 [editing-v0.3.2.md](./editing-v0.3.2.md)。
+
+> v0.3.2 有界读取门禁：覆盖默认/指定窗口、行号、总行数、continuation footer、单行与总字节截断、空文件、CRLF、超范围、大文件流式扫描，以及窗口读取后的编辑新鲜度。完整契约见 [bounded-reading-v0.3.2.md](./bounded-reading-v0.3.2.md)。
+
 状态：离线矩阵已执行；授权真实 Bailian 文本、Tool Calling、模型目录和 NDJSON 多轮场景已验证
 
 默认全部离线。真实百炼测试仍必须同时具备显式开关、有效本地 Profile 和用户授权；已完成的真实验证不改变这一默认门禁。
