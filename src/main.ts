@@ -8,6 +8,7 @@ import { ConfigStore, defaultConfigPath } from './config-store.js';
 import { parseCliStartupArgs, type CliStartupArgs } from './cli-args.js';
 import { resolveWorkspace } from './workspace.js';
 import { listBailianModels } from './models/bailian-catalog.js';
+import { listDeepSeekModels } from './models/deepseek-catalog.js';
 export function createRuntime(config: AppConfig): IslaRuntime {
   const r = new IslaRuntime();
   if (config.provider === 'openai') r.use(createOpenAIPlugin(config));
@@ -22,8 +23,11 @@ export async function loadRuntime(argv: readonly string[] = process.argv.slice(2
   const workspaceRoot = await resolveWorkspace(startup.workspacePath, config.workspaceRoot, process.cwd());
   const resolvedConfig = { ...config, workspaceRoot } as AppConfig;
   if (startup.models) {
-    if (resolvedConfig.provider !== 'bailian') throw new Error('--models is only supported for the bailian provider');
-    const models = await listBailianModels(resolvedConfig.baseURL, resolvedConfig.apiKey);
+    const models = resolvedConfig.provider === 'bailian'
+      ? await listBailianModels(resolvedConfig.baseURL, resolvedConfig.apiKey)
+      : resolvedConfig.provider === 'deepseek'
+        ? await listDeepSeekModels(resolvedConfig.apiKey)
+        : (() => { throw new Error(`--models is not supported for the ${resolvedConfig.provider} provider`); })();
     process.stdout.write(`${JSON.stringify(models)}\n`);
   }
   return { runtime: createRuntime(resolvedConfig), config: resolvedConfig, startup };

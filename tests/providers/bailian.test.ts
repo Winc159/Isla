@@ -37,6 +37,12 @@ describe('Bailian provider contract', () => {
     await expect(runtime.createSession({ providerId: 'bailian' }).send('test')).rejects.toThrow('空回答');
   });
 
+  it('disables Tool Calling for an unverified model', () => {
+    const runtime = new IslaRuntime();
+    runtime.use(createBailianPlugin({ provider: 'bailian', model: 'deepseek-v4-flash', apiKey: 'test-only-key', baseURL: 'https://workspace.example/compatible-mode/v1', timeoutMs: 1000, debug: false, maxContextTurns: 20, maxContextChars: 60000, contextRetainTurns: 6, modelRetries: 0, memoryEnabled: false }));
+    expect(runtime.getProviderCapabilities('bailian')).toEqual({ toolCalling: false, nativeStreaming: false, streamingToolCalls: false });
+  });
+
   it('maps structured tool calls and preserves the follow-up message shape', async () => {
     let body: unknown; let calls = 0;
     server.use(http.post(endpoint, async ({ request }) => { body = await request.json(); calls += 1; if (calls > 1) return HttpResponse.json({ model: 'qwen-plus', choices: [{ message: { role: 'assistant', content: '完成' } }] }); return HttpResponse.json({ model: 'qwen-plus', choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'read_text_file', arguments: '{"path":"README.md"}' } }] } }] }); }));

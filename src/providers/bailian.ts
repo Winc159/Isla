@@ -4,6 +4,7 @@ import type { ModelCallOptions, ModelProvider, ModelRequest, ModelResponse, Prov
 import type { ModelStreamEvent } from '../core/model-stream.js';
 import type { BailianConfig } from '../config.js';
 import { normalizeProviderError, RuntimeError } from '../core/errors.js';
+import { bailianCapabilities } from './bailian-capabilities.js';
 
 export function createBailianPlugin(config: BailianConfig): RuntimePlugin {
   return { name: 'bailian', setup: context => context.registerProvider(new BailianProvider(config)) };
@@ -19,7 +20,7 @@ class BailianProvider implements ModelProvider {
   constructor(config: BailianConfig) {
     this.model = config.model;
     this.streamingEnabled = config.streaming === true;
-    this.capabilities = { toolCalling: true, nativeStreaming: this.streamingEnabled, streamingToolCalls: false };
+    this.capabilities = bailianCapabilities(this.model, this.streamingEnabled);
     this.client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL, timeout: config.timeoutMs, maxRetries: 0 });
   }
 

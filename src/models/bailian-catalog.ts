@@ -1,7 +1,8 @@
 import type { ModelCallOptions } from '../core/types.js';
 import { normalizeProviderError } from '../core/errors.js';
+import type { ModelCatalogEntry, ModelCatalogQuery } from './catalog.js';
 
-export interface BailianModelCatalogEntry {
+export interface BailianModelCatalogEntry extends ModelCatalogEntry {
   readonly id: string;
   readonly name?: string;
   readonly provider?: string;
@@ -13,7 +14,7 @@ export interface BailianModelCatalogEntry {
   readonly maxOutputTokens?: number;
 }
 
-export interface BailianModelCatalogQuery {
+export interface BailianModelCatalogQuery extends ModelCatalogQuery {
   readonly name?: string;
   readonly model?: string;
   readonly providers?: readonly string[];
@@ -33,6 +34,7 @@ export async function listBailianModels(baseURL: string, apiKey: string, query: 
     url.search = '';
     url.searchParams.set('page_no', String(page));
     url.searchParams.set('page_size', String(pageSize));
+    if (query.search) url.searchParams.set('name', query.search);
     if (query.name) url.searchParams.set('name', query.name);
     if (query.model) url.searchParams.set('model', query.model);
     for (const provider of query.providers ?? []) url.searchParams.append('providers', provider);

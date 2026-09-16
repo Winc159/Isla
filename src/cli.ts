@@ -19,6 +19,7 @@ import { createApplication, createStderrDiagnosticSink } from './application.js'
 import { createSessionFactory } from './session-factory.js';
 import type { ChatSession } from './core/session.js';
 import { listBailianModels } from './models/bailian-catalog.js';
+import { listDeepSeekModels } from './models/deepseek-catalog.js';
 
 export interface CliInterruptController {
   start(): void;
@@ -327,7 +328,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
           return sessionFactory.create({ stored: activeStored, interactive: false, approvalPolicy: 'ask', approvalService, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished, onModelStepEvent: events.onModelStepEvent });
         },
         sessionId: () => protocolStored?.id ?? 'unknown',
-        ...(config.provider === 'bailian' ? { listModels: query => listBailianModels(config.baseURL, config.apiKey, query ? { name: query } : {}), useModel: async nextModel => { const store = new ConfigStore(startup.configPath ?? defaultConfigPath()); const loaded = await store.load(); const name = startup.profileName ?? (loaded.status === 'ready' ? loaded.config.defaultProfile : undefined); if (loaded.status !== 'ready' || !name || loaded.config.profiles[name]?.provider !== 'bailian') throw new Error('Bailian Profile 不可用'); await store.save({ ...loaded.config, profiles: { ...loaded.config.profiles, [name]: { ...loaded.config.profiles[name]!, model: nextModel } } }, loaded.revision); } } : {}),
+        ...(config.provider === 'bailian' ? { listModels: query => listBailianModels(config.baseURL, config.apiKey, query ? { search: query } : {}), useModel: async nextModel => { const models = await listBailianModels(config.baseURL, config.apiKey); if (!models.some(entry => entry.id === nextModel)) throw new Error('模型不在当前目录中'); const store = new ConfigStore(startup.configPath ?? defaultConfigPath()); const loaded = await store.load(); const name = startup.profileName ?? (loaded.status === 'ready' ? loaded.config.defaultProfile : undefined); if (loaded.status !== 'ready' || !name || loaded.config.profiles[name]?.provider !== 'bailian') throw new Error('Bailian Profile 不可用'); await store.save({ ...loaded.config, profiles: { ...loaded.config.profiles, [name]: { ...loaded.config.profiles[name]!, model: nextModel } } }, loaded.revision); } } : config.provider === 'deepseek' ? { listModels: query => listDeepSeekModels(config.apiKey).then(models => query ? models.filter(entry => entry.id.toLowerCase().includes(query.toLowerCase())) : models), useModel: async nextModel => { const models = await listDeepSeekModels(config.apiKey); if (!models.some(entry => entry.id === nextModel)) throw new Error('模型不在当前目录中'); const store = new ConfigStore(startup.configPath ?? defaultConfigPath()); const loaded = await store.load(); const name = startup.profileName ?? (loaded.status === 'ready' ? loaded.config.defaultProfile : undefined); if (loaded.status !== 'ready' || !name || loaded.config.profiles[name]?.provider !== 'deepseek') throw new Error('DeepSeek Profile 不可用'); await store.save({ ...loaded.config, profiles: { ...loaded.config.profiles, [name]: { ...loaded.config.profiles[name]!, model: nextModel } } }, loaded.revision); } } : {}),
       });
       application.close();
       process.exit(0);
