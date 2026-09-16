@@ -3,8 +3,7 @@ import type { IslaRuntime } from './core/runtime.js';
 import type { AppConfig } from './config.js';
 import type { ContextCheckpoint } from './core/context.js';
 import type { ToolExecutionResult } from './tools/types.js';
-import { createProjectFilesCapability } from './tools/project-files.js';
-import { createWebCapability } from './tools/web.js';
+import { createToolCapabilities } from './tools/composition.js';
 import type { WebFetchConfig, WebSearchConfig } from './config.js';
 import type { SessionStore, StoredSession } from './session-store.js';
 import type { MemoryRuntime } from './memory/runtime.js';
@@ -37,6 +36,7 @@ export interface SessionEntryOptions {
   readonly interactive: boolean;
   readonly approvalPolicy?: import('./approval/types.js').ApprovalPolicy;
   readonly approvalService?: import('./approval/types.js').ApprovalService;
+  readonly userQuestionService?: import('./user-questions/types.js').UserQuestionService;
   readonly onToolStarted?: (tool: string, callId: string, argumentsJson?: string) => void;
   readonly onToolFinished?: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly onModelStepEvent?: (event: import('./core/events.js').ModelStepEvent) => void;
@@ -70,7 +70,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         modelRetries: config.modelRetries,
         enableTools: true,
         agentLoop: true,
-        capabilities: [createProjectFilesCapability(workspaceRoot), ...((config.webFetch?.enabled || config.webSearch?.enabled) ? [createWebCapability({ ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) })] : [])],
+        capabilities: createToolCapabilities({ workspaceRoot, ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }),
         projectRoot: workspaceRoot,
         ...(diagnostics ? { onDiagnostic: diagnostics } : {}),
         permissionPreset: 'workspace',

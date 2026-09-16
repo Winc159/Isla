@@ -1,6 +1,6 @@
 # Isla v0.3.0 当前评估结论
 
-更新时间：2026-09-15
+更新时间：2026-09-16
 
 ## 当前状态
 
@@ -37,5 +37,11 @@ v0.3.0 已实现并完成基线收口。当前 package 版本仍为 v0.2.9，版
 2. Bailian Tool Calling 的按模型能力策略；
 3. 不含私人内容的 Memory 持久化写入、重启与召回真实端到端验证；
 4. 只有官方协议和真实回归都稳定后，才评估 streaming Tool Calls。
+
+## v0.3.3 第一梯队工具结论
+
+已验证静态 Capability 组合不会改变现有 Tool Runtime 权限边界。`glob_project` 与 `grep_project` 使用随包分发的 ripgrep 二进制、直接 argv、工作区沙箱和有界输出；`ask_user_question` 在 TTY 与 NDJSON 中都能暂停当前 Tool Call，回答后继续同一 Turn。
+
+2026-09-16 经用户授权使用本地 Bailian Profile 与 qwen-plus 完成真实回归：模型主动完成 glob、grep 和用户提问三个 Tool Call；问题回答后存在下一模型 Step 和唯一 `response_end`。本次全量基线为 341 passed、6 skipped，typecheck、build、pack dry-run 与 diff check 通过。
 
 真实评估不得保存 API Key、Authorization、Workspace ID、完整 Provider payload、完整模型目录或私人会话正文。

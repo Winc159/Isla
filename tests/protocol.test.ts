@@ -9,6 +9,7 @@ import type { ModelRequest, ModelResponse, ToolResponse } from "../src/core/type
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createUserInteractionCapability } from "../src/tools/user-interaction.js";
 
 let protocolRoot: string;
 beforeEach(async () => { protocolRoot = await mkdtemp(join(tmpdir(), "isla-protocol-")); });
@@ -228,6 +229,41 @@ describe("NDJSON protocol", () => {
       { type: "tool_end", id: "p1", tool: "write_text_file", ok: true },
     ]));
     expect(events.some(event => event.type === "response_end" && event.id === "p1")).toBe(true);
+  });
+
+  it("pauses and resumes the same turn through question_request and question_response", async () => {
+    class QuestionProvider extends FakeProvider {
+      private calls = 0;
+      async generate(): Promise<ModelResponse> { return { text: "unused" }; }
+      async generateWithTools(): Promise<ToolResponse> {
+        this.calls += 1;
+        return this.calls === 1
+          ? { text: "", toolCalls: [{ id: "question-call-1", name: "ask_user_question", arguments: JSON.stringify({ questions: [{ id: "mode", question: "Choose mode", options: [{ label: "Safe" }, { label: "Fast" }] }] }) }] }
+          : { text: "已按 Safe 模式继续" };
+      }
+    }
+    const input = new PassThrough();
+    let output = "";
+    const out = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });
+    const running = runProtocol(input, out, undefined, "fake", "fake-model", {
+      createSession: (_approval, events, questions) => new ChatSession(new QuestionProvider([]), {
+        enableTools: true,
+        capabilities: [createUserInteractionCapability(questions)],
+        onToolStarted: events.onToolStarted,
+        onToolFinished: events.onToolFinished,
+      }),
+    });
+    input.write('{"type":"prompt","id":"p1","text":"开始任务"}\n');
+    await waitForOutput(() => output, '"type":"question_request"');
+    input.end('{"type":"question_response","id":"q1","questionId":"question-1","answers":[{"id":"mode","selected":["Safe"]}]}\n{"type":"exit","id":"e1"}\n');
+    await running;
+
+    const events = output.trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "question_request", id: "p1", questionId: "question-1" }),
+      { type: "tool_end", id: "p1", tool: "ask_user_question", ok: true },
+    ]));
+    expect(events.some(event => event.type === "response_end" && event.id === "p1" && event.text === "已按 Safe 模式继续")).toBe(true);
   });
 
   it("ends with a rejected tool result when approval is denied", async () => {

@@ -21,6 +21,7 @@ export function readInteractiveMessage(
   history: readonly string[],
   initialValue = '',
   commands: readonly CommandSuggestion[] = [],
+  signal?: AbortSignal,
 ): Promise<InputEditorResult> {
   let buffer = splitGraphemes(initialValue);
   let cursor = buffer.length;
@@ -71,6 +72,7 @@ export function readInteractiveMessage(
       if (pendingEnter) clearImmediate(pendingEnter);
       input.removeListener('keypress', onKeypress);
       input.removeListener('end', onEnd);
+      signal?.removeEventListener('abort', onAbort);
       input.setRawMode(false);
       input.pause();
       output.write('\x1b[?2004l');
@@ -99,6 +101,7 @@ export function readInteractiveMessage(
     };
 
     const onEnd = () => finish({ type: 'exit' });
+    const onAbort = () => finish({ type: 'exit' });
     const onKeypress = (text: string | undefined, key: Key) => {
       if (pendingEnter) {
         clearImmediate(pendingEnter);
@@ -191,6 +194,8 @@ export function readInteractiveMessage(
 
     input.on('keypress', onKeypress);
     input.once('end', onEnd);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }
 

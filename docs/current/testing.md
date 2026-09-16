@@ -233,3 +233,14 @@ ISLA_RUN_REAL_BAILIAN_SMOKE=1
 - `pack:check`：通过；发布包为 `@winc159/isla@0.2.9`，共 179 个文件；
 
 当前覆盖缺口：TTY `/models` 的输出和 stale cache 组合主要由组件测试与真实操作覆盖，尚无完整 CLI subprocess 专项测试；Bailian 的 Tool 能力也尚未按模型 ID 收窄验证。
+
+## 11. 2026-09-16 第一梯队工具验证
+
+- TypeScript typecheck：通过；
+- 全量离线测试：77 个测试文件通过，4 个真实 smoke 文件跳过；341 passed，6 skipped；
+- build：通过；
+- pnpm `pack --dry-run`：通过；
+- `git diff --check`：通过（仅现有 Windows 行尾提示）；
+- 真实 qwen-plus：`glob_project`、`grep_project` 均完成，Tool Result 驱动后续模型 Step；
+- 真实 qwen-plus NDJSON：发出 `question_request`，收到 `question_response` 后 `ask_user_question` 完成并进入后续模型 Step；
+- 真实评估只记录事件类型和布尔断言，临时工作区与会话目录在结束后清理。

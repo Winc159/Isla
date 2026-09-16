@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "../core/types.js";
 import type { ToolPermission } from "../approval/types.js";
+import type { ToolFailureCode } from "./errors.js";
 
 export interface Tool {
   readonly definition: ToolDefinition;
@@ -15,9 +16,11 @@ export interface WebSearchToolDetails { readonly type: "web_search"; readonly pr
 export type ToolSuccessDetails = ProjectSearchToolDetails | WebFetchToolDetails | WebSearchToolDetails;
 export interface ToolOutput { readonly content: string; readonly details?: ToolSuccessDetails; }
 
+export type ToolExecutionErrorCode = ToolFailureCode | "UNKNOWN_TOOL" | "PERMISSION_DENIED" | "USER_REJECTED";
+
 export type ToolExecutionResult =
   | { readonly ok: true; readonly content: string; readonly details?: ToolSuccessDetails }
-  | { readonly ok: false; readonly code: "UNKNOWN_TOOL" | "INVALID_ARGUMENTS" | "PERMISSION_DENIED" | "USER_REJECTED" | "EXECUTION_FAILED" | "SANDBOX_DENIED" | "TURN_CANCELLED" | "FILE_NOT_OBSERVED" | "FILE_STALE" | "EDIT_NO_MATCH" | "EDIT_MULTIPLE_MATCHES" | "WEB_INVALID_URL" | "WEB_HOST_NOT_ALLOWED" | "WEB_BLOCKED_URL" | "WEB_REDIRECT_BLOCKED" | "WEB_FETCH_TOO_LARGE" | "WEB_UNSUPPORTED_CONTENT_TYPE" | "WEB_FETCH_TIMEOUT" | "WEB_NETWORK_ERROR" | "WEB_SEARCH_INVALID_QUERY" | "WEB_SEARCH_UNAVAILABLE" | "WEB_SEARCH_TIMEOUT" | "WEB_SEARCH_RATE_LIMITED" | "WEB_SEARCH_RESPONSE_INVALID" | "WEB_SEARCH_NETWORK_ERROR"; readonly message: string };
+  | { readonly ok: false; readonly code: ToolExecutionErrorCode; readonly message: string };
 
 export interface ToolCapability {
   readonly id: string;

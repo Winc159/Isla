@@ -10,12 +10,13 @@ import { isRuntimeError, type RuntimeErrorCode } from "../core/errors.js";
 import type { ProtocolCapabilities } from "./types.js";
 import type { ModelStepEvent } from "../core/events.js";
 import type { ModelCatalogEntry } from "../models/catalog.js";
+import { ProtocolUserQuestionService } from "./questions.js";
 export interface ProtocolSessionEvents {
   readonly onToolStarted: (tool: string, callId: string, argumentsJson?: string) => void;
   readonly onToolFinished: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly onModelStepEvent: (event: ModelStepEvent) => void;
 }
- export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly onNewSession?: () => void; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string; readonly listModels?: (query?: string) => Promise<readonly ModelCatalogEntry[]>; readonly useModel?: (model: string) => Promise<void> } = {}): Promise<void> {
+ export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly onNewSession?: () => void; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly questionService?: ProtocolUserQuestionService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents, questionService: ProtocolUserQuestionService) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string; readonly listModels?: (query?: string) => Promise<readonly ModelCatalogEntry[]>; readonly useModel?: (model: string) => Promise<void> } = {}): Promise<void> {
   const writer = new ProtocolWriter(output);
   writer.write({ type: "ready", provider, model, ...(options.workspace ? { workspace: options.workspace } : {}), ...(options.capabilities ? { capabilities: options.capabilities } : {}) });
   const ids = new Set<string>();
@@ -24,6 +25,7 @@ export interface ProtocolSessionEvents {
   let active: Promise<void> | undefined;
   let activeId: string | undefined;
   const approvalService = options.approvalService ?? (options.createSession ? new ProtocolApprovalService((approvalId, request) => writer.write({ type: "approval_request", id: activeId ?? "", approvalId, tool: request.toolName, permission: request.permission.kind, summary: request.summary })) : undefined);
+  const questionService = options.questionService ?? (options.createSession ? new ProtocolUserQuestionService((questionId, request) => writer.write({ type: "question_request", id: activeId ?? "", questionId, questions: request.questions })) : undefined);
   const events: ProtocolSessionEvents = {
     onToolStarted: (tool, callId, argumentsJson) => writer.write({ type: "tool_start", id: activeId ?? "", tool, callId, ...toolTraceFields(tool, argumentsJson) }),
     onToolFinished: (tool, callId, result) => writer.write({ type: "tool_end", id: activeId ?? "", tool, ok: result.ok, ...(!result.ok && result.code ? { code: result.code } : {}) }),
@@ -34,13 +36,14 @@ export interface ProtocolSessionEvents {
       else writer.write({ type: "model_step_end", id, step: event.step, attempt: event.attempt, result: event.result });
     },
   };
-  let currentSession = options.createSession ? await options.createSession(approvalService as ProtocolApprovalService, events) : session;
+  let currentSession = options.createSession ? await options.createSession(approvalService as ProtocolApprovalService, events, questionService as ProtocolUserQuestionService) : session;
   if (!currentSession) throw new Error("Protocol session is not configured");
   while (true) {
     const next = await iterator.next();
     if (next.done) {
       currentSession.cancelActiveTurn?.({ kind: "disconnect" });
       approvalService?.rejectPending();
+      questionService?.rejectPending();
       if (active) await active;
       break;
     }
@@ -52,6 +55,7 @@ export interface ProtocolSessionEvents {
     ids.add(request.id);
     if (request.type === "exit") {
       approvalService?.rejectPending("协议请求已退出");
+      questionService?.rejectPending("协议请求已退出");
       if (active) await active;
       writer.write({ type: "bye", id: request.id });
       break;
@@ -77,10 +81,14 @@ export interface ProtocolSessionEvents {
     }
     if (request.type === "new_session") {
       if (active) { writer.write({ type: "error", id: request.id, code: "BUSY", message: "当前已有请求处理中", recoverable: true }); continue; }
-      approvalService?.resetRemembered(); approvalService?.reopen(); currentSession = options.createSession ? await options.createSession(approvalService as ProtocolApprovalService, events) : currentSession; options.onNewSession?.(); writer.write({ type: "session_changed", id: request.id, sessionId: options.sessionId?.() ?? request.id }); continue;
+      approvalService?.resetRemembered(); approvalService?.reopen(); questionService?.reopen(); currentSession = options.createSession ? await options.createSession(approvalService as ProtocolApprovalService, events, questionService as ProtocolUserQuestionService) : currentSession; options.onNewSession?.(); writer.write({ type: "session_changed", id: request.id, sessionId: options.sessionId?.() ?? request.id }); continue;
     }
     if (request.type === "approval_response") {
       if (!approvalService?.resolve(request)) writer.write({ type: "error", id: request.id, code: "UNEXPECTED_APPROVAL", message: "当前没有等待中的审批", recoverable: true });
+      continue;
+    }
+    if (request.type === "question_response") {
+      if (!questionService?.resolve(request)) writer.write({ type: "error", id: request.id, code: "UNEXPECTED_QUESTION_RESPONSE", message: "当前没有等待中的用户问题", recoverable: true });
       continue;
     }
     if (request.type !== "prompt") continue;

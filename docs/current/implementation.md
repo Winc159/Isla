@@ -200,3 +200,12 @@ git status --short
 3. 文件保存位置与 Git 排除状态；
 4. 不要把 API Key 粘贴到对话；
 5. 将执行哪些真实请求及其可能产生的费用。
+
+## 12. v0.3.3 第一梯队工具
+
+已按独立停点完成：
+
+1. Batch A：`createToolCapabilities` 集中装配静态 Capability，协议错误码复用 Tool 错误码事实源；
+2. Batch B：使用打包的 `@vscode/ripgrep` 实现 `glob_project` 与 `grep_project`，不经过 Shell；
+3. Batch C：实现 `ask_user_question`，TTY 与 NDJSON 共用 User Question seam，并与 Approval 分离；
+4. 未引入动态 Tool 加载、DI 容器、Pipeline、PTC、MCP、后台 Job 或按 Agent 裁剪。

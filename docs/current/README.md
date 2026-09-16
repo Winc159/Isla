@@ -1,6 +1,6 @@
-# Isla v0.3.2 当前文档入口
+# Isla v0.3.3 当前文档入口
 
-当前设计基线为 v0.3.2：沿用 v0.3.0 Bailian Provider and Model Discovery 文档，并加入安全精确编辑扩展。只以本目录为准：
+当前设计基线为 v0.3.3：沿用 v0.3.2 的安全精确读写，并加入第一梯队工具与静态组合层。只以本目录为准：
 
 - [architecture.md](./architecture.md)：v0.3.0 架构、边界与硬不变量
 - [implementation.md](./implementation.md)：Batch A-D 的实施顺序和停点
@@ -9,8 +9,9 @@
 - [decisions.md](./decisions.md)：已确认取舍与重新评估条件
 - [editing-v0.3.2.md](./editing-v0.3.2.md)：v0.3.2 安全精确编辑的已确认契约与完成信号
 - [bounded-reading-v0.3.2.md](./bounded-reading-v0.3.2.md)：v0.3.2 有界精确读取、分页与大文件流式扫描契约
+- [tool-platform-v0.3.3.md](./tool-platform-v0.3.3.md)：第一梯队工具、静态组合边界与分批验证顺序
 
-v0.3.2 在 v0.3.1 模型目录与能力收窄基线上，新增 `edit_text_file`、read-before-edit 新鲜度保护、原子替换和有界文件读取；不扩大到 Shell、MCP 或通用文件系统框架。
+v0.3.3 新增集中 Capability 组合、`glob_project`、`grep_project` 和 `ask_user_question`；仍不扩大到 Shell、MCP、动态插件加载或通用工具框架。
 
 状态：v0.3.0 已实现并完成基线收口。当前 package 版本仍为 v0.2.9；版本号升级留给独立发布步骤。
 
