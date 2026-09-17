@@ -13,7 +13,8 @@ export interface ProjectSearchToolSource { readonly id: string; readonly path: s
 export interface ProjectSearchToolDetails { readonly type: "project_search"; readonly sources: readonly ProjectSearchToolSource[]; readonly filesScanned: number; readonly truncated: boolean; }
 export interface WebFetchToolDetails { readonly type: "web_fetch"; readonly requestedUrl: string; readonly finalUrl: string; readonly statusCode: number; readonly contentType: string; readonly bodyKind: "html" | "text"; readonly bytesRead: number; readonly truncated: boolean; }
 export interface WebSearchToolDetails { readonly type: "web_search"; readonly provider: string; readonly query: string; readonly sources: readonly import("../web/types.js").WebSearchSource[]; readonly truncated: boolean; readonly hasProviderContent: boolean; }
-export type ToolSuccessDetails = ProjectSearchToolDetails | WebFetchToolDetails | WebSearchToolDetails;
+export interface CommandExecutionToolDetails { readonly type: "command_execution"; readonly shell: "powershell" | "bash"; readonly workdir: string; readonly exitCode: number | null; readonly signal: NodeJS.Signals | null; readonly timedOut: boolean; readonly aborted: boolean; readonly stdoutTruncated: boolean; readonly stderrTruncated: boolean; }
+export type ToolSuccessDetails = ProjectSearchToolDetails | WebFetchToolDetails | WebSearchToolDetails | CommandExecutionToolDetails;
 export interface ToolOutput { readonly content: string; readonly details?: ToolSuccessDetails; }
 
 export type ToolExecutionErrorCode = ToolFailureCode | "UNKNOWN_TOOL" | "PERMISSION_DENIED" | "USER_REJECTED";

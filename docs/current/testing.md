@@ -4,7 +4,9 @@
 
 > v0.3.2 有界读取门禁：覆盖默认/指定窗口、行号、总行数、continuation footer、单行与总字节截断、空文件、CRLF、超范围、大文件流式扫描，以及窗口读取后的编辑新鲜度。完整契约见 [bounded-reading-v0.3.2.md](./bounded-reading-v0.3.2.md)。
 
-状态：离线矩阵已执行；授权真实 Bailian 文本、Tool Calling、模型目录和 NDJSON 多轮场景已验证
+> v0.3.4 测试矩阵见 [command-execution-v0.3.4.md](./command-execution-v0.3.4.md)。runner、Capability、Approval、取消/截断专项测试和真实“修改后执行检查”闭环均已完成。
+
+状态：离线矩阵已执行；授权真实 Bailian/Qwen 文本与 v0.3.4 Tool Loop 闭环已验证
 
 默认全部离线。真实百炼测试仍必须同时具备显式开关、有效本地 Profile 和用户授权；已完成的真实验证不改变这一默认门禁。
 
@@ -244,3 +246,11 @@ ISLA_RUN_REAL_BAILIAN_SMOKE=1
 - 真实 qwen-plus：`glob_project`、`grep_project` 均完成，Tool Result 驱动后续模型 Step；
 - 真实 qwen-plus NDJSON：发出 `question_request`，收到 `question_response` 后 `ask_user_question` 完成并进入后续模型 Step；
 - 真实评估只记录事件类型和布尔断言，临时工作区与会话目录在结束后清理。
+
+## 12. 2026-09-17 v0.3.4 命令执行收口
+
+- 全量离线测试：79 个测试文件通过，4 个真实 smoke 文件跳过；352 passed，6 skipped；
+- typecheck、build、pack dry-run、`npm audit --omit=dev` 和 `git diff --check`：通过；
+- 真实 Qwen `qwen3.7-plus`：在临时 fixture 中完成 `read_text_file` → `edit_text_file` → `run_command`，两次 Approval 均通过，检查命令 exit code 为 0，最终响应非空；
+- 临时 fixture、评估脚本、完整命令输出和会话正文已清理；
+- 真实 DeepSeek smoke 曾返回 HTTP 402 `Insufficient Balance`，未重试或切换 Provider。

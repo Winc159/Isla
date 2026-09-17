@@ -4,7 +4,9 @@
 
 > v0.3.2 后续 Batch：按 [bounded-reading-v0.3.2.md](./bounded-reading-v0.3.2.md) 把 `read_text_file` 升级为有界行窗口和大文件流式扫描；继续使用完整文件摘要保护编辑。
 
-状态：v0.3.0 已实现并完成基线收口
+> v0.3.4 已按 [command-execution-v0.3.4.md](./command-execution-v0.3.4.md) 完成一次性前台 `run_command` 的契约、实现、接入和真实闭环评估。
+
+状态：v0.3.4 已实现并完成基线收口
 
 架构依据：`docs/current/architecture.md`
 
@@ -209,3 +211,13 @@ git status --short
 2. Batch B：使用打包的 `@vscode/ripgrep` 实现 `glob_project` 与 `grep_project`，不经过 Shell；
 3. Batch C：实现 `ask_user_question`，TTY 与 NDJSON 共用 User Question seam，并与 Approval 分离；
 4. 未引入动态 Tool 加载、DI 容器、Pipeline、PTC、MCP、后台 Job 或按 Agent 裁剪。
+
+## 13. v0.3.4 安全命令执行
+
+Batch A-D 已完成。离线门禁和授权真实闭环均已执行：
+
+1. Batch B：subprocess runner、Shell Adapter、Workspace workdir 校验、环境过滤、超时/取消和有界输出；
+2. Batch C：`command-execution` Capability、`command-execute` Approval、TTY/NDJSON 接入；
+3. Batch D：79 个测试文件通过，352 passed、6 skipped；typecheck、build、pack dry-run、audit 和 diff check 通过；Qwen 真实“读取→修改→run_command 检查”闭环通过。
+
+本阶段不实现后台 Job、PTY、持久 Shell、stdin/custom env、spill 文件或 OS 级命令文件沙箱。

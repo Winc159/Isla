@@ -25,6 +25,7 @@
 - 部署方式不得渗透进 Runtime 核心。原生 Node.js 与容器运行应尽量共用同一套核心代码和配置边界。
 - 第一版运行期间不动态切换模型或 Provider；启动时确定本次会话使用的 Provider 和模型。
 - 本地模型通过 Mac 上运行的局域网 HTTP 模型服务接入。Provider 表示接口协议，主机 IP、端口和模型名称属于连接配置，不把特定 IP 写进 Runtime。
+- 正常运行使用 Config/Profile 作为 Provider、模型、Base URL 和 API Key 的配置事实源；不得把 `.env` 当作默认配置来源。`.env` 只作为显式开发、CI 或迁移兼容入口使用，切换 Provider 或模型前先读取 Config/Profile，不要猜测环境变量含义。
 
 ## 自动化与验证
 

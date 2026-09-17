@@ -1,6 +1,6 @@
-# Isla v0.3.3 当前文档入口
+# Isla v0.3.4 当前文档入口
 
-当前设计基线为 v0.3.3：沿用 v0.3.2 的安全精确读写，并加入第一梯队工具与静态组合层。只以本目录为准：
+当前设计基线为 v0.3.4：沿用 v0.3.3 的安全精确读写、第一梯队工具与静态组合层，并加入一次性前台命令执行。只以本目录为准：
 
 - [architecture.md](./architecture.md)：v0.3.0 架构、边界与硬不变量
 - [implementation.md](./implementation.md)：Batch A-D 的实施顺序和停点
@@ -10,10 +10,13 @@
 - [editing-v0.3.2.md](./editing-v0.3.2.md)：v0.3.2 安全精确编辑的已确认契约与完成信号
 - [bounded-reading-v0.3.2.md](./bounded-reading-v0.3.2.md)：v0.3.2 有界精确读取、分页与大文件流式扫描契约
 - [tool-platform-v0.3.3.md](./tool-platform-v0.3.3.md)：第一梯队工具、静态组合边界与分批验证顺序
+- [command-execution-v0.3.4.md](./command-execution-v0.3.4.md)：一次性前台命令执行 Tool 的契约、平台适配与安全边界
 
-v0.3.3 新增集中 Capability 组合、`glob_project`、`grep_project` 和 `ask_user_question`；仍不扩大到 Shell、MCP、动态插件加载或通用工具框架。
+v0.3.3 已新增集中 Capability 组合、`glob_project`、`grep_project` 和 `ask_user_question`。v0.3.4 已接入 `run_command`，支持有界前台执行、Approval、取消和跨平台 Shell 适配。
 
-状态：v0.3.0 已实现并完成基线收口。当前 package 版本仍为 v0.2.9；版本号升级留给独立发布步骤。
+状态：v0.3.4 已实现并完成离线与授权真实闭环评估。当前 package 版本仍为 v0.2.9；版本号升级留给独立发布步骤。
+
+配置说明：正常启动使用 Config/Profile；`.env` 仅用于显式开发、CI 或迁移兼容入口，不是默认配置事实源。切换 Provider、模型或 Base URL 时优先检查当前 Profile。
 
 v0.3.0 已按以下顺序完成：
 

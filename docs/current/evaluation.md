@@ -45,3 +45,13 @@ v0.3.0 已实现并完成基线收口。当前 package 版本仍为 v0.2.9，版
 2026-09-16 经用户授权使用本地 Bailian Profile 与 qwen-plus 完成真实回归：模型主动完成 glob、grep 和用户提问三个 Tool Call；问题回答后存在下一模型 Step 和唯一 `response_end`。本次全量基线为 341 passed、6 skipped，typecheck、build、pack dry-run 与 diff check 通过。
 
 真实评估不得保存 API Key、Authorization、Workspace ID、完整 Provider payload、完整模型目录或私人会话正文。
+
+## v0.3.4 授权评估
+
+2026-09-17 用户授权执行一次真实 DeepSeek smoke。请求实际发出，但服务端返回 HTTP 402 `Insufficient Balance`；未继续重试或切换 Provider，避免重复费用。该结果只证明错误归一化路径被触发，不证明真实模型回答能力。
+
+同日完成本地命令执行闭环验证：`run_command` 的 runner、PowerShell/Bash 适配、Approval 拒绝、Workspace 校验、取消、非零退出和输出截断专项测试通过；未保存命令完整输出或任何凭据。
+
+随后切换到 Config 中的 `bailian` Profile，以 NDJSON 发起一次最小 Qwen 真实评估：`ready` 确认 provider=`bailian`、model=`qwen3.7-plus`，收到唯一 `response_end`，回答非空且为预期探针文本 `qwen-real-ok`；未保存回答正文。
+
+同日完成 v0.3.4 真实闭环评估：在临时 fixture 中，Qwen 先调用两次 `read_text_file`，再调用 `edit_text_file` 将 `actual.txt` 修改为目标内容，随后调用 `run_command` 执行 `node check.mjs`。写入和命令执行均触发并批准了独立 Approval，两个 Tool Result 均成功，最终 `response_end` 非空；独立读取 fixture 确认内容为 `passed`。临时 fixture、完整命令输出和会话正文均已清理。

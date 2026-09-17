@@ -5,7 +5,7 @@ describe("tool capability composition", () => {
   it("always includes project files and omits disabled optional capabilities", () => {
     const capabilities = createToolCapabilities({ workspaceRoot: process.cwd() });
 
-    expect(capabilities.map(capability => capability.id)).toEqual(["project-files", "project-discovery"]);
+    expect(capabilities.map(capability => capability.id)).toEqual(["project-files", "project-discovery", "command-execution"]);
     expect(capabilities[0]?.tools.map(tool => tool.definition.name)).toEqual([
       "list_directory",
       "read_text_file",
@@ -30,14 +30,14 @@ describe("tool capability composition", () => {
       },
     });
 
-    expect(capabilities.map(capability => capability.id)).toEqual(["project-files", "project-discovery", "web"]);
-    expect(capabilities[2]?.tools.map(tool => tool.definition.name)).toEqual(["web_search"]);
+    expect(capabilities.map(capability => capability.id)).toEqual(["project-files", "project-discovery", "command-execution", "web"]);
+    expect(capabilities[3]?.tools.map(tool => tool.definition.name)).toEqual(["web_search"]);
   });
 
   it("adds user interaction only when an input adapter is available", () => {
     const capabilities = createToolCapabilities({ workspaceRoot: process.cwd(), userQuestionService: { ask: async () => ({ answers: [] }) } });
 
-    expect(capabilities.map(capability => capability.id)).toEqual(["project-files", "project-discovery", "user-interaction"]);
-    expect(capabilities[2]?.tools.map(tool => tool.definition.name)).toEqual(["ask_user_question"]);
+    expect(capabilities.map(capability => capability.id)).toEqual(["project-files", "project-discovery", "command-execution", "user-interaction"]);
+    expect(capabilities[3]?.tools.map(tool => tool.definition.name)).toEqual(["ask_user_question"]);
   });
 });

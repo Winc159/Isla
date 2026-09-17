@@ -5,6 +5,7 @@ import type { ToolCapability } from "./types.js";
 import { createWebCapability } from "./web.js";
 import { createUserInteractionCapability } from "./user-interaction.js";
 import type { UserQuestionService } from "../user-questions/types.js";
+import { createCommandExecutionCapability } from "./command-execution.js";
 
 export interface ToolCompositionContext {
   readonly workspaceRoot: string;
@@ -18,6 +19,7 @@ export type ToolCapabilityFactory = (context: ToolCompositionContext) => ToolCap
 const capabilityFactories: readonly ToolCapabilityFactory[] = [
   context => createProjectFilesCapability(context.workspaceRoot),
   context => createProjectDiscoveryCapability(context.workspaceRoot),
+  context => createCommandExecutionCapability(context.workspaceRoot),
   context => context.userQuestionService ? createUserInteractionCapability(context.userQuestionService) : undefined,
   context => context.webFetch?.enabled || context.webSearch?.enabled
     ? createWebCapability({
