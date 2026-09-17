@@ -10,6 +10,11 @@ describe("run_command tool", () => {
     expect(result).toMatchObject({ details: { type: "command_execution", exitCode: 2 }, content: expect.stringContaining("ok") });
     expect(result.content).toContain("warning");
   });
+  it("preserves verification purpose in structured details", async () => {
+    const tool = createRunCommandTool(process.cwd());
+    const result = await tool.execute(JSON.stringify({ command: "Write-Output check", purpose: "verification" }));
+    expect(result).toMatchObject({ details: { type: "command_execution", purpose: "verification", exitCode: 0 } });
+  });
   it("requires approval metadata and redacts command previews", async () => {
     const tool = createRunCommandTool(process.cwd());
     expect(tool.permission).toEqual({ kind: "command-execute" });

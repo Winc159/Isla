@@ -6,6 +6,8 @@
 
 > v0.3.4 已按 [command-execution-v0.3.4.md](./command-execution-v0.3.4.md) 完成一次性前台 `run_command` 的契约、实现、接入和真实闭环评估。
 
+> v0.3.4.1 当前实施：按 [verification-and-bailian-capabilities-v0.3.4.1.md](./verification-and-bailian-capabilities-v0.3.4.1.md) 已完成验证状态推导、Session/`/trace` 投影、`run_command` purpose 和 Bailian 精确模型白名单。
+
 状态：v0.3.4 已实现并完成基线收口
 
 架构依据：`docs/current/architecture.md`
@@ -221,3 +223,14 @@ Batch A-D 已完成。离线门禁和授权真实闭环均已执行：
 3. Batch D：79 个测试文件通过，352 passed、6 skipped；typecheck、build、pack dry-run、audit 和 diff check 通过；Qwen 真实“读取→修改→run_command 检查”闭环通过。
 
 本阶段不实现后台 Job、PTY、持久 Shell、stdin/custom env、spill 文件或 OS 级命令文件沙箱。
+
+## 14. v0.3.4.1 正确性补充
+
+计划按四个独立停点实施：
+
+1. Batch A：验证状态类型、Journal 事实和纯推导函数；
+2. Batch B：文件修改/验证命令记录、Model Step 摘要和 `/trace` 投影；
+3. Batch C：Bailian `qwen-plus`、`qwen3.7-plus` 精确 Tool Calling 白名单与请求一致性；
+4. Batch D：完整离线门禁和授权真实状态转换评估。
+
+设计确认前不修改 Runtime、Journal 或 Provider 实现。

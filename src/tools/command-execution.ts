@@ -3,13 +3,14 @@ import { ToolFailure, invalidArguments } from "./errors.js";
 import { runCommand, type CommandRunRequest } from "./subprocess-runner.js";
 import type { Tool, ToolCapability, ToolOutput } from "./types.js";
 
-interface CommandInput { readonly command: string; readonly workdir?: string; readonly timeoutMs?: number; }
+interface CommandInput { readonly command: string; readonly workdir?: string; readonly timeoutMs?: number; readonly purpose?: "verification" | "other"; }
 
 export function createCommandExecutionCapability(workspaceRoot: string): ToolCapability {
   return {
     id: "command-execution",
     instructions: [
       "需要验证修改或运行项目检查时使用 run_command。",
+      "运行测试、构建、类型检查、lint 或专用检查脚本时设置 purpose=verification；普通查看或生成命令使用 purpose=other。",
       "命令在 Workspace 内的指定工作目录运行；长时间运行的命令必须通过 timeoutMs 控制。",
       "命令的非零退出、超时和标准错误都是执行结果的一部分；读取结果后再决定是否修复或重试。",
       "不要把 API Key、令牌或私人内容放入命令。命令执行需要用户批准。",
@@ -30,6 +31,7 @@ export function createRunCommandTool(workspaceRoot: string): Tool {
           command: { type: "string", description: "要执行的 Shell 命令" },
           workdir: { type: "string", description: "Workspace 内的相对工作目录，默认是 Workspace 根目录" },
           timeoutMs: { type: "number", description: "超时时间（毫秒），默认 120000，最大 600000" },
+          purpose: { type: "string", enum: ["verification", "other"], description: "命令用途；明确检查修改结果时使用 verification" },
         },
         required: ["command"],
         additionalProperties: false,
@@ -65,6 +67,7 @@ export function createRunCommandTool(workspaceRoot: string): Tool {
           signal: result.signal,
           timedOut: result.timedOut,
           aborted: result.aborted,
+          purpose: input.purpose ?? "other",
           stdoutTruncated: result.stdout.truncated,
           stderrTruncated: result.stderr.truncated,
         },
@@ -81,7 +84,8 @@ function parseInput(argumentsJson: string): CommandInput {
   if (typeof input.command !== "string" || !input.command.trim()) throw invalidArguments("run_command command must be a non-empty string");
   if (input.workdir !== undefined && typeof input.workdir !== "string") throw invalidArguments("run_command workdir must be a string");
   if (input.timeoutMs !== undefined && (typeof input.timeoutMs !== "number" || !Number.isFinite(input.timeoutMs) || input.timeoutMs <= 0)) throw invalidArguments("run_command timeoutMs must be a positive finite number");
-  return { command: input.command, ...(input.workdir !== undefined ? { workdir: input.workdir } : {}), ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}) };
+  if (input.purpose !== undefined && input.purpose !== "verification" && input.purpose !== "other") throw invalidArguments("run_command purpose must be verification or other");
+  return { command: input.command, ...(input.workdir !== undefined ? { workdir: input.workdir } : {}), ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}), ...(input.purpose !== undefined ? { purpose: input.purpose } : {}) };
 }
 
 function sanitizeCommand(command: string): string {

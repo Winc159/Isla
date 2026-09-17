@@ -6,6 +6,8 @@
 
 > v0.3.4 测试矩阵见 [command-execution-v0.3.4.md](./command-execution-v0.3.4.md)。runner、Capability、Approval、取消/截断专项测试和真实“修改后执行检查”闭环均已完成。
 
+> v0.3.4.1 测试见 [verification-and-bailian-capabilities-v0.3.4.1.md](./verification-and-bailian-capabilities-v0.3.4.1.md)：验证状态推导、Session/`/trace` 投影、`run_command` purpose 和 Bailian 精确模型白名单已通过专项测试。
+
 状态：离线矩阵已执行；授权真实 Bailian/Qwen 文本与 v0.3.4 Tool Loop 闭环已验证
 
 默认全部离线。真实百炼测试仍必须同时具备显式开关、有效本地 Profile 和用户授权；已完成的真实验证不改变这一默认门禁。

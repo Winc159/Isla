@@ -33,8 +33,8 @@ v0.3.0 已实现并完成基线收口。当前 package 版本仍为 v0.2.9，版
 
 ## 下一评估停点
 
-1. 统一 Provider Model Catalog 的设计确认与 Bailian/DeepSeek 最小接口；
-2. Bailian Tool Calling 的按模型能力策略；
+1. v0.3.4.1 修改后验证状态的跨 Turn、恢复和真实状态转换；
+2. Bailian `qwen-plus`、`qwen3.7-plus` 精确 Tool Calling 白名单与未知模型关闭行为；
 3. 不含私人内容的 Memory 持久化写入、重启与召回真实端到端验证；
 4. 只有官方协议和真实回归都稳定后，才评估 streaming Tool Calls。
 

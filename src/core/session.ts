@@ -13,6 +13,7 @@ import { ModelStepRunner } from "./model-step.js";
 import { RequestContextBuilder } from "./request-context.js";
 import { createRequestSnapshot } from "./request-snapshot.js";
 import { validateAndCleanCitations } from "./citations.js";
+import { deriveVerificationStatus } from "./verification.js";
 import type { ModelStepEvent, SessionEvent } from "./events.js";
 import {
   appendCheckpoint,
@@ -240,6 +241,13 @@ export class ChatSession {
             }
           }
           if (execution.ok && (call.name === "write_text_file" || call.name === "edit_text_file")) successfulWrites.add(writeKey);
+          const actionTurn = this.journal.turns.at(-1);
+          if (actionTurn && execution.ok && (call.name === "write_text_file" || call.name === "edit_text_file")) {
+            (actionTurn.actions as TurnActionRecord[]).push({ type: "workspace_mutation", step: round, tool: call.name });
+          }
+          if (actionTurn && execution.ok && execution.details?.type === "command_execution" && execution.details.purpose === "verification") {
+            (actionTurn.actions as TurnActionRecord[]).push({ type: "verification", step: round, outcome: execution.details.exitCode === 0 && !execution.details.timedOut && !execution.details.aborted && execution.details.signal === null ? "passed" : "failed" });
+          }
           result = execution.ok ? execution.content : `[${execution.code}] ${execution.message}`;
           if (!execution.ok) {
             if (execution.code === "USER_REJECTED") {
@@ -267,7 +275,12 @@ export class ChatSession {
           return terminalResponse;
         }
       }
-      current = next;
+      const verificationStatus = deriveVerificationStatus(this.journal);
+      const verificationObservation = verificationStatus === "not_applicable" ? undefined : { role: "system" as const, content: `当前工作区验证状态（仅供本步骤判断，不是用户事实）：${verificationStatus}` };
+      const lastToolIndex = next.findLastIndex(message => message.role === "tool");
+      current = !verificationObservation ? next : lastToolIndex >= 0
+        ? [...next.slice(0, lastToolIndex), verificationObservation, ...next.slice(lastToolIndex)]
+        : [...next, verificationObservation];
     }
     return { text: "工具调用达到本轮上限，已停止继续执行。", outcome: "blocked", model: provider.model };
   }

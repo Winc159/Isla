@@ -29,6 +29,8 @@ export interface ModelAttemptRecord {
 
 export type TurnActionRecord =
   | { readonly type: "tool"; readonly step: number; readonly callId: string; readonly tool: string; readonly ok: boolean; readonly code?: string }
+  | { readonly type: "workspace_mutation"; readonly step: number; readonly tool: "write_text_file" | "edit_text_file" }
+  | { readonly type: "verification"; readonly step: number; readonly outcome: "passed" | "failed" }
   | { readonly type: "approval"; readonly step: number; readonly callId: string; readonly tool: string; readonly decision: "approved" | "rejected" }
   | { readonly type: "checkpoint"; readonly throughMessageIndex: number }
   | { readonly type: "memory_retrieval"; readonly sourceIds: readonly string[] }
