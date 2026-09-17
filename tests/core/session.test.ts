@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ChatSession } from "../../src/core/session.js";
 import { FakeProvider } from "../support/fake-provider.js";
 import type { Message, ModelRequest, ModelResponse, ToolResponse } from "../../src/core/types.js";
+import { createProjectFilesCapability } from "../../src/tools/project-files.js";
+import { createCommandExecutionCapability } from "../../src/tools/command-execution.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -81,6 +83,7 @@ describe("session", () => {
         this.calls += 1;
         if (this.calls === 1) return { text: "", toolCalls: [{ id: "read-edit", name: "read_text_file", arguments: JSON.stringify({ path: "README.md" }) }] };
         if (this.calls === 2) return { text: "", toolCalls: [{ id: "edit-once", name: "edit_text_file", arguments: JSON.stringify({ path: "README.md", oldText: "fixture", newText: "updated" }) }] };
+        if (this.calls === 3) return { text: "", toolCalls: [{ id: "verify-once", name: "run_command", arguments: JSON.stringify({ command: "echo ok", purpose: "verification" }) }] };
         return { text: "精确修改完成" };
       }
     }
@@ -89,16 +92,18 @@ describe("session", () => {
     const response = await new ChatSession(provider, {
       projectRoot: sessionRoot,
       enableTools: true,
+      capabilities: [createProjectFilesCapability(sessionRoot), createCommandExecutionCapability(sessionRoot)],
       permissionPreset: "workspace",
       approvalPolicy: "ask",
       approvalService: { request: async request => { approvedTools.push(request.toolName); return { approved: true }; } },
     }).send("把 README 标题中的 fixture 改成 updated");
     expect(response.text).toBe("精确修改完成");
+    expect(response.verificationStatus).toBe("passed_after_last_change");
     expect(await readFile(join(sessionRoot, "README.md"), "utf8")).toBe("# updated\n");
-    expect(provider.requests).toHaveLength(3);
-    expect(approvedTools).toEqual(["edit_text_file"]);
+    expect(provider.requests).toHaveLength(4);
+    expect(approvedTools).toEqual(["edit_text_file", "run_command"]);
     expect(provider.requests[2]?.messages).toContainEqual(expect.objectContaining({ role: "tool", toolCallId: "edit-once", content: "已编辑 README.md；替换 1 处" }));
-  });
+  }, 15000);
   it("persists tool calls and results as canonical messages", async () => {
     class ToolProvider extends FakeProvider {
       private calls = 0;

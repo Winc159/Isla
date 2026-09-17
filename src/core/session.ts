@@ -176,7 +176,7 @@ export class ChatSession {
       if (!response.toolCalls?.length && !mustSearch && !mustFetch) {
         const toolCallIds = current.flatMap(message => message.toolCalls?.map(call => call.id) ?? []);
         const toolResultIds = current.filter(message => message.role === "tool" && message.toolCallId).map(message => message.toolCallId!);
-        const completion = evaluateCompletionGate({ toolCallIds, toolResultIds, priorRejections: completionRejections });
+        const completion = evaluateCompletionGate({ toolCallIds, toolResultIds, verificationStatus: deriveVerificationStatus(this.journal), priorRejections: completionRejections });
         if (!completion.accepted) {
           completionRejections.push(completion.reason);
           this.onDiagnostic?.({ code: "COMPLETION_REJECTED", component: "agent_loop", severity: "warning", detail: `reason=${completion.reason}` });
@@ -351,6 +351,7 @@ export class ChatSession {
       const { projectSources: _retrievedOnly, ...withoutSources } = response;
       response = { ...withoutSources, text: citations.text };
     }
+    response = { ...response, verificationStatus: deriveVerificationStatus(this.journal) };
     const text = response.text;
     if (!text.trim()) throw new Error("Provider returned empty text");
     const result = await this.commitResponse(response, signal);

@@ -26,4 +26,21 @@ describe("completion gate", () => {
   it("does not reject subjective answer quality", () => {
     expect(evaluateCompletionGate({})).toEqual({ accepted: true });
   });
+
+  it("requires one verification opportunity after a mutation", () => {
+    const input = { verificationStatus: "not_run" } as const;
+    expect(evaluateCompletionGate(input)).toMatchObject({ accepted: false, reason: "verification_missing_after_mutation" });
+    expect(evaluateCompletionGate({ ...input, priorRejections: ["verification_missing_after_mutation"] })).toEqual({ accepted: true });
+  });
+
+  it("blocks repeated completion after a failed verification", () => {
+    const input = { verificationStatus: "failed_after_last_change" } as const;
+    expect(evaluateCompletionGate(input)).toMatchObject({ accepted: false, reason: "verification_failed_after_mutation" });
+    expect(evaluateCompletionGate({ ...input, priorRejections: ["verification_failed_after_mutation"] })).toMatchObject({ accepted: false, terminal: "blocked" });
+  });
+
+  it("accepts completed or inapplicable verification states", () => {
+    expect(evaluateCompletionGate({ verificationStatus: "passed_after_last_change" })).toEqual({ accepted: true });
+    expect(evaluateCompletionGate({ verificationStatus: "not_applicable" })).toEqual({ accepted: true });
+  });
 });

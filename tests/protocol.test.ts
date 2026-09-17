@@ -76,7 +76,7 @@ describe("NDJSON protocol", () => {
     await runProtocol(Readable.from(['{"type":"prompt","id":"p1","text":"你好"}\n{"type":"exit","id":"e1"}\n']), out, new ChatSession(new FakeProvider([{ text: "你好" }])), "fake", "fake-model");
     const events = output.trim().split("\n").map(line => JSON.parse(line) as { type: string });
     expect(events.map(event => event.type)).toEqual(["ready", "response_start", "response_end", "bye"]);
-    expect(JSON.parse(output.trim().split("\n")[2])).toMatchObject({ type: "response_end", elapsedMs: expect.any(Number) });
+    expect(JSON.parse(output.trim().split("\n")[2])).toMatchObject({ type: "response_end", elapsedMs: expect.any(Number), verificationStatus: "not_applicable" });
   });
   it("forwards native model step events through NDJSON", async () => {
     let output = "";

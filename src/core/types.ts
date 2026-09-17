@@ -1,4 +1,5 @@
 import type { ModelStreamEvent } from "./model-stream.js";
+import type { VerificationStatus } from "./verification.js";
 export type MessageRole = "system" | "user" | "assistant" | "tool";
 export interface Message { readonly role: MessageRole; readonly content: string; readonly toolCalls?: readonly ToolCall[]; readonly toolCallId?: string; }
 export interface ToolDefinition { readonly name: string; readonly description: string; readonly parameters: Record<string, unknown>; }
@@ -13,7 +14,7 @@ export interface ProviderCapabilities {
 }
 export type TurnOutcome = "completed" | "needs_user" | "blocked";
 export interface ProjectSourceReference { readonly path: string; readonly startLine: number; }
-export interface ModelResponse { readonly text: string; readonly model?: string; readonly usage?: TokenUsage; readonly outcome?: TurnOutcome; readonly evidence?: readonly string[]; readonly projectSources?: readonly ProjectSourceReference[]; }
+export interface ModelResponse { readonly text: string; readonly model?: string; readonly usage?: TokenUsage; readonly outcome?: TurnOutcome; readonly evidence?: readonly string[]; readonly projectSources?: readonly ProjectSourceReference[]; readonly verificationStatus?: VerificationStatus; }
 export interface ToolResponse extends ModelResponse { readonly toolCalls?: readonly ToolCall[]; readonly assistantContent?: string | null; }
 export interface ModelProvider {
   readonly id: string;

@@ -12,6 +12,7 @@
 - [tool-platform-v0.3.3.md](./tool-platform-v0.3.3.md)：第一梯队工具、静态组合边界与分批验证顺序
 - [command-execution-v0.3.4.md](./command-execution-v0.3.4.md)：一次性前台命令执行 Tool 的契约、平台适配与安全边界
 - [verification-and-bailian-capabilities-v0.3.4.1.md](./verification-and-bailian-capabilities-v0.3.4.1.md)：修改后验证状态与 Bailian Tool Calling 精确白名单收口
+- [verification-completion-gate-v0.3.4.2.md](./verification-completion-gate-v0.3.4.2.md)：验证感知的完成门禁、未验证交付和协议状态投影
 
 v0.3.3 已新增集中 Capability 组合、`glob_project`、`grep_project` 和 `ask_user_question`。v0.3.4 已接入 `run_command`，支持有界前台执行、Approval、取消和跨平台 Shell 适配。
 

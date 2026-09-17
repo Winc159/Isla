@@ -3,7 +3,12 @@ export type CompletionRejectionReason =
   | "tool_result_missing"
   | "approval_missing"
   | "active_tool"
-  | "turn_cancelled";
+  | "turn_cancelled"
+  | "verification_missing_after_mutation"
+  | "verification_failed_after_mutation";
+
+import type { VerificationStatus } from "./verification.js";
+export type { VerificationStatus } from "./verification.js";
 
 export interface CompletionGateInput {
   readonly requiredExternalEvidence?: boolean;
@@ -13,6 +18,7 @@ export interface CompletionGateInput {
   readonly activeToolCount?: number;
   readonly unapprovedActionCount?: number;
   readonly cancelled?: boolean;
+  readonly verificationStatus?: VerificationStatus;
   readonly priorRejections?: readonly CompletionRejectionReason[];
 }
 
@@ -26,6 +32,8 @@ const observations: Record<CompletionRejectionReason, string> = {
   approval_missing: "[completion_rejected] 当前 Turn 存在尚未完成 Approval 的动作。请等待 Approval 结果后再结束。",
   active_tool: "[completion_rejected] 当前仍有 Tool 正在执行，不能结束 Turn。",
   turn_cancelled: "[completion_rejected] 当前 Turn 已取消，不能继续交付新的完成结果。",
+  verification_missing_after_mutation: "[completion_rejected] 当前存在修改但尚未验证。请运行适用的测试、构建、类型检查或其他验证命令；如果确实没有适用检查，请明确说明未验证原因后再交付。",
+  verification_failed_after_mutation: "[completion_rejected] 修改后的验证未通过。请读取验证结果，继续修复并重新运行验证，不要声称已经完成。",
 };
 
 export function evaluateCompletionGate(input: CompletionGateInput): CompletionGateResult {
@@ -40,9 +48,14 @@ export function evaluateCompletionGate(input: CompletionGateInput): CompletionGa
         : [...callIds].some(id => !resultIds.has(id))
           ? "tool_result_missing"
           : input.requiredExternalEvidence && !input.successfulExternalEvidence
-            ? "required_evidence_missing"
+          ? "required_evidence_missing"
+            : input.verificationStatus === "not_run"
+              ? "verification_missing_after_mutation"
+              : input.verificationStatus === "failed_after_last_change"
+                ? "verification_failed_after_mutation"
             : undefined;
   if (!reason) return { accepted: true };
   const repeated = (input.priorRejections ?? []).filter(item => item === reason).length > 0;
+  if (reason === "verification_missing_after_mutation" && repeated) return { accepted: true };
   return { accepted: false, reason, observation: observations[reason], ...(repeated ? { terminal: "blocked" as const } : {}) };
 }

@@ -19,7 +19,7 @@ export type ProtocolEvent =
   | { readonly type: "model_step_start"; readonly id: string; readonly step: number; readonly attempt: number }
   | { readonly type: "model_delta"; readonly id: string; readonly step: number; readonly attempt: number; readonly text: string; readonly provisional: true }
   | { readonly type: "model_step_end"; readonly id: string; readonly step: number; readonly attempt: number; readonly result: "capability_calls" | "candidate_yield" | "failed" | "cancelled" | "retry" }
-  | { readonly type: "response_end"; readonly id: string; readonly text: string; readonly elapsedMs: number; readonly projectSources?: readonly { readonly path: string; readonly startLine: number }[] }
+  | { readonly type: "response_end"; readonly id: string; readonly text: string; readonly elapsedMs: number; readonly projectSources?: readonly { readonly path: string; readonly startLine: number }[]; readonly verificationStatus?: "not_applicable" | "not_run" | "passed_after_last_change" | "failed_after_last_change" }
   | { readonly type: "response_cancelled"; readonly id: string; readonly elapsedMs: number }
   | { readonly type: "cancel_ack"; readonly id: string; readonly targetId: string; readonly accepted: boolean }
   | { readonly type: "tool_start"; readonly id: string; readonly tool: string; readonly callId?: string; readonly query?: string; readonly url?: string }

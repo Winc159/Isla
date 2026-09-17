@@ -99,7 +99,7 @@ export interface ProtocolSessionEvents {
     active = (async () => {
       try {
         const response = await currentSession.send(request.text);
-        writer.write({ type: "response_end", id: request.id, text: response.text, ...(response.outcome ? { outcome: response.outcome } : {}), elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)), ...(response.projectSources?.length ? { projectSources: response.projectSources.map(source => ({ path: source.path, startLine: source.startLine })) } : {}) });
+        writer.write({ type: "response_end", id: request.id, text: response.text, ...(response.outcome ? { outcome: response.outcome } : {}), elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)), ...(response.projectSources?.length ? { projectSources: response.projectSources.map(source => ({ path: source.path, startLine: source.startLine })) } : {}), ...(response.verificationStatus ? { verificationStatus: response.verificationStatus } : {}) });
       } catch (error) {
         if (isRuntimeError(error) && error.code === "TURN_CANCELLED") writer.write({ type: "response_cancelled", id: request.id, elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)) });
         else writer.write({ type: "error", id: request.id, code: classifyPromptError(error), message: safePromptErrorMessage(error), recoverable: isRuntimeError(error) ? error.recoverable : true });

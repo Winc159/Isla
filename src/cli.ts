@@ -158,6 +158,9 @@ export async function runCli(
       stopLoading();
       if (streamState.sawDelta && !streamState.hadToolStep) output.write('\n');
       else output.write(`isla> ${response.text}\n`);
+      if (response.verificationStatus === 'passed_after_last_change') output.write('验证：已通过\n');
+      else if (response.verificationStatus === 'not_run') output.write('验证：未运行\n');
+      else if (response.verificationStatus === 'failed_after_last_change') output.write('验证：失败\n');
       if (logLevel !== 'quiet') output.write(`耗时 ${formatElapsed(startedAt)}\n`);
       output.write('\n');
       if (response.projectSources?.length) output.write(`参考：\n${response.projectSources.map(source => `- ${source.path}:${source.startLine}`).join("\n")}\n\n`);
