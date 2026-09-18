@@ -412,5 +412,14 @@ function isMessage(value: unknown): value is Message {
   if (!value || typeof value !== "object") return false;
   const message = value as Record<string, unknown>;
   return (message.role === "system" || message.role === "user" || message.role === "assistant" || message.role === "tool")
-    && typeof message.content === "string";
+    && typeof message.content === "string"
+    && (message.source === undefined || isMessageSource(message.source));
+}
+
+function isMessageSource(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const source = value as Record<string, unknown>;
+  return source.kind === "skill-invocation" && source.scope === "turn"
+    && typeof source.name === "string" && Boolean(source.name.trim())
+    && Number.isInteger(source.userMessageIndex) && (source.userMessageIndex as number) >= 0;
 }

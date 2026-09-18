@@ -1,7 +1,8 @@
 import type { ModelStreamEvent } from "./model-stream.js";
 import type { VerificationStatus } from "./verification.js";
 export type MessageRole = "system" | "user" | "assistant" | "tool";
-export interface Message { readonly role: MessageRole; readonly content: string; readonly toolCalls?: readonly ToolCall[]; readonly toolCallId?: string; }
+export interface MessageSource { readonly kind: "skill-invocation"; readonly name: string; readonly scope: "turn"; readonly userMessageIndex: number; }
+export interface Message { readonly role: MessageRole; readonly content: string; readonly toolCalls?: readonly ToolCall[]; readonly toolCallId?: string; readonly source?: MessageSource; }
 export interface ToolDefinition { readonly name: string; readonly description: string; readonly parameters: Record<string, unknown>; }
 export interface ToolCall { readonly id: string; readonly name: string; readonly arguments: string; }
 export interface ModelRequest { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[]; readonly toolChoice?: "auto" | "required" | { readonly name: string }; readonly responseFormat?: { readonly type: "json_object" }; }

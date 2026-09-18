@@ -29,6 +29,8 @@ Skills 是指令，不是代码、插件或权限。Skill 不能注册新 Tool�
 - 真实评估：隔离 Bailian/Qwen 完成 `skill` → `read_text_file` → 最终回答；接口评估覆盖模型 Tool、TTY `/skills`/`/skill` 和 NDJSON `skills_list`；
 - 待实现：Profile `skills.enabled`、完整 CLI Skill 正文注入、真实 NDJSON subprocess 评估和最终安全负向评估。
 
+CLI Skill 正文同 Turn 注入已拆分为独立补丁设计：[v0.3.7.1](../v0.3.7.1/README.md)。
+
 ## 确认后继续实施
 
 实现前需要确认以下设计整体可接受：

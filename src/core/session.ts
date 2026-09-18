@@ -15,6 +15,7 @@ import { RequestContextBuilder } from "./request-context.js";
 import { createRequestSnapshot } from "./request-snapshot.js";
 import { validateAndCleanCitations } from "./citations.js";
 import { deriveVerificationStatus } from "./verification.js";
+import { renderSkillContent } from "../skills/render.js";
 import type { ModelStepEvent, SessionEvent } from "./events.js";
 import {
   appendCheckpoint,
@@ -160,6 +161,16 @@ export class ChatSession {
     if (this.activeTurn) throw new RuntimeError({ code: "UNKNOWN", recoverable: true, message: "当前回合仍在执行。" });
     const controller = new AbortController();
     const promise = this.runTurn(input, controller.signal).finally(() => {
+      if (this.activeTurn?.controller === controller) this.activeTurn = undefined;
+    });
+    this.activeTurn = { controller, promise };
+    return promise;
+  }
+
+  async sendWithSkill(input: { readonly name: string; readonly userInput?: string; readonly content: string }): Promise<ModelResponse> {
+    if (this.activeTurn) throw new RuntimeError({ code: "UNKNOWN", recoverable: true, message: "当前回合仍在执行。" });
+    const controller = new AbortController();
+    const promise = this.runTurn(input.userInput?.trim() || `请使用 Skill ${input.name} 处理当前请求。`, controller.signal, input).finally(() => {
       if (this.activeTurn?.controller === controller) this.activeTurn = undefined;
     });
     this.activeTurn = { controller, promise };
@@ -348,17 +359,19 @@ export class ChatSession {
     }
   }
 
-  private async runTurn(input: string, signal: AbortSignal): Promise<ModelResponse> {
+  private async runTurn(input: string, signal: AbortSignal, skill?: { readonly name: string; readonly content: string }): Promise<ModelResponse> {
     this.retrievedProjectSources.clear();
     this.projectSourceReferences.clear();
     const userIndex = this.messages.length;
     this.messages.push({ role: "user", content: input });
+    if (skill) this.messages.push({ role: "system", content: renderSkillContent(skill.name, skill.content), source: { kind: "skill-invocation", name: skill.name, scope: "turn", userMessageIndex: userIndex } });
     const turn: TurnRecord = { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, sequence: this.journal.turns.length + 1, startedAt: new Date().toISOString(), status: "running", userMessageIndex: userIndex, attempts: [], actions: [] };
     (this.journal.turns as TurnRecord[]).push(turn);
     try { await this.persistState(); } catch (error) { this.messages.pop(); (this.journal.turns as TurnRecord[]).pop(); throw error; }
     await this.onSessionEvent?.({ type: "user", input });
     try { await this.compactIfNeeded(signal);
-    const projection = buildContextProjection(this.messages, {
+    const modelMessages = this.messages.filter(message => message.source?.kind !== "skill-invocation" || message.source.userMessageIndex === userIndex);
+    const projection = buildContextProjection(modelMessages, {
       maxTurns: this.context?.checkpoint ? this.contextRetainTurns : this.maxContextTurns,
       maxChars: this.maxContextChars,
     });

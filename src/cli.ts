@@ -23,6 +23,9 @@ import { listBailianModels } from './models/bailian-catalog.js';
 import { listDeepSeekModels } from './models/deepseek-catalog.js';
 import { CliUserQuestionService } from './user-questions/cli.js';
 import { SessionQuery } from './session-query.js';
+import { SkillCatalog } from './skills/catalog.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 export interface CliInterruptController {
   start(): void;
@@ -145,6 +148,21 @@ export async function runCli(
         writeHeader(output, providerId, model, workspaceRoot);
         if (result.replayHistory) writeSessionHistory(output, storedSession);
         draft = '';
+      } else if (result.type === 'invoke-skill') {
+        draft = '';
+        const startedAt = performance.now();
+        const stopLoading = startLoading(output, startedAt, '生成中', logLevel !== 'debug' && !streamingDisplay);
+        stopActiveLoading = stopLoading;
+        const interrupt = interactive ? createCliInterruptController(session, output) : undefined;
+        interrupt?.start();
+        try {
+          const response = await session.sendWithSkill({ name: result.name, ...(result.userInput ? { userInput: result.userInput } : {}), content: result.content });
+          stopLoading(); interrupt?.stop();
+          output.write(`isla> ${response.text}\n\n`);
+        } catch (error) {
+          stopLoading(); interrupt?.stop();
+          errorOutput.write(`Error: ${error instanceof Error ? error.message : 'Unknown error'}\n耗时 ${formatElapsed(startedAt)}\n`);
+        }
       } else if (interactive && command.inputMode === 'raw') {
         draft = line;
       }
@@ -337,15 +355,24 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       if (!protocolStored) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : [], currentWorkspaceKey);
       let useExistingProtocolSession = true;
       let selectedProtocolSession = protocolStored;
+      let activeProtocolSession: ChatSession | undefined;
+      const protocolSkillCatalog = new SkillCatalog({ workspaceRoot: join(config.workspaceRoot ?? process.cwd(), '.isla', 'skills'), personalRoot: join(homedir(), '.isla', 'skills') });
       await runProtocol(process.stdin, process.stdout, undefined, config.provider, config.model, {
         ...(config.workspaceRoot ? { workspace: config.workspaceRoot } : {}),
         capabilities: { toolCalling: runtime.getProviderCapabilities(config.provider)?.toolCalling === true, cancellation: true, streaming: runtime.getProviderCapabilities(config.provider)?.nativeStreaming === true, streamingToolCalls: runtime.getProviderCapabilities(config.provider)?.streamingToolCalls === true, webFetch: config.webFetch?.enabled === true, webSearch: config.webSearch?.enabled === true, userQuestions: true },
+        invokeSkill: async (name, text) => {
+          const definition = protocolSkillCatalog.loadSync(name);
+          if (!definition || !definition.userInvocable) throw new Error('Skill 不存在或不可由用户调用');
+          if (!activeProtocolSession) throw new Error('Protocol session is not configured');
+          return activeProtocolSession.sendWithSkill({ name, ...(text ? { userInput: text } : {}), content: definition.content });
+        },
         createSession: async (approvalService, events, questionService) => {
           if (!useExistingProtocolSession) protocolStored = selectedProtocolSession;
           useExistingProtocolSession = false;
           const activeStored = protocolStored;
           if (!activeStored) throw new Error('Protocol session is not configured');
-          return sessionFactory.create({ stored: activeStored, interactive: false, approvalPolicy: 'ask', approvalService, userQuestionService: questionService, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished, onModelStepEvent: events.onModelStepEvent });
+          activeProtocolSession = sessionFactory.create({ stored: activeStored, interactive: false, approvalPolicy: 'ask', approvalService, userQuestionService: questionService, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished, onModelStepEvent: events.onModelStepEvent });
+          return activeProtocolSession;
         },
         sessionId: () => protocolStored?.id ?? 'unknown',
         sessionQuery: new SessionQuery(protocolStore),

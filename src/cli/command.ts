@@ -33,6 +33,7 @@ export interface CliCommandContext {
 export type CliCommandResult =
   | { readonly type: 'continue' }
   | { readonly type: 'exit' }
+  | { readonly type: 'invoke-skill'; readonly name: string; readonly userInput?: string; readonly content: string }
   | {
       readonly type: 'switch-session';
       readonly session: StoredSession;

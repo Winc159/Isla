@@ -17,6 +17,7 @@ const commands = new Map<string, CliCommand>(
 );
 
 export function findCliCommand(line: string): CliCommand | undefined {
+  if (line === '/skill') return commands.get('/skills');
   return commands.get(line) ?? (line.startsWith('/skills ') || line.startsWith('/skill ') ? commands.get('/skills') : undefined) ?? (line.startsWith('/memory ') ? commands.get('/memory') : undefined) ?? (line.startsWith('/trace ') ? commands.get('/trace') : undefined) ?? (line.startsWith('/config ') ? commands.get('/config') : undefined) ?? (line.startsWith('/profile ') ? commands.get('/profile') : undefined) ?? (line.startsWith('/models ') ? commands.get('/models') : undefined);
 }
 

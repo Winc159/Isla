@@ -24,6 +24,7 @@ export type ProtocolRequest =
   | { readonly type: "task_get"; readonly id: string }
   | { readonly type: "sessions_list"; readonly id: string }
   | { readonly type: "skills_list"; readonly id: string }
+  | { readonly type: "skill_invoke"; readonly id: string; readonly name: string; readonly text?: string }
   | { readonly type: "sessions_search"; readonly id: string; readonly query?: string; readonly status?: TaskStatus }
   | { readonly type: "session_select"; readonly id: string; readonly sessionId: string };
 

@@ -20,7 +20,7 @@ export interface ProtocolSessionEvents {
   readonly onToolFinished: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly onModelStepEvent: (event: ModelStepEvent) => void;
 }
- export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly onNewSession?: () => void; readonly beforeNewSession?: () => Promise<void>; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly questionService?: ProtocolUserQuestionService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents, questionService: ProtocolUserQuestionService) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string; readonly listModels?: (query?: string) => Promise<readonly ModelCatalogEntry[]>; readonly useModel?: (model: string) => Promise<void>; readonly sessionQuery?: SessionQuery; readonly workspaceKey?: string; readonly selectSession?: (sessionId: string) => Promise<boolean> } = {}): Promise<void> {
+ export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly onNewSession?: () => void; readonly beforeNewSession?: () => Promise<void>; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly questionService?: ProtocolUserQuestionService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents, questionService: ProtocolUserQuestionService) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string; readonly listModels?: (query?: string) => Promise<readonly ModelCatalogEntry[]>; readonly useModel?: (model: string) => Promise<void>; readonly sessionQuery?: SessionQuery; readonly workspaceKey?: string; readonly selectSession?: (sessionId: string) => Promise<boolean>; readonly invokeSkill?: (name: string, text?: string) => Promise<import("../core/types.js").ModelResponse> } = {}): Promise<void> {
   const writer = new ProtocolWriter(output);
   const ids = new Set<string>();
   const rl = createInterface({ input, crlfDelay: Infinity });
@@ -118,6 +118,13 @@ export interface ProtocolSessionEvents {
     }
     if (request.type === "question_response") {
       if (!questionService?.resolve(request)) writer.write({ type: "error", id: request.id, code: "UNEXPECTED_QUESTION_RESPONSE", message: "当前没有等待中的用户问题", recoverable: true });
+      continue;
+    }
+    if (request.type === "skill_invoke") {
+      if (active) { writer.write({ type: "error", id: request.id, code: "BUSY", message: "当前已有请求处理中", recoverable: true }); continue; }
+      if (!options.invokeSkill) { writer.write({ type: "error", id: request.id, code: "UNSUPPORTED", message: "当前协议不支持 Skill 调用", recoverable: false }); continue; }
+      const startedAt = performance.now(); writer.write({ type: "response_start", id: request.id }); activeId = request.id;
+      active = (async () => { try { const response = await options.invokeSkill!(request.name, request.text); writer.write({ type: "response_end", id: request.id, text: response.text, elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)), ...(response.verificationStatus ? { verificationStatus: response.verificationStatus } : {}) }); } catch (error) { if (isRuntimeError(error) && error.code === "TURN_CANCELLED") writer.write({ type: "response_cancelled", id: request.id, elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)) }); else writer.write({ type: "error", id: request.id, code: classifyPromptError(error), message: safePromptErrorMessage(error), recoverable: isRuntimeError(error) ? error.recoverable : true }); } })().finally(() => { active = undefined; activeId = undefined; });
       continue;
     }
     if (request.type !== "prompt") continue;
