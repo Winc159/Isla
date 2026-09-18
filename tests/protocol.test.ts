@@ -29,6 +29,7 @@ describe("NDJSON protocol", () => {
     expect(parseProtocolRequest('{"type":"models_list","id":"m1","query":"qwen"}')).toMatchObject({ type: "models_list", query: "qwen" });
     expect(parseProtocolRequest('{"type":"models_use","id":"m2","model":"qwen-plus"}')).toMatchObject({ type: "models_use", model: "qwen-plus" });
     expect(parseProtocolRequest('{"type":"task_get","id":"t1"}')).toMatchObject({ type: "task_get" });
+    expect(parseProtocolRequest('{"type":"skills_list","id":"s1"}')).toMatchObject({ type: "skills_list" });
     expect(() => parseProtocolRequest("bad")).toThrow("INVALID_JSON");
     expect(() => parseProtocolRequest('{"type":"prompt","id":"1","text":""}')).toThrow("INVALID_REQUEST");
     expect(() => parseProtocolRequest('{"type":"approval_response","id":"1","approvalId":"","approved":true}')).toThrow("INVALID_REQUEST");
@@ -40,6 +41,15 @@ describe("NDJSON protocol", () => {
     writer.write({ type: "ready", provider: "fake", model: "fake-model" });
     await writer.flush();
     expect(JSON.parse(output)).toEqual({ type: "ready", provider: "fake", model: "fake-model" });
+  });
+  it("lists the current Session Skill snapshot without returning bodies or paths", async () => {
+    let output = "";
+    const out = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });
+    const session = new ChatSession(new FakeProvider([]), { skillCatalog: { version: 1, entries: [{ name: "release-check", description: "Check release", modelInvocable: true, userInvocable: false }] } });
+    await runProtocol(Readable.from(['{"type":"skills_list","id":"s1"}\n{"type":"exit","id":"e1"}\n']), out, session, "fake", "fake-model");
+    expect(output).toContain('"type":"skills_result"');
+    expect(output).toContain('release-check');
+    expect(output).not.toContain("SKILL.md");
   });
   it("lists and switches models through NDJSON callbacks", async () => {
     let output = "";

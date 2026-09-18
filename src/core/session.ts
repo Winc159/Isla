@@ -42,8 +42,9 @@ export interface ChatSessionOptions {
   readonly context?: SessionContext;
   readonly journal?: SessionJournal;
   readonly task?: TaskBrief | TaskStateV1;
+  readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
-  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief | TaskStateV1 }) => Promise<void>;
+  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief | TaskStateV1; readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1 }) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
   readonly onModelStepEvent?: (event: ModelStepEvent) => void;
   readonly projectRoot?: string;
@@ -92,6 +93,7 @@ export class ChatSession {
       throw new Error("contextRetainTurns must be a positive integer");
     this.context = options.context;
     this.task = options.task;
+    this.skillCatalog = options.skillCatalog;
     this.journal = options.journal ?? { version: 1, turns: [] };
     this.onMessagesChanged = options.onMessagesChanged;
     this.onSessionStateChanged = options.onSessionStateChanged;
@@ -119,7 +121,8 @@ export class ChatSession {
     });
   }
   private readonly onMessagesChanged: ((messages: readonly Message[]) => Promise<void>) | undefined;
-  private readonly onSessionStateChanged: ((state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief | TaskStateV1 }) => Promise<void>) | undefined;
+  private readonly skillCatalog: import("../session-store.js").StoredSkillCatalogV1 | undefined;
+  private readonly onSessionStateChanged: ((state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief | TaskStateV1; readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1 }) => Promise<void>) | undefined;
   private readonly journal: SessionJournal;
   private readonly onSessionEvent: ((event: SessionEvent) => Promise<void>) | undefined;
   private readonly onModelStepEvent: ((event: ModelStepEvent) => void) | undefined;
@@ -146,6 +149,8 @@ export class ChatSession {
     if (!this.task) return undefined;
     return "version" in this.task ? this.task : migrateTaskBrief(this.task, this.messages);
   }
+
+  get skillCatalogSnapshot(): import("../session-store.js").StoredSkillCatalogV1 | undefined { return this.skillCatalog; }
 
   get verificationStatus() {
     return deriveVerificationStatus(this.journal);
@@ -430,7 +435,7 @@ export class ChatSession {
   private async persistState(includeMessages = true): Promise<void> {
     const messages = [...this.messages];
     if (this.onSessionStateChanged) {
-      await this.onSessionStateChanged({ messages, ...(this.context ? { context: this.context } : {}), journal: this.journal, ...(this.task ? { task: this.task } : {}) });
+      await this.onSessionStateChanged({ messages, ...(this.context ? { context: this.context } : {}), journal: this.journal, ...(this.task ? { task: this.task } : {}), ...(this.skillCatalog ? { skillCatalog: this.skillCatalog } : {}) });
     } else if (includeMessages) {
       await this.onMessagesChanged?.(messages);
     }

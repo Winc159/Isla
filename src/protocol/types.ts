@@ -23,6 +23,7 @@ export type ProtocolRequest =
   | { readonly type: "models_use"; readonly id: string; readonly model: string }
   | { readonly type: "task_get"; readonly id: string }
   | { readonly type: "sessions_list"; readonly id: string }
+  | { readonly type: "skills_list"; readonly id: string }
   | { readonly type: "sessions_search"; readonly id: string; readonly query?: string; readonly status?: TaskStatus }
   | { readonly type: "session_select"; readonly id: string; readonly sessionId: string };
 
@@ -47,7 +48,8 @@ export type ProtocolEvent =
   | { readonly type: "models_list"; readonly id: string; readonly models: readonly unknown[] }
   | { readonly type: "model_changed"; readonly id: string; readonly model: string; readonly effective: "next_start" }
   | ProtocolTaskStateEvent
-  | { readonly type: "sessions_result"; readonly id: string; readonly sessions: readonly SessionSearchHit[]; readonly truncated: boolean };
+  | { readonly type: "sessions_result"; readonly id: string; readonly sessions: readonly SessionSearchHit[]; readonly truncated: boolean }
+  | { readonly type: "skills_result"; readonly id: string; readonly skills: readonly { readonly name: string; readonly description: string; readonly modelInvocable: boolean; readonly userInvocable: boolean }[] };
 
 export interface ProtocolTaskStateEvent {
   readonly type: "task_state";

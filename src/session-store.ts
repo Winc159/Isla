@@ -8,6 +8,7 @@ import type { ContextCheckpoint, SessionContext } from "./core/context.js";
 import { validateSessionJournal, type SessionJournal } from "./core/journal.js";
 import type { TaskBrief } from "./core/agent-loop.js";
 import { migrateTaskBrief, type TaskStateV1 } from "./core/task-state.js";
+import type { SkillCatalogEntry } from "./skills/types.js";
 
 export type { ContextCheckpoint, SessionContext } from "./core/context.js";
 
@@ -61,13 +62,24 @@ export interface StoredSessionV4 {
   readonly journal: SessionJournal;
 }
 
-export type StoredSession = StoredSessionV1 | StoredSessionV2 | StoredSessionV3 | StoredSessionV4;
+export interface StoredSkillCatalogV1 {
+  readonly version: 1;
+  readonly entries: readonly Pick<SkillCatalogEntry, "name" | "description" | "modelInvocable" | "userInvocable">[];
+}
+
+export interface StoredSessionV5 extends Omit<StoredSessionV4, "version"> {
+  readonly version: 5;
+  readonly skillCatalog: StoredSkillCatalogV1;
+}
+
+export type StoredSession = StoredSessionV1 | StoredSessionV2 | StoredSessionV3 | StoredSessionV4 | StoredSessionV5;
 
 export interface SessionState {
   readonly messages: readonly Message[];
   readonly context?: SessionContext;
   readonly journal?: SessionJournal;
   readonly task?: TaskBrief | TaskStateV1;
+  readonly skillCatalog?: StoredSkillCatalogV1;
 }
 
 export interface SessionStore {
@@ -102,7 +114,7 @@ export class JsonSessionStore implements SessionStore {
 
   async loadLatest(provider: string, model: string, currentWorkspaceKey?: string): Promise<StoredSession | undefined> {
     const sessions = await this.list(provider, model);
-    return sessions.find(session => currentWorkspaceKey === undefined || (session.version === 4 && session.workspaceKey === currentWorkspaceKey));
+    return sessions.find(session => currentWorkspaceKey === undefined || ((session.version === 4 || session.version === 5) && session.workspaceKey === currentWorkspaceKey));
   }
 
   async listAll(): Promise<StoredSession[]> {
@@ -119,9 +131,20 @@ export class JsonSessionStore implements SessionStore {
     return sessions.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
-  async create(provider: string, model: string, messages: readonly Message[], currentWorkspaceKey?: string): Promise<StoredSessionV4> {
+  async create(provider: string, model: string, messages: readonly Message[], currentWorkspaceKey?: string, skillCatalog?: StoredSkillCatalogV1): Promise<StoredSession> {
     const now = new Date().toISOString();
-    const session: StoredSession = {
+    const session: StoredSession = skillCatalog ? {
+      version: 5,
+      id: `${now.replaceAll(":", "-")}-${randomUUID()}`,
+      createdAt: now,
+      updatedAt: now,
+      provider,
+      model,
+      workspaceKey: currentWorkspaceKey ?? "legacy",
+      messages: [...messages],
+      skillCatalog,
+      journal: emptyJournal(),
+    } : {
       version: 4,
       id: `${now.replaceAll(":", "-")}-${randomUUID()}`,
       createdAt: now,
@@ -135,24 +158,26 @@ export class JsonSessionStore implements SessionStore {
     return this.write(session);
   }
 
-  async save(session: StoredSession, state: SessionState): Promise<StoredSessionV4> {
+  async save(session: StoredSession, state: SessionState): Promise<StoredSession> {
     const updatedAt = nextUpdatedAt(session.updatedAt);
-    return this.write({
-      version: 4,
+    const next = {
+      version: session.version === 5 || state.skillCatalog !== undefined ? 5 : 4,
       id: session.id,
       createdAt: session.createdAt,
       updatedAt,
       provider: session.provider,
       model: session.model,
-      workspaceKey: session.version === 4 ? session.workspaceKey : "legacy",
+      workspaceKey: session.version === 4 || session.version === 5 ? session.workspaceKey : "legacy",
       messages: [...state.messages],
       ...(state.context ? { context: state.context } : {}),
       ...(state.task ? { task: isTaskState(state.task) ? state.task : migrateTaskBrief(state.task, state.messages) } : {}),
       journal: state.journal ?? ('journal' in session ? session.journal : emptyJournal()),
-    }, session.updatedAt);
+      ...((session.version === 5 || state.skillCatalog !== undefined) ? { skillCatalog: state.skillCatalog ?? (session.version === 5 ? session.skillCatalog : { version: 1, entries: [] }) } : {}),
+    } as StoredSessionV4 | StoredSessionV5;
+    return this.write(next, session.updatedAt);
   }
 
-  private async write(session: StoredSessionV4, expectedUpdatedAt?: string): Promise<StoredSessionV4> {
+  private async write(session: StoredSessionV4 | StoredSessionV5, expectedUpdatedAt?: string): Promise<StoredSessionV4 | StoredSessionV5> {
     await mkdir(this.directory, { recursive: true });
     const path = join(this.directory, `${session.id}.json`);
     const temporaryPath = `${path}.${randomUUID()}.tmp`;
@@ -286,6 +311,20 @@ export function parseStoredSession(source: string): StoredSession {
     ...(value.task ? { task: value.task } : {}),
     journal: value.journal,
   };
+  if (value.version === 5) return {
+    version: 5,
+    id: value.id,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    provider: value.provider,
+    model: value.model,
+    workspaceKey: value.workspaceKey,
+    messages: value.messages,
+    ...(value.context ? { context: value.context } : {}),
+    ...(value.task ? { task: value.task } : {}),
+    journal: value.journal,
+    skillCatalog: value.skillCatalog,
+  };
   return {
     version: 3,
     id: value.id,
@@ -304,7 +343,7 @@ function parseSession(source: string): StoredSession { return parseStoredSession
 function isStoredSession(value: unknown): value is StoredSession {
   if (!value || typeof value !== "object") return false;
   const session = value as Record<string, unknown>;
-  return (session.version === 1 || session.version === 2 || session.version === 3 || session.version === 4)
+  return (session.version === 1 || session.version === 2 || session.version === 3 || session.version === 4 || session.version === 5)
     && typeof session.id === "string"
     && typeof session.createdAt === "string"
     && typeof session.updatedAt === "string"
@@ -314,7 +353,8 @@ function isStoredSession(value: unknown): value is StoredSession {
     && session.messages.every(isMessage)
     && (session.version === 1 || session.context === undefined || isSessionContext(session.context))
     && (session.version !== 3 || session.task === undefined || isTaskBrief(session.task))
-    && (session.version !== 4 || (typeof session.workspaceKey === "string" && (session.task === undefined || isTaskState(session.task))))
+    && (session.version !== 4 && session.version !== 5 || (typeof session.workspaceKey === "string" && (session.task === undefined || isTaskState(session.task))))
+    && (session.version !== 5 || isSkillCatalog(session.skillCatalog))
     && (session.version !== 3 && session.version !== 4 || isSessionJournal(session.journal));
 }
 
@@ -323,6 +363,16 @@ function isTaskBrief(value: unknown): value is TaskBrief {
   const task = value as Record<string, unknown>;
   return typeof task.goal === "string" && Array.isArray(task.confirmedConstraints)
     && Array.isArray(task.openQuestions) && Array.isArray(task.assumptions);
+}
+
+function isSkillCatalog(value: unknown): value is StoredSkillCatalogV1 {
+  if (!value || typeof value !== "object") return false;
+  const catalog = value as Record<string, unknown>;
+  return catalog.version === 1 && Array.isArray(catalog.entries) && catalog.entries.every(entry => {
+    if (!entry || typeof entry !== "object") return false;
+    const item = entry as Record<string, unknown>;
+    return typeof item.name === "string" && typeof item.description === "string" && typeof item.modelInvocable === "boolean" && typeof item.userInvocable === "boolean";
+  });
 }
 
 function isTaskState(value: unknown): value is TaskStateV1 {

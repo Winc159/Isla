@@ -88,6 +88,11 @@ export interface ProtocolSessionEvents {
       writer.write({ type: "task_state", id: request.id, sessionId: options.sessionId?.() ?? "unknown", ...(task ? { task } : {}), verificationStatus: currentSession.verificationStatus });
       continue;
     }
+    if (request.type === "skills_list") {
+      const entries = currentSession.skillCatalogSnapshot?.entries ?? [];
+      writer.write({ type: "skills_result", id: request.id, skills: entries.map(entry => ({ name: entry.name, description: entry.description, modelInvocable: entry.modelInvocable, userInvocable: entry.userInvocable })) } as never);
+      continue;
+    }
     if (request.type === "sessions_list" || request.type === "sessions_search") {
       if (!options.sessionQuery || !options.workspaceKey) { writer.write({ type: "error", id: request.id, code: "UNSUPPORTED", message: "当前协议不支持历史 Session 查询", recoverable: false }); continue; }
       try {

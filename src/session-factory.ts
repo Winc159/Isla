@@ -11,6 +11,10 @@ import type { TaskBrief } from './core/agent-loop.js';
 import type { TaskStateV1 } from './core/task-state.js';
 import { SessionQuery } from './session-query.js';
 import { workspaceKey } from './session-workspace.js';
+import { SkillCatalog } from './skills/catalog.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import type { StoredSkillCatalogV1 } from './session-store.js';
 
 export interface SessionFactoryOptions {
   readonly runtime: IslaRuntime;
@@ -50,18 +54,21 @@ export function projectStoredSession(storedSession: StoredSession): {
   readonly context?: import('./core/context.js').SessionContext;
   readonly journal?: import('./core/journal.js').SessionJournal;
   readonly task?: TaskBrief | TaskStateV1;
+  readonly skillCatalog?: StoredSkillCatalogV1;
 } {
   return {
     messages: storedSession.messages,
     ...('context' in storedSession && storedSession.context ? { context: storedSession.context } : {}),
     ...('journal' in storedSession && storedSession.journal ? { journal: storedSession.journal } : {}),
     ...('task' in storedSession && storedSession.task ? { task: storedSession.task } : {}),
+    ...('skillCatalog' in storedSession && storedSession.skillCatalog ? { skillCatalog: storedSession.skillCatalog } : {}),
   };
 }
 
 export function createSessionFactory(options: SessionFactoryOptions) {
   const { runtime, config, sessionStore, memoryRuntime, workspaceRoot, diagnostics } = options;
   const sessionQuery = new SessionQuery(sessionStore);
+  const skillCatalog = new SkillCatalog({ workspaceRoot: join(workspaceRoot, '.isla', 'skills'), personalRoot: join(homedir(), '.isla', 'skills') });
   return {
     create(entry: SessionEntryOptions) {
       let current = entry.stored;
@@ -73,8 +80,9 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         contextRetainTurns: config.contextRetainTurns,
         modelRetries: config.modelRetries,
         enableTools: true,
+        skillCatalog: ('skillCatalog' in current && current.skillCatalog) ? current.skillCatalog : { version: 1, entries: skillCatalog.listSync().entries },
         agentLoop: true,
-        capabilities: createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }),
+        capabilities: createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, skillCatalog, ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }),
         projectRoot: workspaceRoot,
         ...(diagnostics ? { onDiagnostic: diagnostics } : {}),
         permissionPreset: 'workspace',

@@ -9,14 +9,15 @@ import { configCommand } from './config-command.js';
 import { profileCommand } from './profile-command.js';
 import { modelsCommand } from './models-command.js';
 import { taskCommand } from './task-command.js';
+import { skillsCommand } from './skills-command.js';
 
-const registeredCommands = [newCommand, sessionsCommand, taskCommand, memoryCommand, traceCommand, configCommand, profileCommand, modelsCommand, helpCommand, exitCommand];
+const registeredCommands = [newCommand, sessionsCommand, taskCommand, skillsCommand, memoryCommand, traceCommand, configCommand, profileCommand, modelsCommand, helpCommand, exitCommand];
 const commands = new Map<string, CliCommand>(
   registeredCommands.map(command => [command.name, command]),
 );
 
 export function findCliCommand(line: string): CliCommand | undefined {
-  return commands.get(line) ?? (line.startsWith('/memory ') ? commands.get('/memory') : undefined) ?? (line.startsWith('/trace ') ? commands.get('/trace') : undefined) ?? (line.startsWith('/config ') ? commands.get('/config') : undefined) ?? (line.startsWith('/profile ') ? commands.get('/profile') : undefined) ?? (line.startsWith('/models ') ? commands.get('/models') : undefined);
+  return commands.get(line) ?? (line.startsWith('/skills ') || line.startsWith('/skill ') ? commands.get('/skills') : undefined) ?? (line.startsWith('/memory ') ? commands.get('/memory') : undefined) ?? (line.startsWith('/trace ') ? commands.get('/trace') : undefined) ?? (line.startsWith('/config ') ? commands.get('/config') : undefined) ?? (line.startsWith('/profile ') ? commands.get('/profile') : undefined) ?? (line.startsWith('/models ') ? commands.get('/models') : undefined);
 }
 
 export function listCliCommands(): readonly CliCommand[] {
