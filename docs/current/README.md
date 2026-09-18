@@ -1,6 +1,6 @@
-# Isla v0.3.4.1 当前文档入口
+# Isla v0.3.5 当前文档入口
 
-当前设计基线为 v0.3.4：沿用 v0.3.3 的安全精确读写、第一梯队工具与静态组合层，并加入一次性前台命令执行。只以本目录为准：
+当前设计基线为 v0.3.5：沿用 v0.3.4 的安全命令执行和验证门禁，并加入任务状态、workspace 隔离与恢复。只以本目录为准：
 
 - [architecture.md](./architecture.md)：v0.3.0 架构、边界与硬不变量
 - [implementation.md](./implementation.md)：Batch A-D 的实施顺序和停点
@@ -13,10 +13,11 @@
 - [command-execution-v0.3.4.md](./command-execution-v0.3.4.md)：一次性前台命令执行 Tool 的契约、平台适配与安全边界
 - [verification-and-bailian-capabilities-v0.3.4.1.md](./verification-and-bailian-capabilities-v0.3.4.1.md)：修改后验证状态与 Bailian Tool Calling 精确白名单收口
 - [verification-completion-gate-v0.3.4.2.md](./verification-completion-gate-v0.3.4.2.md)：验证感知的完成门禁、未验证交付和协议状态投影
+- [task-state-and-recovery-v0.3.5.md](./task-state-and-recovery-v0.3.5.md)：任务状态、Session v4、workspace 隔离、模型契约收口和跨重启恢复的完成记录
 
 v0.3.3 已新增集中 Capability 组合、`glob_project`、`grep_project` 和 `ask_user_question`。v0.3.4 已接入 `run_command`，支持有界前台执行、Approval、取消和跨平台 Shell 适配。
 
-状态：v0.3.4 已实现并完成离线与授权真实闭环评估；v0.3.4.1 处于设计确认阶段。当前 package 版本仍为 v0.2.9；版本号升级留给独立发布步骤。
+状态：v0.3.5 已实现并完成离线与授权真实 Qwen 评估；当前 package 版本仍为 v0.2.9，版本号升级留给独立发布步骤。
 
 配置说明：正常启动使用 Config/Profile；`.env` 仅用于显式开发、CI 或迁移兼容入口，不是默认配置事实源。切换 Provider、模型或 Base URL 时优先检查当前 Profile。
 

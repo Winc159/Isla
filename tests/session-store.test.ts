@@ -28,7 +28,7 @@ describe("JSON session store", () => {
     });
     const files = await readdir(directory);
     expect(files).toHaveLength(2);
-    expect(JSON.parse(await readFile(join(directory, `${first.id}.json`), "utf8"))).toMatchObject({ version: 3, provider: "deepseek", model: "m1", journal: { version: 1, turns: [] } });
+    expect(JSON.parse(await readFile(join(directory, `${first.id}.json`), "utf8"))).toMatchObject({ version: 4, provider: "deepseek", model: "m1", workspaceKey: "legacy", journal: { version: 1, turns: [] } });
   });
 
   it("rejects stale concurrent saves without leaving temporary files", async () => {
@@ -109,9 +109,9 @@ describe("JSON session store", () => {
         },
       },
     });
-    expect(upgraded.version).toBe(3);
+    expect(upgraded.version).toBe(4);
     await expect(store.loadLatest("deepseek", "m1")).resolves.toMatchObject({
-      version: 3,
+      version: 4,
       context: { checkpoint: { content: "## 当前目标\n继续旧会话" } },
       journal: { version: 1, turns: [] },
     });

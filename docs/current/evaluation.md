@@ -55,3 +55,11 @@ v0.3.0 已实现并完成基线收口。当前 package 版本仍为 v0.2.9，版
 随后切换到 Config 中的 `bailian` Profile，以 NDJSON 发起一次最小 Qwen 真实评估：`ready` 确认 provider=`bailian`、model=`qwen3.7-plus`，收到唯一 `response_end`，回答非空且为预期探针文本 `qwen-real-ok`；未保存回答正文。
 
 同日完成 v0.3.4 真实闭环评估：在临时 fixture 中，Qwen 先调用两次 `read_text_file`，再调用 `edit_text_file` 将 `actual.txt` 修改为目标内容，随后调用 `run_command` 执行 `node check.mjs`。写入和命令执行均触发并批准了独立 Approval，两个 Tool Result 均成功，最终 `response_end` 非空；独立读取 fixture 确认内容为 `passed`。临时 fixture、完整命令输出和会话正文均已清理。
+
+## v0.3.5 任务状态与恢复评估
+
+本版真实评估初次发现模型重复提交任务状态，随后定位为模型可见 schema 不完整以及无必要的 `state` 包装层。修复后，隔离 Bailian `qwen3.7-plus` 评估稳定完成 `update_task_state → glob_project → read_text_file → update_task_state`；两次状态更新均成功，最终 TaskState 为 `completed`，revision=2，4/4 步完成，无稳定错误码或 stderr。
+
+本版采用 DSH `todo_write` 的窄模型契约和整体快照原则，但不引入 DSH 的事件框架、任务树或 UI 投影。Runtime 继续独立维护 revision/CAS，TaskState 只在跨 Turn/恢复请求中注入，同一 Turn 不重复注入完整状态。
+
+本次真实评估不保存 API Key、Config 内容、完整参数、命令输出、文件正文或模型回答正文；临时评估资源已清理。

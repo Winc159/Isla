@@ -6,6 +6,7 @@ import { createWebCapability } from "./web.js";
 import { createUserInteractionCapability } from "./user-interaction.js";
 import type { UserQuestionService } from "../user-questions/types.js";
 import { createCommandExecutionCapability } from "./command-execution.js";
+import { createTaskStateCapability } from "./task-state.js";
 
 export interface ToolCompositionContext {
   readonly workspaceRoot: string;
@@ -20,6 +21,7 @@ const capabilityFactories: readonly ToolCapabilityFactory[] = [
   context => createProjectFilesCapability(context.workspaceRoot),
   context => createProjectDiscoveryCapability(context.workspaceRoot),
   context => createCommandExecutionCapability(context.workspaceRoot),
+  () => createTaskStateCapability(),
   context => context.userQuestionService ? createUserInteractionCapability(context.userQuestionService) : undefined,
   context => context.webFetch?.enabled || context.webSearch?.enabled
     ? createWebCapability({

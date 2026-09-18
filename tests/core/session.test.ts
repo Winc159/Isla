@@ -4,6 +4,7 @@ import { FakeProvider } from "../support/fake-provider.js";
 import type { Message, ModelRequest, ModelResponse, ToolResponse } from "../../src/core/types.js";
 import { createProjectFilesCapability } from "../../src/tools/project-files.js";
 import { createCommandExecutionCapability } from "../../src/tools/command-execution.js";
+import { createTaskStateCapability } from "../../src/tools/task-state.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -104,6 +105,45 @@ describe("session", () => {
     expect(approvedTools).toEqual(["edit_text_file", "run_command"]);
     expect(provider.requests[2]?.messages).toContainEqual(expect.objectContaining({ role: "tool", toolCallId: "edit-once", content: "已编辑 README.md；替换 1 处" }));
   }, 15000);
+
+  it("returns a concise task result without reinjecting the full state in the same turn", async () => {
+    class TaskProvider extends FakeProvider {
+      private calls = 0;
+      async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+        this.requests.push(request);
+        this.calls += 1;
+        if (this.calls === 1) return { text: "", toolCalls: [{ id: "task-1", name: "update_task_state", arguments: JSON.stringify({ goal: "完成任务", status: "active", constraints: [], assumptions: [], openQuestions: [], steps: [{ title: "实现", status: "in_progress" }], blockers: [] }) }] };
+        return { text: "任务状态已保存" };
+      }
+    }
+    const provider = new TaskProvider([]);
+    const response = await new ChatSession(provider, { enableTools: true, capabilities: [createTaskStateCapability()] }).send("开始任务");
+    expect(response.text).toBe("任务状态已保存");
+    expect(provider.requests[1]?.messages).toContainEqual(expect.objectContaining({ role: "tool", toolCallId: "task-1", content: "任务状态已保存：active，步骤 0/1，阻塞 0。" }));
+    expect(provider.requests[1]?.messages.some(message => message.role === "system" && message.content.includes("当前任务状态"))).toBe(false);
+  });
+
+  it("treats an identical task snapshot as idempotent", async () => {
+    const state = { goal: "完成任务", status: "active" as const, constraints: [], assumptions: [], openQuestions: [], steps: [{ title: "实现", status: "in_progress" as const }], blockers: [] };
+    class TaskProvider extends FakeProvider {
+      private calls = 0;
+      async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+        this.requests.push(request);
+        this.calls += 1;
+        if (this.calls <= 2) return { text: "", toolCalls: [{ id: `task-${this.calls}`, name: "update_task_state", arguments: JSON.stringify(state) }] };
+        return { text: "继续执行" };
+      }
+    }
+    const revisions: number[] = [];
+    await new ChatSession(new TaskProvider([]), {
+      enableTools: true,
+      capabilities: [createTaskStateCapability()],
+      onSessionStateChanged: async current => {
+        if (current.task && "version" in current.task) revisions.push(current.task.revision);
+      },
+    }).send("开始任务");
+    expect(new Set(revisions.filter(revision => revision > 0))).toEqual(new Set([1]));
+  });
   it("persists tool calls and results as canonical messages", async () => {
     class ToolProvider extends FakeProvider {
       private calls = 0;

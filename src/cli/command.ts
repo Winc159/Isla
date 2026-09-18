@@ -24,6 +24,7 @@ export interface CliCommandContext {
   readonly configStore?: ConfigStore;
   readonly configPath?: string;
   readonly profileName?: string;
+  readonly workspaceRoot: string;
   readonly openConfig?: (path: string) => Promise<void>;
 }
 

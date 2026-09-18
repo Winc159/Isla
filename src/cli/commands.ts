@@ -8,8 +8,9 @@ import { traceCommand } from './trace-command.js';
 import { configCommand } from './config-command.js';
 import { profileCommand } from './profile-command.js';
 import { modelsCommand } from './models-command.js';
+import { taskCommand } from './task-command.js';
 
-const registeredCommands = [newCommand, sessionsCommand, memoryCommand, traceCommand, configCommand, profileCommand, modelsCommand, helpCommand, exitCommand];
+const registeredCommands = [newCommand, sessionsCommand, taskCommand, memoryCommand, traceCommand, configCommand, profileCommand, modelsCommand, helpCommand, exitCommand];
 const commands = new Map<string, CliCommand>(
   registeredCommands.map(command => [command.name, command]),
 );

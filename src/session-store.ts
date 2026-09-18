@@ -7,6 +7,7 @@ import type { Message } from "./core/types.js";
 import type { ContextCheckpoint, SessionContext } from "./core/context.js";
 import { validateSessionJournal, type SessionJournal } from "./core/journal.js";
 import type { TaskBrief } from "./core/agent-loop.js";
+import { migrateTaskBrief, type TaskStateV1 } from "./core/task-state.js";
 
 export type { ContextCheckpoint, SessionContext } from "./core/context.js";
 
@@ -46,19 +47,33 @@ export interface StoredSessionV3 {
   readonly journal: SessionJournal;
 }
 
-export type StoredSession = StoredSessionV1 | StoredSessionV2 | StoredSessionV3;
+export interface StoredSessionV4 {
+  readonly version: 4;
+  readonly id: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly workspaceKey: string;
+  readonly messages: readonly Message[];
+  readonly context?: SessionContext;
+  readonly task?: TaskStateV1;
+  readonly journal: SessionJournal;
+}
+
+export type StoredSession = StoredSessionV1 | StoredSessionV2 | StoredSessionV3 | StoredSessionV4;
 
 export interface SessionState {
   readonly messages: readonly Message[];
   readonly context?: SessionContext;
   readonly journal?: SessionJournal;
-  readonly task?: TaskBrief;
+  readonly task?: TaskBrief | TaskStateV1;
 }
 
 export interface SessionStore {
   list(provider: string, model: string): Promise<StoredSession[]>;
-  loadLatest(provider: string, model: string): Promise<StoredSession | undefined>;
-  create(provider: string, model: string, messages: readonly Message[]): Promise<StoredSession>;
+  loadLatest(provider: string, model: string, currentWorkspaceKey?: string): Promise<StoredSession | undefined>;
+  create(provider: string, model: string, messages: readonly Message[], currentWorkspaceKey?: string): Promise<StoredSession>;
   save(session: StoredSession, state: SessionState): Promise<StoredSession>;
 }
 
@@ -84,42 +99,45 @@ export class JsonSessionStore implements SessionStore {
     return sessions.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
-  async loadLatest(provider: string, model: string): Promise<StoredSession | undefined> {
-    return (await this.list(provider, model))[0];
+  async loadLatest(provider: string, model: string, currentWorkspaceKey?: string): Promise<StoredSession | undefined> {
+    const sessions = await this.list(provider, model);
+    return sessions.find(session => currentWorkspaceKey === undefined || (session.version === 4 && session.workspaceKey === currentWorkspaceKey));
   }
 
-  async create(provider: string, model: string, messages: readonly Message[]): Promise<StoredSessionV3> {
+  async create(provider: string, model: string, messages: readonly Message[], currentWorkspaceKey?: string): Promise<StoredSessionV4> {
     const now = new Date().toISOString();
     const session: StoredSession = {
-      version: 3,
+      version: 4,
       id: `${now.replaceAll(":", "-")}-${randomUUID()}`,
       createdAt: now,
       updatedAt: now,
       provider,
       model,
+      workspaceKey: currentWorkspaceKey ?? "legacy",
       messages: [...messages],
       journal: emptyJournal(),
     };
     return this.write(session);
   }
 
-  async save(session: StoredSession, state: SessionState): Promise<StoredSessionV3> {
+  async save(session: StoredSession, state: SessionState): Promise<StoredSessionV4> {
     const updatedAt = nextUpdatedAt(session.updatedAt);
     return this.write({
-      version: 3,
+      version: 4,
       id: session.id,
       createdAt: session.createdAt,
       updatedAt,
       provider: session.provider,
       model: session.model,
+      workspaceKey: session.version === 4 ? session.workspaceKey : "legacy",
       messages: [...state.messages],
       ...(state.context ? { context: state.context } : {}),
-      ...(state.task ? { task: state.task } : {}),
+      ...(state.task ? { task: isTaskState(state.task) ? state.task : migrateTaskBrief(state.task, state.messages) } : {}),
       journal: state.journal ?? ('journal' in session ? session.journal : emptyJournal()),
     }, session.updatedAt);
   }
 
-  private async write(session: StoredSessionV3, expectedUpdatedAt?: string): Promise<StoredSessionV3> {
+  private async write(session: StoredSessionV4, expectedUpdatedAt?: string): Promise<StoredSessionV4> {
     await mkdir(this.directory, { recursive: true });
     const path = join(this.directory, `${session.id}.json`);
     const temporaryPath = `${path}.${randomUUID()}.tmp`;
@@ -240,6 +258,19 @@ export function parseStoredSession(source: string): StoredSession {
     journal: emptyJournal(),
   };
   validateSessionJournal(value.journal, value.messages);
+  if (value.version === 4) return {
+    version: 4,
+    id: value.id,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    provider: value.provider,
+    model: value.model,
+    workspaceKey: value.workspaceKey,
+    messages: value.messages,
+    ...(value.context ? { context: value.context } : {}),
+    ...(value.task ? { task: value.task } : {}),
+    journal: value.journal,
+  };
   return {
     version: 3,
     id: value.id,
@@ -258,7 +289,7 @@ function parseSession(source: string): StoredSession { return parseStoredSession
 function isStoredSession(value: unknown): value is StoredSession {
   if (!value || typeof value !== "object") return false;
   const session = value as Record<string, unknown>;
-  return (session.version === 1 || session.version === 2 || session.version === 3)
+  return (session.version === 1 || session.version === 2 || session.version === 3 || session.version === 4)
     && typeof session.id === "string"
     && typeof session.createdAt === "string"
     && typeof session.updatedAt === "string"
@@ -268,7 +299,8 @@ function isStoredSession(value: unknown): value is StoredSession {
     && session.messages.every(isMessage)
     && (session.version === 1 || session.context === undefined || isSessionContext(session.context))
     && (session.version !== 3 || session.task === undefined || isTaskBrief(session.task))
-    && (session.version !== 3 || isSessionJournal(session.journal));
+    && (session.version !== 4 || (typeof session.workspaceKey === "string" && (session.task === undefined || isTaskState(session.task))))
+    && (session.version !== 3 && session.version !== 4 || isSessionJournal(session.journal));
 }
 
 function isTaskBrief(value: unknown): value is TaskBrief {
@@ -276,6 +308,15 @@ function isTaskBrief(value: unknown): value is TaskBrief {
   const task = value as Record<string, unknown>;
   return typeof task.goal === "string" && Array.isArray(task.confirmedConstraints)
     && Array.isArray(task.openQuestions) && Array.isArray(task.assumptions);
+}
+
+function isTaskState(value: unknown): value is TaskStateV1 {
+  if (!value || typeof value !== "object") return false;
+  const task = value as Record<string, unknown>;
+  return task.version === 1 && Number.isInteger(task.revision) && typeof task.goal === "string"
+    && (task.status === "active" || task.status === "blocked" || task.status === "completed")
+    && Array.isArray(task.constraints) && Array.isArray(task.assumptions) && Array.isArray(task.openQuestions)
+    && Array.isArray(task.steps) && Array.isArray(task.blockers) && typeof task.updatedAt === "string";
 }
 
 function emptyJournal(): SessionJournal { return { version: 1, turns: [] }; }

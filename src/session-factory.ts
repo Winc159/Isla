@@ -8,6 +8,7 @@ import type { WebFetchConfig, WebSearchConfig } from './config.js';
 import type { SessionStore, StoredSession } from './session-store.js';
 import type { MemoryRuntime } from './memory/runtime.js';
 import type { TaskBrief } from './core/agent-loop.js';
+import type { TaskStateV1 } from './core/task-state.js';
 
 export interface SessionFactoryOptions {
   readonly runtime: IslaRuntime;
@@ -46,7 +47,7 @@ export function projectStoredSession(storedSession: StoredSession): {
   readonly messages: readonly import('./core/types.js').Message[];
   readonly context?: import('./core/context.js').SessionContext;
   readonly journal?: import('./core/journal.js').SessionJournal;
-  readonly task?: TaskBrief;
+  readonly task?: TaskBrief | TaskStateV1;
 } {
   return {
     messages: storedSession.messages,

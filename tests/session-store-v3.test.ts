@@ -16,8 +16,8 @@ describe("Session v3 journal", () => {
       messages: [...session.messages, { role: "assistant", content: "你好，主人" }],
       journal: { version: 1, turns: [{ id: "turn-1", sequence: 1, startedAt: "2026-09-12T00:00:00.000Z", endedAt: "2026-09-12T00:00:01.000Z", status: "completed", userMessageIndex: 0, assistantMessageIndex: 1, attempts: [], actions: [] }] },
     });
-    expect(saved.version).toBe(3);
-    await expect(store.loadLatest("deepseek", "m1")).resolves.toMatchObject({ version: 3, messages: [{ role: "user" }, { role: "assistant", content: "你好，主人" }], journal: { turns: [{ status: "completed", assistantMessageIndex: 1 }] } });
+    expect(saved.version).toBe(4);
+    await expect(store.loadLatest("deepseek", "m1")).resolves.toMatchObject({ version: 4, messages: [{ role: "user" }, { role: "assistant", content: "你好，主人" }], journal: { turns: [{ status: "completed", assistantMessageIndex: 1 }] } });
   });
 
   it("rejects a corrupted completed turn journal", async () => {

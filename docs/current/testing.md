@@ -236,7 +236,15 @@ ISLA_RUN_REAL_BAILIAN_SMOKE=1
 - 本次收口未重新发起任何真实 Provider 请求；
 - `pack:check`：通过；发布包为 `@winc159/isla@0.2.9`，共 179 个文件；
 
-当前覆盖缺口：TTY `/models` 的输出和 stale cache 组合主要由组件测试与真实操作覆盖，尚无完整 CLI subprocess 专项测试；Bailian 的 Tool 能力也尚未按模型 ID 收窄验证。
+v0.3.4 历史覆盖缺口：TTY `/models` 的输出和 stale cache 组合主要由组件测试与真实操作覆盖，尚无完整 CLI subprocess 专项测试；该阶段的 Bailian Tool 能力收窄已在后续版本补齐。
+
+## 13. 2026-09-18 v0.3.5 任务状态收口
+
+- 全量离线测试：83 个测试文件通过，4 个真实 smoke 文件跳过；371 passed，6 skipped；
+- typecheck、build、pack dry-run、`npm audit` 和 `git diff --check`：通过；
+- 确定性测试覆盖模型侧无 revision、顶层完整 JSON Schema、重复快照幂等和同一 Turn 不重复注入 TaskState；
+- 真实 Bailian `qwen3.7-plus`：隔离 Config/Profile、workspace、Session 目录和 memory 配置，完成 `update_task_state` → `glob_project` → `read_text_file` → `update_task_state`；两次状态更新成功，最终 `completed`、revision=2、4/4 步完成；
+- 真实评估仅保留模型 ID、Tool 名、状态枚举、步骤计数和稳定错误码；临时配置、fixture、命令输出和会话正文均已清理。
 
 ## 11. 2026-09-16 第一梯队工具验证
 

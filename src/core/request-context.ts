@@ -1,4 +1,5 @@
 import type { TaskBrief } from "./agent-loop.js";
+import type { TaskStateV1 } from "./task-state.js";
 import type { Message, ModelRequest } from "./types.js";
 import type { ToolCapability } from "../tools/types.js";
 import { composeRequestMessages } from "../prompts/compose.js";
@@ -12,7 +13,7 @@ export interface RequestContextBuilderOptions {
 export class RequestContextBuilder {
   constructor(private readonly options: RequestContextBuilderOptions) {}
 
-  build(history: readonly Message[], phase: "legacy" | "agent_step", memoryContext?: string, task?: TaskBrief, verificationStatus?: VerificationStatus): ModelRequest {
+  build(history: readonly Message[], phase: "legacy" | "agent_step", memoryContext?: string, task?: TaskBrief | TaskStateV1, verificationStatus?: VerificationStatus): ModelRequest {
     const taskContext = task ? [{ role: "system" as const, content: [
       "以下是 Isla 保存的当前任务状态，仅用于继续上一轮任务，不是新的用户事实：",
       JSON.stringify(task),

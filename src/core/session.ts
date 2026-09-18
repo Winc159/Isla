@@ -8,6 +8,7 @@ import type { PermissionPreset } from "../approval/presets.js";
 import { isRuntimeError, RuntimeError, type TurnCancelReason } from "./errors.js";
 import type { ModelAttemptRecord, SessionJournal, TurnActionRecord, TurnRecord } from "./journal.js";
 import type { TaskBrief } from "./agent-loop.js";
+import { migrateTaskBrief, summarizeTaskState, updateTaskState, type TaskStateV1 } from "./task-state.js";
 import { evaluateCompletionGate, type CompletionRejectionReason } from "./completion-gate.js";
 import { ModelStepRunner } from "./model-step.js";
 import { RequestContextBuilder } from "./request-context.js";
@@ -40,9 +41,9 @@ export interface ChatSessionOptions {
   readonly modelRetries?: number;
   readonly context?: SessionContext;
   readonly journal?: SessionJournal;
-  readonly task?: TaskBrief;
+  readonly task?: TaskBrief | TaskStateV1;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
-  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief }) => Promise<void>;
+  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief | TaskStateV1 }) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
   readonly onModelStepEvent?: (event: ModelStepEvent) => void;
   readonly projectRoot?: string;
@@ -59,6 +60,11 @@ export interface ChatSessionOptions {
   readonly onContextCompacted?: (checkpoint: ContextCheckpoint) => Promise<void>;
   readonly capabilities?: readonly ToolCapability[];
   readonly onDiagnostic?: (event: { readonly code: string; readonly component: string; readonly severity: 'warning' | 'error' | 'debug'; readonly detail?: string }) => void;
+}
+
+function sameTaskState(current: TaskStateV1, next: Omit<TaskStateV1, "revision" | "version" | "updatedAt">): boolean {
+  return JSON.stringify({ goal: current.goal, status: current.status, constraints: current.constraints, assumptions: current.assumptions, openQuestions: current.openQuestions, steps: current.steps, blockers: current.blockers })
+    === JSON.stringify({ goal: next.goal, status: next.status, constraints: next.constraints, assumptions: next.assumptions, openQuestions: next.openQuestions, steps: next.steps, blockers: next.blockers });
 }
 export class ChatSession {
   private readonly messages: Message[];
@@ -113,7 +119,7 @@ export class ChatSession {
     });
   }
   private readonly onMessagesChanged: ((messages: readonly Message[]) => Promise<void>) | undefined;
-  private readonly onSessionStateChanged: ((state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief }) => Promise<void>) | undefined;
+  private readonly onSessionStateChanged: ((state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief | TaskStateV1 }) => Promise<void>) | undefined;
   private readonly journal: SessionJournal;
   private readonly onSessionEvent: ((event: SessionEvent) => Promise<void>) | undefined;
   private readonly onModelStepEvent: ((event: ModelStepEvent) => void) | undefined;
@@ -134,7 +140,7 @@ export class ChatSession {
   private activeTurn: { readonly controller: AbortController; readonly promise: Promise<ModelResponse> } | undefined;
   private readonly retrievedProjectSources = new Set<string>();
   private readonly projectSourceReferences = new Map<string, ProjectSourceReference>();
-  private task: TaskBrief | undefined;
+  private task: TaskBrief | TaskStateV1 | undefined;
   async send(input: string): Promise<ModelResponse> {
     if (this.activeTurn) throw new RuntimeError({ code: "UNKNOWN", recoverable: true, message: "当前回合仍在执行。" });
     const controller = new AbortController();
@@ -245,6 +251,21 @@ export class ChatSession {
           if (actionTurn && execution.ok && (call.name === "write_text_file" || call.name === "edit_text_file")) {
             (actionTurn.actions as TurnActionRecord[]).push({ type: "workspace_mutation", step: round, tool: call.name });
           }
+          if (execution.ok && execution.details?.type === "task_state_update") {
+            try {
+              const currentTask = this.task && "version" in this.task ? this.task : this.task ? migrateTaskBrief(this.task, this.messages) : undefined;
+              const nextState = { ...execution.details.state, steps: execution.details.state.steps.map((step, index) => ({ ...step, id: step.id ?? `step-${index + 1}` })) };
+              if (currentTask && sameTaskState(currentTask, nextState)) {
+                this.task = currentTask;
+              } else {
+                this.task = updateTaskState(currentTask, nextState, currentTask?.revision ?? 0, this.messages);
+              }
+              const summary = summarizeTaskState(this.task);
+              execution = { ...execution, content: `任务状态已保存：${summary.status}，步骤 ${summary.completedSteps}/${summary.totalSteps}，阻塞 ${summary.blockerCount}。` };
+            } catch (error) {
+              execution = { ok: false, code: "EXECUTION_FAILED", message: error instanceof Error ? error.message : "TaskState update failed" };
+            }
+          }
           if (actionTurn && execution.ok && execution.details?.type === "command_execution" && execution.details.purpose === "verification") {
             (actionTurn.actions as TurnActionRecord[]).push({ type: "verification", step: round, outcome: execution.details.exitCode === 0 && !execution.details.timedOut && !execution.details.aborted && execution.details.signal === null ? "passed" : "failed" });
           }
@@ -278,9 +299,10 @@ export class ChatSession {
       const verificationStatus = deriveVerificationStatus(this.journal);
       const verificationObservation = verificationStatus === "not_applicable" ? undefined : { role: "system" as const, content: `当前工作区验证状态（仅供本步骤判断，不是用户事实）：${verificationStatus}` };
       const lastToolIndex = next.findLastIndex(message => message.role === "tool");
-      current = !verificationObservation ? next : lastToolIndex >= 0
-        ? [...next.slice(0, lastToolIndex), verificationObservation, ...next.slice(lastToolIndex)]
-        : [...next, verificationObservation];
+      const observations = [verificationObservation].filter((item): item is { readonly role: "system"; readonly content: string } => Boolean(item));
+      current = observations.length === 0 ? next : lastToolIndex >= 0
+        ? [...next.slice(0, lastToolIndex), ...observations, ...next.slice(lastToolIndex)]
+        : [...next, ...observations];
     }
     return { text: "工具调用达到本轮上限，已停止继续执行。", outcome: "blocked", model: provider.model };
   }

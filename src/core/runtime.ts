@@ -17,7 +17,7 @@ export interface CreateSessionOptions {
   readonly context?: import("./context.js").SessionContext;
   readonly journal?: SessionJournal;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
-  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: import("./context.js").SessionContext; readonly journal?: SessionJournal; readonly task?: import("./agent-loop.js").TaskBrief }) => Promise<void>;
+  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: import("./context.js").SessionContext; readonly journal?: SessionJournal; readonly task?: import("./agent-loop.js").TaskBrief | import("./task-state.js").TaskStateV1 }) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
   readonly projectRoot?: string;
   readonly onToolsUsed?: (tools: readonly string[]) => void;

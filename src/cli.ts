@@ -17,6 +17,7 @@ import { parseCliStartupArgs } from './cli-args.js';
 import { runSetupWizard } from './cli/setup-wizard.js';
 import { createApplication, createStderrDiagnosticSink } from './application.js';
 import { createSessionFactory } from './session-factory.js';
+import { workspaceKey } from './session-workspace.js';
 import type { ChatSession } from './core/session.js';
 import { listBailianModels } from './models/bailian-catalog.js';
 import { listDeepSeekModels } from './models/deepseek-catalog.js';
@@ -76,7 +77,8 @@ export async function runCli(
   webSearch?: import('./config.js').WebSearchConfig,
 ): Promise<void> {
   writeHeader(output, providerId, model, workspaceRoot, webFetch?.enabled === true);
-  const latestSession = await sessionStore.loadLatest(providerId, model);
+  const currentWorkspaceKey = workspaceKey(workspaceRoot);
+  const latestSession = await sessionStore.loadLatest(providerId, model, currentWorkspaceKey);
   let storedSession: StoredSession;
   if (latestSession) {
     storedSession = latestSession;
@@ -85,6 +87,7 @@ export async function runCli(
       providerId,
       model,
       systemPrompt ? [{ role: 'system', content: systemPrompt }] : [],
+      currentWorkspaceKey,
     );
   }
   const interactive = isInteractiveInput(input);
@@ -126,6 +129,7 @@ export async function runCli(
           ...(configStore ? { configStore } : {}),
           ...(configPath ? { configPath } : {}),
           ...(profileName ? { profileName } : {}),
+          workspaceRoot,
           ...(openConfig ? { openConfig } : {}),
       });
       if (result.type === 'exit') {
@@ -325,14 +329,15 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       if (protocol !== 'ndjson') throw new Error('Unsupported protocol');
       const protocolStore = application.sessions;
       const sessionFactory = createSessionFactory({ runtime, config, sessionStore: protocolStore, memoryRuntime, workspaceRoot: config.workspaceRoot ?? process.cwd(), diagnostics: event => application.diagnostics.emit(event) });
-      let protocolStored = await protocolStore.loadLatest(config.provider, config.model);
-      if (!protocolStored) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []);
+      const currentWorkspaceKey = workspaceKey(config.workspaceRoot ?? process.cwd());
+      let protocolStored = await protocolStore.loadLatest(config.provider, config.model, currentWorkspaceKey);
+      if (!protocolStored) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : [], currentWorkspaceKey);
       let useExistingProtocolSession = true;
       await runProtocol(process.stdin, process.stdout, undefined, config.provider, config.model, {
         ...(config.workspaceRoot ? { workspace: config.workspaceRoot } : {}),
         capabilities: { toolCalling: runtime.getProviderCapabilities(config.provider)?.toolCalling === true, cancellation: true, streaming: runtime.getProviderCapabilities(config.provider)?.nativeStreaming === true, streamingToolCalls: runtime.getProviderCapabilities(config.provider)?.streamingToolCalls === true, webFetch: config.webFetch?.enabled === true, webSearch: config.webSearch?.enabled === true, userQuestions: true },
         createSession: async (approvalService, events, questionService) => {
-          if (!useExistingProtocolSession) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []);
+          if (!useExistingProtocolSession) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : [], currentWorkspaceKey);
           useExistingProtocolSession = false;
           const activeStored = protocolStored;
           if (!activeStored) throw new Error('Protocol session is not configured');

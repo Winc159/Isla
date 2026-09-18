@@ -1,4 +1,5 @@
 import type { CliCommand } from './command.js';
+import { workspaceKey } from '../session-workspace.js';
 
 export const newCommand: CliCommand = {
   name: '/new',
@@ -12,6 +13,7 @@ export const newCommand: CliCommand = {
       context.providerId,
       context.model,
       messages,
+      workspaceKey(context.workspaceRoot),
     );
     return { type: 'switch-session', session, replayHistory: false };
   },
