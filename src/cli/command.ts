@@ -3,6 +3,7 @@ import type { SessionStore, StoredSession } from '../session-store.js';
 import type { MemoryStore } from '../memory/store.js';
 import type { MemoryRuntime } from '../memory/runtime.js';
 import type { ConfigStore } from '../config-store.js';
+import type { SessionQuery } from '../session-query.js';
 
 export type InteractiveInput = Readable & {
   readonly isTTY: true;
@@ -16,6 +17,7 @@ export interface CliCommandContext {
   readonly model: string;
   readonly systemPrompt: string | undefined;
   readonly sessionStore: SessionStore;
+  readonly sessionQuery?: SessionQuery;
   readonly memoryStore?: MemoryStore;
   readonly memoryRuntime?: MemoryRuntime;
   readonly commandLine?: string;

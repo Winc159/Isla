@@ -72,6 +72,7 @@ export interface SessionState {
 
 export interface SessionStore {
   list(provider: string, model: string): Promise<StoredSession[]>;
+  listAll?: () => Promise<StoredSession[]>;
   loadLatest(provider: string, model: string, currentWorkspaceKey?: string): Promise<StoredSession | undefined>;
   create(provider: string, model: string, messages: readonly Message[], currentWorkspaceKey?: string): Promise<StoredSession>;
   save(session: StoredSession, state: SessionState): Promise<StoredSession>;
@@ -102,6 +103,20 @@ export class JsonSessionStore implements SessionStore {
   async loadLatest(provider: string, model: string, currentWorkspaceKey?: string): Promise<StoredSession | undefined> {
     const sessions = await this.list(provider, model);
     return sessions.find(session => currentWorkspaceKey === undefined || (session.version === 4 && session.workspaceKey === currentWorkspaceKey));
+  }
+
+  async listAll(): Promise<StoredSession[]> {
+    await mkdir(this.directory, { recursive: true });
+    const files = (await readdir(this.directory)).filter(file => file.endsWith(".json"));
+    const sessions: StoredSession[] = [];
+    for (const file of files) {
+      try { sessions.push(parseSession(await readFile(join(this.directory, file), "utf8"))); }
+      catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        this.onWarning(`Skipped invalid Isla session ${file}: ${message}`);
+      }
+    }
+    return sessions.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
   async create(provider: string, model: string, messages: readonly Message[], currentWorkspaceKey?: string): Promise<StoredSessionV4> {

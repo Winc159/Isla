@@ -28,6 +28,7 @@ describe("NDJSON protocol", () => {
     expect(parseProtocolRequest('{"type":"prompt","id":"1","text":"你好"}')).toMatchObject({ type: "prompt" });
     expect(parseProtocolRequest('{"type":"models_list","id":"m1","query":"qwen"}')).toMatchObject({ type: "models_list", query: "qwen" });
     expect(parseProtocolRequest('{"type":"models_use","id":"m2","model":"qwen-plus"}')).toMatchObject({ type: "models_use", model: "qwen-plus" });
+    expect(parseProtocolRequest('{"type":"task_get","id":"t1"}')).toMatchObject({ type: "task_get" });
     expect(() => parseProtocolRequest("bad")).toThrow("INVALID_JSON");
     expect(() => parseProtocolRequest('{"type":"prompt","id":"1","text":""}')).toThrow("INVALID_REQUEST");
     expect(() => parseProtocolRequest('{"type":"approval_response","id":"1","approvalId":"","approved":true}')).toThrow("INVALID_REQUEST");
@@ -229,6 +230,46 @@ describe("NDJSON protocol", () => {
       { type: "tool_end", id: "p1", tool: "write_text_file", ok: true },
     ]));
     expect(events.some(event => event.type === "response_end" && event.id === "p1")).toBe(true);
+  });
+
+  it("projects task summary in ready and returns the full task through task_get", async () => {
+    let output = "";
+    const out = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });
+    const task = {
+      version: 1 as const,
+      revision: 2,
+      goal: "完成恢复验证",
+      status: "active" as const,
+      constraints: [{ text: "不得泄露正文" }],
+      assumptions: [],
+      openQuestions: [],
+      steps: [
+        { id: "inspect", title: "检查", status: "completed" as const },
+        { id: "verify", title: "验证", status: "in_progress" as const },
+      ],
+      blockers: [],
+      updatedAt: "2026-09-18T00:00:00.000Z",
+    };
+    const session = new ChatSession(new FakeProvider([]), {
+      task,
+      journal: { version: 1, turns: [{ id: "turn-1", sequence: 1, startedAt: "2026-09-18T00:00:00.000Z", status: "completed", userMessageIndex: 0, attempts: [], actions: [{ type: "workspace_mutation", step: 1, tool: "edit_text_file" }] }] },
+    });
+    await runProtocol(Readable.from(['{"type":"task_get","id":"t1"}\n{"type":"exit","id":"e1"}\n']), out, session, "fake", "fake-model", { sessionId: () => "session-1" });
+    const events = output.trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>);
+    expect(events[0]).toMatchObject({ type: "ready", task: { status: "active", goal: "完成恢复验证", completedSteps: 1, totalSteps: 2, blockerCount: 0 }, verificationStatus: "not_run" });
+    expect(events[1]).toMatchObject({ type: "task_state", id: "t1", sessionId: "session-1", task, verificationStatus: "not_run" });
+    expect(events[1]).not.toHaveProperty("messages");
+    expect(events[1]).not.toHaveProperty("journal");
+  });
+
+  it("omits task fields from ready and returns an empty task shape when no task exists", async () => {
+    let output = "";
+    const out = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });
+    await runProtocol(Readable.from(['{"type":"task_get","id":"t1"}\n{"type":"exit","id":"e1"}\n']), out, new ChatSession(new FakeProvider([])), "fake", "fake-model");
+    const events = output.trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>);
+    expect(events[0]).not.toHaveProperty("task");
+    expect(events[0]).not.toHaveProperty("verificationStatus");
+    expect(events[1]).toEqual({ type: "task_state", id: "t1", sessionId: "unknown", verificationStatus: "not_applicable" });
   });
 
   it("pauses and resumes the same turn through question_request and question_response", async () => {

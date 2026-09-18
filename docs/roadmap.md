@@ -313,6 +313,24 @@
 
 实施、测试和完成信号以 `docs/current/architecture.md`、`docs/current/implementation.md` 与 `docs/current/testing.md` 为准。
 
+## v0.3.6：Workspace-scoped Session Discovery and Recall（已实现并完成真实评估）
+
+现实需求：v0.3.5 已能按 `provider + model + workspaceKey` 自动恢复最新任务，但用户无法在会话增多后可靠定位非最新任务，模型也不能按需找回同一 workspace 的旧工作。更换 Provider 或模型后，旧 Session 仍属于同一项目，却不会出现在当前自动恢复路径中。
+
+已实现范围：
+
+1. 补齐 v0.3.5 文档声明的 `ready.task`、`task_get/task_state`；
+2. 新增 workspace 授权的只读 Session Query seam，第一版直接扫描现有 JSON Session；
+3. 同一 workspace 的显式搜索可跨 Provider/模型，但不改变现有自动恢复规则；
+4. TTY `/sessions` 增加关键词和 TaskStatus 过滤；NDJSON 增加 list/search/select；
+5. 用户入口稳定后，增加 `search_session_history` 与 `read_session_context` 两个窄模型 Tool；
+6. 历史资料标记为不可信，不能授权操作或绕过 Approval、Sandbox、Permission 和 read-before-edit；
+7. 不引入 SQLite FTS、事件 trace、Session 树、自动跨会话合并、Skills、Goal 自动续跑、后台 Job、PTY、并行 Tool或子 Agent。
+
+完成信号：不同 workspace 严格隔离；同 workspace 跨模型可显式发现；TTY/NDJSON 语义一致；模型结果有界且不泄露 Tool 参数、命令输出或秘密；Session Store 保持唯一持久化事实源；全部离线门禁通过。
+
+设计、实施顺序、测试矩阵和真实评估记录见 `docs/proposals/v0.3.6/`。模型侧历史 Tool 已通过 snake_case 契约修正并完成 Qwen 两步真实评估。
+
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。

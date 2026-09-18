@@ -1,5 +1,16 @@
 import type { ToolExecutionErrorCode } from "../tools/types.js";
 import type { UserQuestion, UserQuestionAnswer } from "../user-questions/types.js";
+import type { TaskStateV1, TaskStatus } from "../core/task-state.js";
+import type { VerificationStatus } from "../core/verification.js";
+import type { SessionSearchHit } from "../session-query.js";
+
+export interface ProtocolTaskSummary {
+  readonly status: TaskStatus;
+  readonly goal: string;
+  readonly completedSteps: number;
+  readonly totalSteps: number;
+  readonly blockerCount: number;
+}
 
 export type ProtocolRequest =
   | { readonly type: "prompt"; readonly id: string; readonly text: string }
@@ -9,12 +20,16 @@ export type ProtocolRequest =
   | { readonly type: "new_session"; readonly id: string }
   | { readonly type: "exit"; readonly id: string }
   | { readonly type: "models_list"; readonly id: string; readonly query?: string }
-  | { readonly type: "models_use"; readonly id: string; readonly model: string };
+  | { readonly type: "models_use"; readonly id: string; readonly model: string }
+  | { readonly type: "task_get"; readonly id: string }
+  | { readonly type: "sessions_list"; readonly id: string }
+  | { readonly type: "sessions_search"; readonly id: string; readonly query?: string; readonly status?: TaskStatus }
+  | { readonly type: "session_select"; readonly id: string; readonly sessionId: string };
 
 export type ProtocolToolErrorCode = ToolExecutionErrorCode;
 
 export type ProtocolEvent =
-  | { readonly type: "ready"; readonly provider: string; readonly model: string; readonly workspace?: string; readonly capabilities?: ProtocolCapabilities }
+  | { readonly type: "ready"; readonly provider: string; readonly model: string; readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly task?: ProtocolTaskSummary; readonly verificationStatus?: VerificationStatus }
   | { readonly type: "response_start"; readonly id: string }
   | { readonly type: "model_step_start"; readonly id: string; readonly step: number; readonly attempt: number }
   | { readonly type: "model_delta"; readonly id: string; readonly step: number; readonly attempt: number; readonly text: string; readonly provisional: true }
@@ -30,7 +45,17 @@ export type ProtocolEvent =
   | { readonly type: "error"; readonly id?: string; readonly code: string; readonly message: string; readonly recoverable: boolean }
   | { readonly type: "bye"; readonly id: string }
   | { readonly type: "models_list"; readonly id: string; readonly models: readonly unknown[] }
-  | { readonly type: "model_changed"; readonly id: string; readonly model: string; readonly effective: "next_start" };
+  | { readonly type: "model_changed"; readonly id: string; readonly model: string; readonly effective: "next_start" }
+  | ProtocolTaskStateEvent
+  | { readonly type: "sessions_result"; readonly id: string; readonly sessions: readonly SessionSearchHit[]; readonly truncated: boolean };
+
+export interface ProtocolTaskStateEvent {
+  readonly type: "task_state";
+  readonly id: string;
+  readonly sessionId: string;
+  readonly task?: TaskStateV1;
+  readonly verificationStatus: VerificationStatus;
+}
 
 export interface ProtocolCapabilities {
   readonly toolCalling: boolean;

@@ -141,6 +141,16 @@ export class ChatSession {
   private readonly retrievedProjectSources = new Set<string>();
   private readonly projectSourceReferences = new Map<string, ProjectSourceReference>();
   private task: TaskBrief | TaskStateV1 | undefined;
+
+  get taskState(): TaskStateV1 | undefined {
+    if (!this.task) return undefined;
+    return "version" in this.task ? this.task : migrateTaskBrief(this.task, this.messages);
+  }
+
+  get verificationStatus() {
+    return deriveVerificationStatus(this.journal);
+  }
+
   async send(input: string): Promise<ModelResponse> {
     if (this.activeTurn) throw new RuntimeError({ code: "UNKNOWN", recoverable: true, message: "当前回合仍在执行。" });
     const controller = new AbortController();

@@ -9,6 +9,8 @@ import type { SessionStore, StoredSession } from './session-store.js';
 import type { MemoryRuntime } from './memory/runtime.js';
 import type { TaskBrief } from './core/agent-loop.js';
 import type { TaskStateV1 } from './core/task-state.js';
+import { SessionQuery } from './session-query.js';
+import { workspaceKey } from './session-workspace.js';
 
 export interface SessionFactoryOptions {
   readonly runtime: IslaRuntime;
@@ -59,6 +61,7 @@ export function projectStoredSession(storedSession: StoredSession): {
 
 export function createSessionFactory(options: SessionFactoryOptions) {
   const { runtime, config, sessionStore, memoryRuntime, workspaceRoot, diagnostics } = options;
+  const sessionQuery = new SessionQuery(sessionStore);
   return {
     create(entry: SessionEntryOptions) {
       let current = entry.stored;
@@ -71,7 +74,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         modelRetries: config.modelRetries,
         enableTools: true,
         agentLoop: true,
-        capabilities: createToolCapabilities({ workspaceRoot, ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }),
+        capabilities: createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }),
         projectRoot: workspaceRoot,
         ...(diagnostics ? { onDiagnostic: diagnostics } : {}),
         permissionPreset: 'workspace',

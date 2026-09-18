@@ -7,12 +7,17 @@ import { createUserInteractionCapability } from "./user-interaction.js";
 import type { UserQuestionService } from "../user-questions/types.js";
 import { createCommandExecutionCapability } from "./command-execution.js";
 import { createTaskStateCapability } from "./task-state.js";
+import { createSessionQueryCapability } from "./session-query.js";
+import type { SessionQuery } from "../session-query.js";
 
 export interface ToolCompositionContext {
   readonly workspaceRoot: string;
   readonly webFetch?: WebFetchConfig;
   readonly webSearch?: WebSearchConfig;
   readonly userQuestionService?: UserQuestionService;
+  readonly sessionQuery?: SessionQuery;
+  readonly workspaceKey?: string;
+  readonly currentSessionId?: () => string;
 }
 
 export type ToolCapabilityFactory = (context: ToolCompositionContext) => ToolCapability | undefined;
@@ -22,6 +27,7 @@ const capabilityFactories: readonly ToolCapabilityFactory[] = [
   context => createProjectDiscoveryCapability(context.workspaceRoot),
   context => createCommandExecutionCapability(context.workspaceRoot),
   () => createTaskStateCapability(),
+  context => context.sessionQuery && context.workspaceKey && context.currentSessionId ? createSessionQueryCapability(context.sessionQuery, context.workspaceKey, context.currentSessionId) : undefined,
   context => context.userQuestionService ? createUserInteractionCapability(context.userQuestionService) : undefined,
   context => context.webFetch?.enabled || context.webSearch?.enabled
     ? createWebCapability({

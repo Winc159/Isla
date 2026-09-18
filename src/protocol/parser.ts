@@ -12,6 +12,9 @@ export function parseProtocolRequest(line: string): ProtocolRequest {
   if (item.type === "new_session" || item.type === "exit") return item as ProtocolRequest;
   if (item.type === "models_list" && (item.query === undefined || typeof item.query === "string")) return item as ProtocolRequest;
   if (item.type === "models_use" && typeof item.model === "string" && item.model.trim()) return item as ProtocolRequest;
+  if (item.type === "task_get" || item.type === "sessions_list") return item as ProtocolRequest;
+  if (item.type === "sessions_search" && (item.query === undefined || typeof item.query === "string") && (item.status === undefined || item.status === "active" || item.status === "blocked" || item.status === "completed")) return item as ProtocolRequest;
+  if (item.type === "session_select" && typeof item.sessionId === "string" && item.sessionId.trim()) return item as ProtocolRequest;
   throw new Error("INVALID_REQUEST");
 }
 

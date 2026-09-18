@@ -19,6 +19,8 @@ v0.3.3 已新增集中 Capability 组合、`glob_project`、`grep_project` 和 `
 
 状态：v0.3.5 已实现并完成离线与授权真实 Qwen 评估；当前 package 版本仍为 v0.2.9，版本号升级留给独立发布步骤。
 
+当前版本进展：v0.3.6 的 Batch A-E 已实现，已完成 workspace 内 Session 发现、TTY/NDJSON 搜索选择和两个只读模型 Tool；隔离 Bailian/Qwen 已稳定完成 `search_session_history → read_session_context → response_end`。设计、实施步骤、测试矩阵和评估记录见 [`docs/proposals/v0.3.6/`](../proposals/v0.3.6/README.md)。
+
 配置说明：正常启动使用 Config/Profile；`.env` 仅用于显式开发、CI 或迁移兼容入口，不是默认配置事实源。切换 Provider、模型或 Base URL 时优先检查当前 Profile。
 
 v0.3.0 已按以下顺序完成：

@@ -7,18 +7,21 @@ import { ProtocolApprovalService } from "./approval.js";
 import { performance } from "node:perf_hooks";
 import type { ToolExecutionResult } from "../tools/types.js";
 import { isRuntimeError, type RuntimeErrorCode } from "../core/errors.js";
-import type { ProtocolCapabilities } from "./types.js";
+import type { ProtocolCapabilities, ProtocolTaskSummary } from "./types.js";
 import type { ModelStepEvent } from "../core/events.js";
 import type { ModelCatalogEntry } from "../models/catalog.js";
 import { ProtocolUserQuestionService } from "./questions.js";
+import { summarizeTaskState, type TaskStateV1 } from "../core/task-state.js";
+import type { VerificationStatus } from "../core/verification.js";
+import type { SessionSearchHit, SessionQuery } from "../session-query.js";
+import type { TaskStatus } from "../core/task-state.js";
 export interface ProtocolSessionEvents {
   readonly onToolStarted: (tool: string, callId: string, argumentsJson?: string) => void;
   readonly onToolFinished: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly onModelStepEvent: (event: ModelStepEvent) => void;
 }
- export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly onNewSession?: () => void; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly questionService?: ProtocolUserQuestionService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents, questionService: ProtocolUserQuestionService) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string; readonly listModels?: (query?: string) => Promise<readonly ModelCatalogEntry[]>; readonly useModel?: (model: string) => Promise<void> } = {}): Promise<void> {
+ export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly onNewSession?: () => void; readonly beforeNewSession?: () => Promise<void>; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly questionService?: ProtocolUserQuestionService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents, questionService: ProtocolUserQuestionService) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string; readonly listModels?: (query?: string) => Promise<readonly ModelCatalogEntry[]>; readonly useModel?: (model: string) => Promise<void>; readonly sessionQuery?: SessionQuery; readonly workspaceKey?: string; readonly selectSession?: (sessionId: string) => Promise<boolean> } = {}): Promise<void> {
   const writer = new ProtocolWriter(output);
-  writer.write({ type: "ready", provider, model, ...(options.workspace ? { workspace: options.workspace } : {}), ...(options.capabilities ? { capabilities: options.capabilities } : {}) });
   const ids = new Set<string>();
   const rl = createInterface({ input, crlfDelay: Infinity });
   const iterator = rl[Symbol.asyncIterator]();
@@ -38,6 +41,7 @@ export interface ProtocolSessionEvents {
   };
   let currentSession = options.createSession ? await options.createSession(approvalService as ProtocolApprovalService, events, questionService as ProtocolUserQuestionService) : session;
   if (!currentSession) throw new Error("Protocol session is not configured");
+  writer.write({ type: "ready", provider, model, ...(options.workspace ? { workspace: options.workspace } : {}), ...(options.capabilities ? { capabilities: options.capabilities } : {}), ...taskReadyFields(currentSession) });
   while (true) {
     const next = await iterator.next();
     if (next.done) {
@@ -79,9 +83,29 @@ export interface ProtocolSessionEvents {
       else try { await options.useModel(request.model); writer.write({ type: "model_changed", id: request.id, model: request.model, effective: "next_start" } as never); } catch { writer.write({ type: "error", id: request.id, code: "MODEL_CHANGE_FAILED", message: "模型切换失败", recoverable: true }); }
       continue;
     }
+    if (request.type === "task_get") {
+      const task = currentSession.taskState;
+      writer.write({ type: "task_state", id: request.id, sessionId: options.sessionId?.() ?? "unknown", ...(task ? { task } : {}), verificationStatus: currentSession.verificationStatus });
+      continue;
+    }
+    if (request.type === "sessions_list" || request.type === "sessions_search") {
+      if (!options.sessionQuery || !options.workspaceKey) { writer.write({ type: "error", id: request.id, code: "UNSUPPORTED", message: "当前协议不支持历史 Session 查询", recoverable: false }); continue; }
+      try {
+        const result = await options.sessionQuery.search({ workspaceKey: options.workspaceKey, ...(request.type === "sessions_search" && request.query ? { query: request.query } : {}), ...(request.type === "sessions_search" && request.status ? { status: request.status } : {}) });
+        writer.write({ type: "sessions_result", id: request.id, sessions: result.sessions, truncated: result.truncated });
+      } catch (error) { writer.write({ type: "error", id: request.id, code: error instanceof Error && "code" in error ? String((error as { code: unknown }).code) : "SESSION_QUERY_FAILED", message: "历史 Session 查询失败", recoverable: true }); }
+      continue;
+    }
+    if (request.type === "session_select") {
+      if (active) { writer.write({ type: "error", id: request.id, code: "BUSY", message: "当前已有请求处理中", recoverable: true }); continue; }
+      if (!options.selectSession || !(await options.selectSession(request.sessionId))) { writer.write({ type: "error", id: request.id, code: "SESSION_QUERY_NOT_FOUND", message: "历史 Session 不存在", recoverable: true }); continue; }
+      if (options.createSession) currentSession = await options.createSession(approvalService as ProtocolApprovalService, events, questionService as ProtocolUserQuestionService);
+      writer.write({ type: "session_changed", id: request.id, sessionId: options.sessionId?.() ?? request.sessionId });
+      continue;
+    }
     if (request.type === "new_session") {
       if (active) { writer.write({ type: "error", id: request.id, code: "BUSY", message: "当前已有请求处理中", recoverable: true }); continue; }
-      approvalService?.resetRemembered(); approvalService?.reopen(); questionService?.reopen(); currentSession = options.createSession ? await options.createSession(approvalService as ProtocolApprovalService, events, questionService as ProtocolUserQuestionService) : currentSession; options.onNewSession?.(); writer.write({ type: "session_changed", id: request.id, sessionId: options.sessionId?.() ?? request.id }); continue;
+      approvalService?.resetRemembered(); approvalService?.reopen(); questionService?.reopen(); await options.beforeNewSession?.(); currentSession = options.createSession ? await options.createSession(approvalService as ProtocolApprovalService, events, questionService as ProtocolUserQuestionService) : currentSession; options.onNewSession?.(); writer.write({ type: "session_changed", id: request.id, sessionId: options.sessionId?.() ?? request.id }); continue;
     }
     if (request.type === "approval_response") {
       if (!approvalService?.resolve(request)) writer.write({ type: "error", id: request.id, code: "UNEXPECTED_APPROVAL", message: "当前没有等待中的审批", recoverable: true });
@@ -107,6 +131,23 @@ export interface ProtocolSessionEvents {
     })().finally(() => { active = undefined; activeId = undefined; });
   }
   await writer.flush();
+}
+
+function taskReadyFields(session: ChatSession): { readonly task?: ProtocolTaskSummary; readonly verificationStatus?: VerificationStatus } {
+  const task = session.taskState;
+  const summary = task ? summarizeTaskState(task) : undefined;
+  return {
+    ...(summary ? {
+      task: {
+        status: summary.status,
+        goal: summary.goal,
+        completedSteps: summary.completedSteps,
+        totalSteps: summary.totalSteps,
+        blockerCount: summary.blockerCount,
+      },
+    } : {}),
+    ...(session.verificationStatus !== "not_applicable" ? { verificationStatus: session.verificationStatus } : {}),
+  };
 }
 
 function toolTraceFields(tool: string, argumentsJson?: string): { readonly query?: string; readonly url?: string } {

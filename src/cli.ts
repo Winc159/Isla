@@ -22,6 +22,7 @@ import type { ChatSession } from './core/session.js';
 import { listBailianModels } from './models/bailian-catalog.js';
 import { listDeepSeekModels } from './models/deepseek-catalog.js';
 import { CliUserQuestionService } from './user-questions/cli.js';
+import { SessionQuery } from './session-query.js';
 
 export interface CliInterruptController {
   start(): void;
@@ -78,6 +79,7 @@ export async function runCli(
 ): Promise<void> {
   writeHeader(output, providerId, model, workspaceRoot, webFetch?.enabled === true);
   const currentWorkspaceKey = workspaceKey(workspaceRoot);
+  const sessionQuery = new SessionQuery(sessionStore);
   const latestSession = await sessionStore.loadLatest(providerId, model, currentWorkspaceKey);
   let storedSession: StoredSession;
   if (latestSession) {
@@ -121,6 +123,7 @@ export async function runCli(
           model,
           systemPrompt,
           sessionStore,
+          sessionQuery,
           commandLine: line,
           ...(memoryRuntime?.store ? { memoryStore: memoryRuntime.store } : {}),
           ...(memoryRuntime ? { memoryRuntime } : {}),
@@ -333,17 +336,31 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       let protocolStored = await protocolStore.loadLatest(config.provider, config.model, currentWorkspaceKey);
       if (!protocolStored) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : [], currentWorkspaceKey);
       let useExistingProtocolSession = true;
+      let selectedProtocolSession = protocolStored;
       await runProtocol(process.stdin, process.stdout, undefined, config.provider, config.model, {
         ...(config.workspaceRoot ? { workspace: config.workspaceRoot } : {}),
         capabilities: { toolCalling: runtime.getProviderCapabilities(config.provider)?.toolCalling === true, cancellation: true, streaming: runtime.getProviderCapabilities(config.provider)?.nativeStreaming === true, streamingToolCalls: runtime.getProviderCapabilities(config.provider)?.streamingToolCalls === true, webFetch: config.webFetch?.enabled === true, webSearch: config.webSearch?.enabled === true, userQuestions: true },
         createSession: async (approvalService, events, questionService) => {
-          if (!useExistingProtocolSession) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : [], currentWorkspaceKey);
+          if (!useExistingProtocolSession) protocolStored = selectedProtocolSession;
           useExistingProtocolSession = false;
           const activeStored = protocolStored;
           if (!activeStored) throw new Error('Protocol session is not configured');
           return sessionFactory.create({ stored: activeStored, interactive: false, approvalPolicy: 'ask', approvalService, userQuestionService: questionService, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished, onModelStepEvent: events.onModelStepEvent });
         },
         sessionId: () => protocolStored?.id ?? 'unknown',
+        sessionQuery: new SessionQuery(protocolStore),
+        workspaceKey: currentWorkspaceKey,
+        selectSession: async sessionId => {
+          const selected = await new SessionQuery(protocolStore).getSession(currentWorkspaceKey, sessionId);
+          if (!selected) return false;
+          selectedProtocolSession = selected;
+          useExistingProtocolSession = false;
+          return true;
+        },
+        beforeNewSession: async () => {
+          selectedProtocolSession = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : [], currentWorkspaceKey);
+          useExistingProtocolSession = false;
+        },
         ...(config.provider === 'bailian' ? { listModels: query => listBailianModels(config.baseURL, config.apiKey, query ? { search: query } : {}), useModel: async nextModel => { const models = await listBailianModels(config.baseURL, config.apiKey); if (!models.some(entry => entry.id === nextModel)) throw new Error('模型不在当前目录中'); const store = new ConfigStore(startup.configPath ?? defaultConfigPath()); const loaded = await store.load(); const name = startup.profileName ?? (loaded.status === 'ready' ? loaded.config.defaultProfile : undefined); if (loaded.status !== 'ready' || !name || loaded.config.profiles[name]?.provider !== 'bailian') throw new Error('Bailian Profile 不可用'); await store.save({ ...loaded.config, profiles: { ...loaded.config.profiles, [name]: { ...loaded.config.profiles[name]!, model: nextModel } } }, loaded.revision); } } : config.provider === 'deepseek' ? { listModels: query => listDeepSeekModels(config.apiKey).then(models => query ? models.filter(entry => entry.id.toLowerCase().includes(query.toLowerCase())) : models), useModel: async nextModel => { const models = await listDeepSeekModels(config.apiKey); if (!models.some(entry => entry.id === nextModel)) throw new Error('模型不在当前目录中'); const store = new ConfigStore(startup.configPath ?? defaultConfigPath()); const loaded = await store.load(); const name = startup.profileName ?? (loaded.status === 'ready' ? loaded.config.defaultProfile : undefined); if (loaded.status !== 'ready' || !name || loaded.config.profiles[name]?.provider !== 'deepseek') throw new Error('DeepSeek Profile 不可用'); await store.save({ ...loaded.config, profiles: { ...loaded.config.profiles, [name]: { ...loaded.config.profiles[name]!, model: nextModel } } }, loaded.revision); } } : {}),
       });
       application.close();

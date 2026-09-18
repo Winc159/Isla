@@ -6,13 +6,19 @@ import {
   type CliCommand,
   type InteractiveInput,
 } from './command.js';
+import { workspaceKey } from '../session-workspace.js';
 
 export const sessionsCommand: CliCommand = {
   name: '/sessions',
   description: '选择历史会话',
   inputMode: 'raw',
   async execute(context) {
-    const sessions = await context.sessionStore.list(context.providerId, context.model);
+    const filter = parseFilter(context.commandLine);
+    let sessions: StoredSession[];
+    if (context.sessionQuery && (filter.query || filter.status)) {
+      const result = await context.sessionQuery.search({ workspaceKey: workspaceKey(context.workspaceRoot), ...(filter.query ? { query: filter.query } : {}), ...(filter.status ? { status: filter.status } : {}) });
+      sessions = (await Promise.all(result.sessions.map(hit => context.sessionQuery!.getSession(workspaceKey(context.workspaceRoot), hit.sessionId)))).filter((session): session is StoredSession => session !== undefined);
+    } else sessions = await context.sessionStore.list(context.providerId, context.model);
     if (!isInteractiveInput(context.input)) {
       writeSessionList(context.output, sessions, context.currentSession.id);
       return { type: 'continue' };
@@ -29,6 +35,14 @@ export const sessionsCommand: CliCommand = {
     return { type: 'switch-session', session: selected, replayHistory: true };
   },
 };
+
+function parseFilter(commandLine: string | undefined): { readonly query?: string; readonly status?: 'active' | 'blocked' | 'completed' } {
+  const text = commandLine?.replace(/^\/sessions\s*/, '').trim() ?? '';
+  if (!text) return {};
+  const statusMatch = text.match(/(?:^|\s)status:(active|blocked|completed)(?:\s|$)/);
+  const query = text.replace(/(?:^|\s)status:(?:active|blocked|completed)(?=\s|$)/g, ' ').trim();
+  return { ...(query ? { query } : {}), ...(statusMatch ? { status: statusMatch[1] as 'active' | 'blocked' | 'completed' } : {}) };
+}
 
 function selectSession(
   input: InteractiveInput,

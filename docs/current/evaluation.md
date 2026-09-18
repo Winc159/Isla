@@ -63,3 +63,15 @@ v0.3.0 已实现并完成基线收口。当前 package 版本仍为 v0.2.9，版
 本版采用 DSH `todo_write` 的窄模型契约和整体快照原则，但不引入 DSH 的事件框架、任务树或 UI 投影。Runtime 继续独立维护 revision/CAS，TaskState 只在跨 Turn/恢复请求中注入，同一 Turn 不重复注入完整状态。
 
 本次真实评估不保存 API Key、Config 内容、完整参数、命令输出、文件正文或模型回答正文；临时评估资源已清理。
+
+## v0.3.6 Session Discovery 评估
+
+隔离 Bailian/Qwen 评估验证了 workspace 内旧 Session 的 NDJSON 搜索，以及模型侧：
+
+```text
+search_session_history → read_session_context → response_end
+```
+
+首次长链路未终态，根因是模型 schema 使用 camelCase，而 Qwen 生成 snake_case 参数。改为 `session_id` 和 `anchor_message_index` 后重新评估通过。评估只保留事件类型、Tool 名、命中结果布尔值和稳定终态，不保存搜索词、历史正文或回答正文。
+
+v0.3.6 离线门禁为 85 个测试文件通过、5 个真实 smoke 跳过，378 passed、7 skipped；typecheck、build、diff check 和 audit 通过。`pack:check` 的本机 EPERM 仍留给发布前环境复核。

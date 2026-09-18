@@ -264,3 +264,13 @@ v0.3.4 历史覆盖缺口：TTY `/models` 的输出和 stale cache 组合主要�
 - 真实 Qwen `qwen3.7-plus`：在临时 fixture 中完成 `read_text_file` → `edit_text_file` → `run_command`，两次 Approval 均通过，检查命令 exit code 为 0，最终响应非空；
 - 临时 fixture、评估脚本、完整命令输出和会话正文已清理；
 - 真实 DeepSeek smoke 曾返回 HTTP 402 `Insufficient Balance`，未重试或切换 Provider。
+
+## 14. 2026-09-18 v0.3.6 Session Discovery 收口
+
+- 全量离线测试：85 个测试文件通过，5 个真实 smoke 文件跳过；378 passed、7 skipped；
+- 针对性协议、Session Query、Tool 和 Agent Loop 回归：54 passed；
+- typecheck、build、`git diff --check` 和 `npm audit --omit=dev`：通过，audit 为 0 vulnerabilities；
+- 隔离 Bailian/Qwen 真实评估：NDJSON Session 搜索通过；Qwen 完成 `search_session_history` → `read_session_context` → `response_end`；
+- 首次真实长链路失败定位为模型 Tool schema 的 camelCase 与 Qwen snake_case 参数不一致，修正为 `session_id` / `anchor_message_index` 后通过；
+- 临时 Config、workspace、Session、memory 和评估正文均已清理；
+- `pack:check` 曾受本机 npm cache 临时目录 EPERM 影响，发布前需重跑。
