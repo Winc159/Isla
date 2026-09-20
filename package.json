@@ -26,6 +26,7 @@
     "test:smoke:real": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run tests/smoke/real-provider.test.ts",
     "test:smoke:real:ndjson": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run tests/smoke/real-ndjson.test.ts",
     "test:protocol": "vitest run tests/protocol.test.ts",
+    "test:pty": "npm run build && vitest run tests/pty tests/support/pty-driver.test.ts --pool=forks",
     "check": "npm run typecheck && npm run test",
     "pack:check": "npm pack --dry-run"
   },
@@ -40,6 +41,7 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "msw": "^2.10.2",
+    "node-pty": "^1.1.0",
     "tsx": "^4.20.3",
     "typescript": "^5.9.2",
     "vitest": "^4.1.11"
