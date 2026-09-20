@@ -55,6 +55,7 @@ export function createEditTextFileTool(rootDirectory: string, observations: Text
         if (options.signal?.aborted) throw new Error("当前回合已取消。");
         const beforeReplace = await readFile(target, "utf8");
         if (!observations.matches(target, beforeReplace)) throw new ToolFailure("FILE_STALE", "target file changed while editing; read it again before retrying");
+        await sandbox.assertWriteTarget(target);
         await rename(temporary, target);
         observations.observe(target, updated);
       } finally {

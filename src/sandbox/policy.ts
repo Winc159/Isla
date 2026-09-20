@@ -29,6 +29,21 @@ export class SandboxPolicy {
     return this.resolvePath(path, "list");
   }
 
+  async assertWriteTarget(target: string): Promise<void> {
+    this.assertInsideRoot(target);
+    const parent = await realpath(dirname(target));
+    this.assertInsideRoot(parent);
+    try {
+      const actual = await realpath(target);
+      const normalizedActual = process.platform === "win32" ? actual.toLowerCase() : actual;
+      const normalizedTarget = process.platform === "win32" ? target.toLowerCase() : target;
+      if (normalizedActual !== normalizedTarget) throw sandboxDenied("sandbox refuses writing through a symlink");
+    } catch (error) {
+      if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+  }
+
   private async findExistingPath(candidate: string): Promise<string | undefined> {
     try { return await realpath(candidate); } catch { return undefined; }
   }

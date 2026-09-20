@@ -331,6 +331,14 @@
 
 设计、实施顺序、测试矩阵和真实评估记录见 `docs/proposals/v0.3.6/`。模型侧历史 Tool 已通过 snake_case 契约修正并完成 Qwen 两步真实评估。
 
+## v0.3.9：3.x Closeout and 4.0 Readiness（规划中）
+
+v0.3.6 的 Session Discovery、v0.3.7/v0.3.7.1 的 Skill 能力和 v0.3.8 的真实 PTY 测试已经补齐 3.x 的主要用户路径。下一步不继续堆叠 Agent 能力，而是统一 3.x 的稳定契约、入口语义、Provider capability、Session/Config 兼容边界、隐私门禁和跨平台验证事实。
+
+v0.3.9 只做收口与 4.0 准入，不新增 Agent Registry、Job、Workflow、Subagent、并行 Tool、完整事件溯源 Session、Cordis 或通用事件总线。DSH 只作为事实/观察分离、取消收敛、能力声明和资源所有权的不变量参考。
+
+设计、实施和测试门禁见 [`docs/proposals/v0.3.9/`](proposals/v0.3.9/README.md)。通过 3.9 P0 门禁不自动进入 4.0；必须再由真实新需求和用户确认选择 4.0 主题。
+
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。

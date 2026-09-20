@@ -1,6 +1,8 @@
-# Isla v0.3.5 当前文档入口
+# Isla v0.3.x 当前文档入口
 
-当前设计基线为 v0.3.5：沿用 v0.3.4 的安全命令执行和验证门禁，并加入任务状态、workspace 隔离与恢复。只以本目录为准：
+本目录保留 v0.3.0-v0.3.5 的稳定设计基线；v0.3.6-v0.3.8 的增量设计和评估分别位于 `docs/proposals/`。3.x 收口基线见 [v0.3.9 proposal](../proposals/v0.3.9/README.md)。
+
+当前历史基线为 v0.3.5：沿用 v0.3.4 的安全命令执行和验证门禁，并加入任务状态、workspace 隔离与恢复。只以本目录中的对应文档为准：
 
 - [architecture.md](./architecture.md)：v0.3.0 架构、边界与硬不变量
 - [implementation.md](./implementation.md)：Batch A-D 的实施顺序和停点

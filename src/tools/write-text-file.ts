@@ -27,6 +27,7 @@ export function createWriteTextFileTool(rootDirectory: string, observations?: Te
       const target = await sandbox.resolvePath(value.path, "write");
       if (options.signal?.aborted) throw new Error("当前回合已取消。");
       await mkdir(dirname(target), { recursive: true });
+      await sandbox.assertWriteTarget(target);
       await writeFile(target, value.content, "utf8");
       observations?.observe(target, value.content);
       return `已写入 ${value.path}`;

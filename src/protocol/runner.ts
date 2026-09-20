@@ -23,6 +23,7 @@ export interface ProtocolSessionEvents {
  export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly onNewSession?: () => void; readonly beforeNewSession?: () => Promise<void>; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly questionService?: ProtocolUserQuestionService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents, questionService: ProtocolUserQuestionService) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string; readonly listModels?: (query?: string) => Promise<readonly ModelCatalogEntry[]>; readonly useModel?: (model: string) => Promise<void>; readonly sessionQuery?: SessionQuery; readonly workspaceKey?: string; readonly selectSession?: (sessionId: string) => Promise<boolean>; readonly invokeSkill?: (name: string, text?: string) => Promise<import("../core/types.js").ModelResponse> } = {}): Promise<void> {
   const writer = new ProtocolWriter(output);
   const ids = new Set<string>();
+  const maxRequestIds = 4096;
   const rl = createInterface({ input, crlfDelay: Infinity });
   const iterator = rl[Symbol.asyncIterator]();
   let active: Promise<void> | undefined;
@@ -56,6 +57,7 @@ export interface ProtocolSessionEvents {
     let request;
     try { request = parseProtocolRequest(line); } catch (error) { writer.write({ type: "error", code: String(error instanceof Error ? error.message : error), message: "请求格式无效", recoverable: true }); continue; }
     if (ids.has(request.id)) { writer.write({ type: "error", id: request.id, code: "DUPLICATE_ID", message: "请求 id 已使用", recoverable: false }); continue; }
+    if (ids.size >= maxRequestIds) { writer.write({ type: "error", id: request.id, code: "REQUEST_ID_LIMIT", message: "协议请求 id 数量已达到上限，请重启协议会话", recoverable: false }); continue; }
     ids.add(request.id);
     if (request.type === "exit") {
       approvalService?.rejectPending("协议请求已退出");
@@ -79,6 +81,7 @@ export interface ProtocolSessionEvents {
       continue;
     }
     if (request.type === "models_use") {
+      if (active) { writer.write({ type: "error", id: request.id, code: "BUSY", message: "当前已有请求处理中", recoverable: true }); continue; }
       if (!options.useModel) writer.write({ type: "error", id: request.id, code: "UNSUPPORTED", message: "当前 Provider 不支持切换模型", recoverable: false });
       else try { await options.useModel(request.model); writer.write({ type: "model_changed", id: request.id, model: request.model, effective: "next_start" } as never); } catch { writer.write({ type: "error", id: request.id, code: "MODEL_CHANGE_FAILED", message: "模型切换失败", recoverable: true }); }
       continue;

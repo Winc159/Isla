@@ -79,8 +79,11 @@ export function defaultConfigPath(): string { return join(homedir(), '.isla', 'c
 export function revisionOf(source: string): string { return createHash('sha256').update(source, 'utf8').digest('hex'); }
 
 function safeIoMessage(error: unknown): string {
-  if (error instanceof Error && error.message && !/[\r\n]/.test(error.message)) return error.message;
-  return 'Unable to read Isla config';
+  if (error instanceof Error && error.message && !/[\r\n]/.test(error.message)) {
+    const message = error.message.replace(/(?:[A-Za-z]:)?[^\s']*[\\/][^']*/g, '<path>');
+    return message.length <= 240 ? message : message.slice(0, 240);
+  }
+  return 'Unable to access Isla config';
 }
 
 async function acquireLock(lockPath: string): Promise<FileHandle> {
