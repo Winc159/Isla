@@ -1,6 +1,33 @@
 # Isla
 
-Isla 是一个使用 TypeScript 开发的个人 Agent Runtime。目前通过 CLI 提供进程内连续对话，支持 OpenAI、DeepSeek 和兼容 OpenAI 接口的本地模型服务。
+Isla 是一个使用 TypeScript 开发的个人 Agent Runtime。目前通过 CLI 提供进程内连续对话，支持 OpenAI、DeepSeek、阿里云百炼和兼容 OpenAI 接口的本地模型服务。当前版本为 `0.3.9`。
+
+## 安装
+
+Isla 当前没有发布到公共 npm Registry。可以在可信开发机上构建私有 npm 安装包，再复制到 Linux x64、macOS ARM64 或其他目标主机安装。目标主机需要 Node.js 24 或更高版本：
+
+```bash
+npm ci
+npm run build
+npm pack
+```
+
+以上命令会在项目根目录生成 `winc159-isla-0.3.9.tgz`。将该文件复制到目标主机后全局安装：
+
+```bash
+npm install --global ./winc159-isla-0.3.9.tgz
+isla
+```
+
+也可以不全局安装，直接执行：
+
+```bash
+npx --package ./winc159-isla-0.3.9.tgz isla
+```
+
+安装包不包含 API Key、Profile、Session、Memory、测试文件或本地评估资料。首次运行会在当前用户目录创建 `~/.isla/`。不要把 Windows 上的 `~/.isla/` 私人配置和会话打入安装包后传到其他主机。
+
+`package.json` 保持 `private: true`，用于阻止意外执行 `npm publish`；这不影响 `npm pack` 和本地 `.tgz` 安装。若未来需要私有 Registry，应另行配置 Registry、访问权限和发布流程。
 
 ## 使用
 
@@ -71,6 +98,17 @@ npm run build
 npm run pack:check
 git diff --check
 ```
+
+Linux x64 和 macOS ARM64 的完成验收必须在对应目标系统上执行，不能由 Windows 构建结果代替。复制 `.tgz` 后至少验证：
+
+```bash
+node --version
+npm install --global ./winc159-isla-0.3.9.tgz
+isla
+printf '{"type":"exit"}\n' | isla --protocol ndjson
+```
+
+首次执行 `isla` 时先完成本地 Profile 向导；NDJSON 命令应输出 `ready` 和 `bye`。随后使用目标主机上的隔离 Profile 完成一次普通问答、一次只读 Tool 调用、取消、Session 恢复和退出。真实 Provider 请求仍需用户明确授权，并且凭据只保存在目标主机本地配置中。
 
 真实 DeepSeek smoke 必须显式开启，并使用当前 shell 已配置的环境变量：
 

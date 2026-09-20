@@ -19,7 +19,7 @@
 
 v0.3.3 已新增集中 Capability 组合、`glob_project`、`grep_project` 和 `ask_user_question`。v0.3.4 已接入 `run_command`，支持有界前台执行、Approval、取消和跨平台 Shell 适配。
 
-状态：v0.3.5 已实现并完成离线与授权真实 Qwen 评估；当前 package 版本仍为 v0.2.9，版本号升级留给独立发布步骤。
+状态：v0.3.9 已完成 3.x 核心收口；package 版本已更新为 v0.3.9，可通过 `npm pack` 生成私有分发的 `.tgz`，尚未发布到 npm Registry。Windows 验证已完成，Linux x64 与 macOS ARM64 仍需在对应目标系统验收。
 
 当前版本进展：v0.3.6 的 Batch A-E 已实现，已完成 workspace 内 Session 发现、TTY/NDJSON 搜索选择和两个只读模型 Tool；隔离 Bailian/Qwen 已稳定完成 `search_session_history → read_session_context → response_end`。设计、实施步骤、测试矩阵和评估记录见 [`docs/proposals/v0.3.6/`](../proposals/v0.3.6/README.md)。
 
