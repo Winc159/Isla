@@ -2,6 +2,7 @@ import { DEFAULT_MAX_CONTEXT_TURNS } from './core/session.js';
 import { DEFAULT_CONTEXT_RETAIN_TURNS, DEFAULT_MAX_CONTEXT_CHARS } from './core/context.js';
 import { DEFAULT_PERSONALITY_PROMPT } from './prompts/base.js';
 import { isIP } from 'node:net';
+import type { McpServerConfig } from './mcp/types.js';
 
 export interface WebFetchConfig {
   readonly enabled: boolean;
@@ -50,6 +51,7 @@ export type OpenAIConfig = {
   readonly workspaceRoot?: string;
   readonly webFetch?: WebFetchConfig;
   readonly webSearch?: WebSearchConfig;
+  readonly mcpServers?: readonly McpServerConfig[];
 };
 export type DeepSeekConfig = {
   readonly provider: 'deepseek';
@@ -75,6 +77,7 @@ export type DeepSeekConfig = {
   readonly workspaceRoot?: string;
   readonly webFetch?: WebFetchConfig;
   readonly webSearch?: WebSearchConfig;
+  readonly mcpServers?: readonly McpServerConfig[];
 };
 export type BailianConfig = {
   readonly provider: 'bailian';
@@ -101,6 +104,7 @@ export type BailianConfig = {
   readonly workspaceRoot?: string;
   readonly webFetch?: WebFetchConfig;
   readonly webSearch?: WebSearchConfig;
+  readonly mcpServers?: readonly McpServerConfig[];
 };
 export type LocalConfig = {
   readonly provider: 'local';
@@ -127,6 +131,7 @@ export type LocalConfig = {
   readonly workspaceRoot?: string;
   readonly webFetch?: WebFetchConfig;
   readonly webSearch?: WebSearchConfig;
+  readonly mcpServers?: readonly McpServerConfig[];
 };
 export type AppConfig = OpenAIConfig | DeepSeekConfig | BailianConfig | LocalConfig;
 
@@ -164,6 +169,7 @@ export interface ProfileWebFetchSettingsV1 {
 }
 export interface ProfileWebSearchSettingsV1 { readonly enabled?: boolean; readonly provider?: 'deepseek-official'; readonly maxResults?: number; readonly timeoutMs?: number; readonly maxOutputChars?: number; }
 export interface ProfileToolsSettingsV1 { readonly webFetch?: ProfileWebFetchSettingsV1; readonly webSearch?: ProfileWebSearchSettingsV1; }
+export interface ProfileMcpSettingsV1 { readonly servers?: readonly McpServerConfig[]; }
 
 interface StartupProfileBaseV1 {
   readonly model: string;
@@ -173,6 +179,7 @@ interface StartupProfileBaseV1 {
   readonly memory?: ProfileMemorySettingsV1;
   readonly appearance?: ProfileAppearanceSettingsV1;
   readonly tools?: ProfileToolsSettingsV1;
+  readonly mcp?: ProfileMcpSettingsV1;
 }
 
 export type StartupProfileV1 =
@@ -247,6 +254,7 @@ export function profileToAppConfig(profile: StartupProfileV1): AppConfig {
     // internal so a normal user does not need to maintain a host allowlist.
     ...(profile.tools?.webFetch ? { webFetch: normalizeWebFetchConfig(profile.tools.webFetch) } : { webFetch: normalizeWebFetchConfig({ enabled: true, allowedHosts: ['*'] }) }),
     ...(profile.tools?.webSearch?.enabled && profile.provider === 'deepseek' ? { webSearch: normalizeWebSearchConfig(profile.tools.webSearch, profile.apiKey, profile.model) } : {}),
+    ...(profile.mcp?.servers?.length ? { mcpServers: profile.mcp.servers } : {}),
   };
   if (profile.provider === 'local') return { ...common, provider: 'local', baseURL: profile.baseURL, ...(profile.apiKey ? { apiKey: profile.apiKey } : {}) };
   if (profile.provider === 'bailian') return { ...common, provider: 'bailian', baseURL: profile.baseURL, apiKey: profile.apiKey, ...(profile.streaming === undefined ? {} : { streaming: profile.streaming }) };
@@ -257,7 +265,7 @@ function isRecord(value: unknown): value is UnknownRecord { return Boolean(value
 
 function parseProfile(name: string, value: unknown, onWarning?: (message: string) => void): StartupProfileV1 {
   if (!isRecord(value)) throw new Error(`Isla profile ${name} must be an object`);
-  warnUnknown(value, ['provider', 'model', 'apiKey', 'baseURL', 'streaming', 'workspace', 'sessionDirectory', 'runtime', 'memory', 'appearance', 'tools'], `profile ${name}`, onWarning);
+  warnUnknown(value, ['provider', 'model', 'apiKey', 'baseURL', 'streaming', 'workspace', 'sessionDirectory', 'runtime', 'memory', 'appearance', 'tools', 'mcp'], `profile ${name}`, onWarning);
   const provider = value.provider;
   const model = nonEmptyString(value.model, `Isla profile ${name}.model`);
   const workspace = value.workspace === undefined ? undefined : nonEmptyString(value.workspace, `Isla profile ${name}.workspace`);
@@ -269,6 +277,7 @@ function parseProfile(name: string, value: unknown, onWarning?: (message: string
     ...(value.memory !== undefined ? { memory: parseMemory(name, value.memory, onWarning) } : {}),
     ...(value.appearance !== undefined ? { appearance: parseAppearance(name, value.appearance, onWarning) } : {}),
     ...(value.tools !== undefined ? { tools: parseTools(name, value.tools, onWarning) } : {}),
+    ...(value.mcp !== undefined ? { mcp: parseMcp(name, value.mcp) } : {}),
   };
   if (provider === 'deepseek' || provider === 'openai') return { ...base, provider, apiKey: nonEmptyString(value.apiKey, `Isla profile ${name}.apiKey`) };
   if (provider === 'bailian') return { ...base, provider, baseURL: validURL(value.baseURL, `Isla profile ${name}.baseURL`), apiKey: nonEmptyString(value.apiKey, `Isla profile ${name}.apiKey`), ...(value.streaming === undefined ? {} : { streaming: booleanValue(value.streaming, `Isla profile ${name}.streaming`) }) };
@@ -320,6 +329,34 @@ function parseWebFetch(name: string, value: unknown, onWarning?: (message: strin
 function normalizeWebFetchConfig(value: ProfileWebFetchSettingsV1): WebFetchConfig {
   return Object.freeze({ enabled: value.enabled ?? true, allowedHosts: Object.freeze([...(value.allowedHosts ?? ['*'])]), allowSearchResultUrls: value.allowSearchResultUrls ?? false, timeoutMs: value.timeoutMs ?? DEFAULT_WEB_FETCH.timeoutMs, maxResponseBytes: value.maxResponseBytes ?? DEFAULT_WEB_FETCH.maxResponseBytes, maxBodyChars: value.maxBodyChars ?? DEFAULT_WEB_FETCH.maxBodyChars, maxOutputChars: value.maxOutputChars ?? DEFAULT_WEB_FETCH.maxOutputChars, maxRedirects: value.maxRedirects ?? DEFAULT_WEB_FETCH.maxRedirects });
 }
+
+function parseMcp(name: string, value: unknown): ProfileMcpSettingsV1 {
+  if (!isRecord(value)) throw new Error(`Isla profile ${name}.mcp must be an object`);
+  const rawServers = value.servers === undefined ? [] : value.servers;
+  if (!Array.isArray(rawServers)) throw new Error(`Isla profile ${name}.mcp.servers must be an array`);
+  if (rawServers.length > 8) throw new Error(`Isla profile ${name}.mcp.servers must contain at most 8 servers`);
+  const ids = new Set<string>();
+  const servers = rawServers.map((raw, index) => {
+    if (!isRecord(raw)) throw new Error(`Isla profile ${name}.mcp.servers[${index}] must be an object`);
+    const field = (key: string) => `Isla profile ${name}.mcp.servers[${index}].${key}`;
+    const id = nonEmptyString(raw.id, field('id'));
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || ids.has(id)) throw new Error(`${field('id')} is invalid or duplicated`);
+    ids.add(id);
+    const transport = raw.transport === undefined ? 'stdio' : raw.transport;
+    if (transport !== 'stdio') throw new Error(`${field('transport')} must be stdio`);
+    const command = nonEmptyString(raw.command, field('command'));
+    const args = raw.args === undefined ? [] : raw.args;
+    if (!Array.isArray(args) || args.some(item => typeof item !== 'string')) throw new Error(`${field('args')} must be an array of strings`);
+    const cwd = raw.cwd === undefined || raw.cwd === 'workspace' ? raw.cwd : nonEmptyString(raw.cwd, field('cwd'));
+    const envValue = raw.env === undefined ? {} : raw.env;
+    if (!isRecord(envValue) || Object.entries(envValue).some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value !== 'string')) throw new Error(`${field('env')} must be a string map`);
+    const bounded = (key: 'startupTimeoutMs' | 'callTimeoutMs', fallback: number): number => raw[key] === undefined ? fallback : (!Number.isInteger(raw[key]) || (raw[key] as number) < 1 || (raw[key] as number) > 120_000) ? (() => { throw new Error(`${field(key)} is invalid`); })() : raw[key] as number;
+    return Object.freeze({ id, transport: 'stdio' as const, command, args: Object.freeze([...args as string[]]), ...(cwd ? { cwd } : {}), required: raw.required === undefined ? false : booleanValue(raw.required, field('required')), startupTimeoutMs: bounded('startupTimeoutMs', 10_000), callTimeoutMs: bounded('callTimeoutMs', 60_000), env: Object.freeze({ ...(envValue as Record<string, string>) }) });
+  });
+  return Object.freeze({ servers: Object.freeze(servers) });
+}
+
+export type { McpServerConfig } from './mcp/types.js';
 
 function normalizeWebSearchConfig(value: ProfileWebSearchSettingsV1, apiKey: string, model: string): WebSearchConfig {
   return Object.freeze({ enabled: value.enabled ?? true, provider: 'deepseek-official', apiKey, model, maxResults: value.maxResults ?? 8, timeoutMs: value.timeoutMs ?? 30_000, maxOutputChars: value.maxOutputChars ?? 12_000 });

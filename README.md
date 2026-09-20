@@ -1,6 +1,8 @@
 # Isla
 
-Isla 是一个使用 TypeScript 开发的个人 Agent Runtime。目前通过 CLI 提供进程内连续对话，支持 OpenAI、DeepSeek、阿里云百炼和兼容 OpenAI 接口的本地模型服务。当前版本为 `0.3.9`。
+Isla 是一个使用 TypeScript 开发的个人 Agent Runtime。目前通过 CLI 提供进程内连续对话，支持 OpenAI、DeepSeek、阿里云百炼和兼容 OpenAI 接口的本地模型服务。当前可用版本为 `0.3.9`；v0.4.0 MCP Host 已完成设计，尚未实现。
+
+v0.4.0 将让 Isla 通过本地 stdio MCP Server 使用外部工具，并继续复用现有 Approval、取消、Session 与安全边界。范围、实施批次和测试门禁见 [`docs/proposals/v0.4.0/`](docs/proposals/v0.4.0/README.md)。`0.3.9` 发布包不包含 MCP；当前工作区已开始实现 MCP Host 基座。
 
 ## 安装
 
@@ -26,6 +28,8 @@ npx --package ./winc159-isla-0.3.9.tgz isla
 ```
 
 安装包不包含 API Key、Profile、Session、Memory、测试文件或本地评估资料。首次运行会在当前用户目录创建 `~/.isla/`。不要把 Windows 上的 `~/.isla/` 私人配置和会话打入安装包后传到其他主机。
+
+仓库开发依赖中的 `node-pty` 现在是可选依赖，仅用于真实 PTY 验收。普通安装、构建和 MCP/CLI 使用不需要 Visual Studio C++ 工具链；若要运行 `npm run test:pty`，Windows 需要安装 Visual Studio Build Tools 的 “Desktop development with C++” 工作负载。
 
 `package.json` 保持 `private: true`，用于阻止意外执行 `npm publish`；这不影响 `npm pack` 和本地 `.tgz` 安装。若未来需要私有 Registry，应另行配置 Registry、访问权限和发布流程。
 
@@ -89,6 +93,14 @@ stdin 每行发送一个 JSON 请求，例如 `prompt`、`cancel`、`approval_re
 
 ## 测试与真实 smoke
 
+日常只需要运行一个总验收命令：
+
+```bash
+npm run verify
+```
+
+它会自动执行类型检查、离线测试和构建，并在最后打印统一结果。`test:*`、`typecheck`、`build` 等脚本是维护者和 Agent 的内部入口，普通使用不需要记忆。
+
 默认测试不访问网络：
 
 ```bash
@@ -135,3 +147,35 @@ npm run test:smoke:real:ndjson
 ```
 
 日志包含发送给 Isla 的请求、协议事件和最终回答。该文件可能包含私人会话内容，默认不会生成，也不应提交到 Git。
+
+## 环境变量边界
+
+正常使用优先配置 `~/.isla/config.json`，不要手工拼接环境变量。`--env` 只用于开发、CI 和迁移兼容。
+
+兼容配置入口：
+
+| 变量 | 用途 |
+|---|---|
+| `ISLA_PROVIDER` | `openai`、`deepseek`、`bailian` 或 `local` |
+| `ISLA_MODEL` | 模型名称 |
+| `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY` | 对应 Provider 凭据 |
+| `ISLA_BASE_URL` | Bailian 或 local 的 Base URL |
+| `ISLA_API_KEY` | local Provider 可选凭据 |
+| `ISLA_TIMEOUT_MS` / `ISLA_DEBUG` | 超时与调试日志 |
+| `ISLA_MAX_CONTEXT_TURNS` / `ISLA_MAX_CONTEXT_CHARS` / `ISLA_CONTEXT_RETAIN_TURNS` | 上下文边界 |
+| `ISLA_MODEL_RETRIES` | 模型失败重试次数 |
+| `ISLA_SESSION_DIR` | Session 目录 |
+| `ISLA_MEMORY_ENABLED` / `ISLA_MEMORY_DB` | 记忆开关和数据库位置 |
+| `ISLA_EMBEDDING_PROVIDER` / `ISLA_EMBEDDING_MODEL` / `ISLA_EMBEDDING_BASE_URL` / `ISLA_EMBEDDING_API_KEY` | Embedding 配置 |
+| `ISLA_SYSTEM_PROMPT` / `ISLA_BAILIAN_STREAMING` | 兼容入口的提示词与 Bailian 流开关 |
+
+测试控制项，不属于用户运行配置：
+
+| 变量/命令 | 用途 |
+|---|---|
+| `ISLA_RUN_REAL_SMOKE` | 允许真实 Provider 网络 smoke |
+| `ISLA_RUN_REAL_BAILIAN_SMOKE` | 允许真实 Bailian smoke |
+| `ISLA_NDJSON_LOG` | 保存真实 NDJSON 诊断日志 |
+| `npm run test:smoke:mcp` | 自动开启 MCP 协议评估，不需要用户手工设置变量 |
+
+MCP Server 本身通过 Profile 的 `mcp.servers` 配置，不通过环境变量配置，也不会因为测试开关自动连接第三方服务。

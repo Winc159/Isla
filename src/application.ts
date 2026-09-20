@@ -3,6 +3,7 @@ import { JsonSessionStore, type SessionStore } from './session-store.js';
 import { MemoryRuntime } from './memory/runtime.js';
 import { LocalEmbeddingProvider, OpenAIEmbeddingProvider } from './memory/embeddings.js';
 import type { AppConfig } from './config.js';
+import type { McpHost } from './mcp/host.js';
 
 export interface DiagnosticSink { emit(event: DiagnosticEvent): void; }
 export interface DiagnosticEvent { readonly code: string; readonly component: string; readonly severity?: 'warning' | 'error' | 'debug'; readonly detail?: string; readonly domain?: import('./core/errors.js').RuntimeErrorDomain; }
@@ -21,7 +22,7 @@ export interface IslaApplication {
   close(): void;
 }
 
-export function createApplication(config: AppConfig, runtime: IslaRuntime, options: { readonly sessionStore?: SessionStore; readonly diagnostics?: DiagnosticSink } = {}): IslaApplication {
+export function createApplication(config: AppConfig, runtime: IslaRuntime, options: { readonly sessionStore?: SessionStore; readonly diagnostics?: DiagnosticSink; readonly mcpHost?: McpHost } = {}): IslaApplication {
   const diagnostics = options.diagnostics ?? { emit: () => {} };
   const embeddingProvider = config.embeddingProvider === 'openai' && config.embeddingModel && config.embeddingApiKey
     ? new OpenAIEmbeddingProvider(config.embeddingModel, config.embeddingApiKey, config.embeddingBaseURL, config.timeoutMs)
@@ -40,6 +41,6 @@ export function createApplication(config: AppConfig, runtime: IslaRuntime, optio
     sessions: options.sessionStore ?? new JsonSessionStore(config.sessionDirectory),
     memory,
     diagnostics,
-    close: () => { if (closed) return; closed = true; memory.close(); },
+    close: () => { if (closed) return; closed = true; memory.close(); void options.mcpHost?.close(); },
   };
 }

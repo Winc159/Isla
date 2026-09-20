@@ -15,6 +15,6 @@ describe("CLI command registry", () => {
   });
 
   it("lists command names in display order", () => {
-    expect(listCliCommands().map(command => command.name)).toEqual(["/new", "/sessions", "/task", "/skills", "/memory", "/trace", "/config", "/profile", "/models", "/help", "/exit"]);
+    expect(listCliCommands().map(command => command.name)).toEqual(["/new", "/sessions", "/task", "/skills", "/memory", "/trace", "/config", "/profile", "/models", "/mcp", "/help", "/exit"]);
   });
 });

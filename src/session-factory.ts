@@ -15,6 +15,7 @@ import { SkillCatalog } from './skills/catalog.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { StoredSkillCatalogV1 } from './session-store.js';
+import type { McpHost } from './mcp/host.js';
 
 export interface SessionFactoryOptions {
   readonly runtime: IslaRuntime;
@@ -34,6 +35,7 @@ export interface SessionFactoryConfig {
   readonly modelRetries: number;
   readonly webFetch?: WebFetchConfig;
   readonly webSearch?: WebSearchConfig;
+  readonly mcpHost?: McpHost;
 }
 
 export interface SessionEntryOptions {
@@ -82,7 +84,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         enableTools: true,
         skillCatalog: ('skillCatalog' in current && current.skillCatalog) ? current.skillCatalog : { version: 1, entries: skillCatalog.listSync().entries },
         agentLoop: true,
-        capabilities: createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, skillCatalog, ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }),
+        capabilities: [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, skillCatalog, ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(config.mcpHost?.capabilities() ?? [])],
         projectRoot: workspaceRoot,
         ...(diagnostics ? { onDiagnostic: diagnostics } : {}),
         permissionPreset: 'workspace',

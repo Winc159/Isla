@@ -241,3 +241,34 @@ v0.2.8 已验证 Provider-neutral stream 与共享 assembler，但尚未把真�
 - 复制 DSH 源码、目录或命名。
 
 重新评估条件：出现第二种真实并发入口、长期活动资源或跨进程执行后才讨论 Agent Registry/Job；真实长会话、小窗口模型或 Provider context overflow 出现后才讨论 Context Budget/compaction；能力需要独立安装与分发后才讨论完整 capability manifest。候选设计见 `docs/proposals/v0.2.9/`。
+
+## v0.4.0 MCP 补充评审（2026-09-20）
+
+新的真实需求是通过 MediaCrawler 一类外部程序搜集社交平台资料，并为后续邮件、下载等用户自建能力提供统一接入层。DSH 的 MCP 实现因此从“未来参考”变成 v0.4.0 的直接设计对照，但仍不成为依赖或源码来源。
+
+### 采用
+
+- 使用用户配置的 Server name/id 作为稳定身份，不信任远端 `serverInfo.name`。
+- 公开工具名使用 Server 限定前缀；原始名称单独保存并只在 wire call 使用。
+- 工具发现以完整 generation 原子发布；schema、命名或预算任一失败都不暴露部分 catalog。
+- MCP 原始结果先规范化，再独立投影为模型可见 Tool Result。
+- stdio 子进程使用显式、最小环境，不把宿主凭据环境整体继承给 Server。
+- optional Server 失败可降级为 unavailable，required Server 失败则阻断启动。
+- Server 的安装、授权、许可和迁移由上游/用户负责，Isla 不在运行时自动下载。
+
+### 按 Isla 调整
+
+- 直接复用现有 `ToolRegistry`、`ToolRuntime`、Approval、AbortSignal、Completion Gate 和 Turn Journal，不引入 Cordis service/plugin 层。
+- Server 崩溃后立即撤下其工具；v0.4.0 不自动重连，避免陈旧 catalog 反复失败。
+- Server instructions、annotations 和 descriptions 都是不可信输入；本版不把 instructions 注入 system prompt，也不允许 read-only hint 自动免审批。
+- v0.4.0 只实现本地 stdio tools。resources、Streamable HTTP、OAuth、prompts 和 tasks 均留给后续独立版本。
+- Server 集合绑定启动时 resolved Profile/workspace，历史 Session 不能把别的 workspace MCP 能力带入当前运行。
+
+### 从 DSH 问题记录得到的测试要求
+
+- 覆盖过期/关闭连接后撤下陈旧工具，不能让模型持续看到必然失败的定义。
+- 覆盖流式 Provider 组装 Tool Call 参数；不允许空参数或半成品调用 MCP 后形成重试循环。
+- 覆盖 workspace 切换/恢复边界，MCP registration 不得跨 workspace 泄漏。
+- 对 tool catalog 设置工具数、schema 和总字节预算；达到大 catalog 需求后再评估 MCP Lens 类动态检索，不在首版预建。
+
+具体契约和门禁见 [`docs/proposals/v0.4.0/`](proposals/v0.4.0/README.md)。

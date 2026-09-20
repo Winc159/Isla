@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { PtyDriver } from './pty-driver.js';
+import { PTY_AVAILABLE, PtyDriver } from './pty-driver.js';
 
-describe('PtyDriver', () => {
+describe.skipIf(!PTY_AVAILABLE)('PtyDriver', () => {
   it('starts a real TTY child and exchanges input/output', async () => {
     const driver = new PtyDriver(process.execPath, ['-e', 'process.stdout.write(String(process.stdin.isTTY)); process.stdin.on("data", d => { process.stdout.write(d.toString()); if (d.toString().includes("bye")) process.exit(0); });'], { cwd: process.cwd() });
     try {

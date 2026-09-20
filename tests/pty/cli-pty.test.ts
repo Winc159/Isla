@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { access, readFile } from 'node:fs/promises';
 import { createPtyFixture } from '../support/pty-fixture.js';
+import { PTY_AVAILABLE } from '../support/pty-driver.js';
 
-describe('CLI PTY acceptance', () => {
+describe.skipIf(!PTY_AVAILABLE)('CLI PTY acceptance', () => {
   it('handles an ordinary prompt and returns to the input editor', async () => {
     const fixture = await createPtyFixture();
     try {

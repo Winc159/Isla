@@ -1,4 +1,22 @@
-import { spawn } from 'node-pty';
+import { createRequire } from 'node:module';
+
+type PtyProcess = {
+  onData(listener: (data: string) => void): void;
+  onExit(listener: (event: { exitCode: number; signal?: number }) => void): void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+};
+
+const require = createRequire(import.meta.url);
+let spawn: ((command: string, args: string[], options: Record<string, unknown>) => PtyProcess) | undefined;
+try {
+  spawn = require('node-pty').spawn as typeof spawn;
+} catch {
+  // node-pty is optional: PTY acceptance tests are skipped without native build tools.
+}
+
+export const PTY_AVAILABLE = spawn !== undefined;
 
 export interface PtyWaitOptions { readonly timeoutMs?: number; readonly from?: number; }
 export interface PtyExit { readonly exitCode: number; readonly signal?: number; }
@@ -6,7 +24,7 @@ export interface PtyExit { readonly exitCode: number; readonly signal?: number; 
 const ANSI = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001b\\))/g;
 
 export class PtyDriver {
-  private readonly process: ReturnType<typeof spawn>;
+  private readonly process: PtyProcess;
   private output = '';
   private exited: Promise<PtyExit>;
   private exitResolve!: (value: PtyExit) => void;
@@ -14,6 +32,7 @@ export class PtyDriver {
   private hasExited = false;
 
   constructor(command: string, args: string[], options: { readonly cwd: string; readonly env?: Record<string, string>; readonly cols?: number; readonly rows?: number }) {
+    if (!spawn) throw new Error('node-pty is unavailable; install Visual Studio C++ Build Tools to run PTY tests');
     this.process = spawn(command, args, { name: 'xterm-color', cols: options.cols ?? 100, rows: options.rows ?? 30, cwd: options.cwd, env: options.env ?? process.env as Record<string, string> });
     this.exited = new Promise(resolve => { this.exitResolve = resolve; });
     this.process.onData(data => { this.output += data; });

@@ -4,6 +4,7 @@ import type { MemoryStore } from '../memory/store.js';
 import type { MemoryRuntime } from '../memory/runtime.js';
 import type { ConfigStore } from '../config-store.js';
 import type { SessionQuery } from '../session-query.js';
+import type { McpHost } from '../mcp/host.js';
 
 export type InteractiveInput = Readable & {
   readonly isTTY: true;
@@ -28,6 +29,7 @@ export interface CliCommandContext {
   readonly profileName?: string;
   readonly workspaceRoot: string;
   readonly openConfig?: (path: string) => Promise<void>;
+  readonly mcpHost?: McpHost;
 }
 
 export type CliCommandResult =

@@ -9,6 +9,7 @@ import { parseCliStartupArgs, type CliStartupArgs } from './cli-args.js';
 import { resolveWorkspace } from './workspace.js';
 import { listBailianModels } from './models/bailian-catalog.js';
 import { listDeepSeekModels } from './models/deepseek-catalog.js';
+import { McpHost } from './mcp/host.js';
 export function createRuntime(config: AppConfig): IslaRuntime {
   const r = new IslaRuntime();
   if (config.provider === 'openai') r.use(createOpenAIPlugin(config));
@@ -17,7 +18,7 @@ export function createRuntime(config: AppConfig): IslaRuntime {
   else r.use(createLocalPlugin(config));
   return r;
 }
-export async function loadRuntime(argv: readonly string[] = process.argv.slice(2), env: Record<string, string | undefined> = process.env): Promise<{ runtime: IslaRuntime; config: AppConfig; startup: CliStartupArgs }> {
+export async function loadRuntime(argv: readonly string[] = process.argv.slice(2), env: Record<string, string | undefined> = process.env): Promise<{ runtime: IslaRuntime; config: AppConfig; startup: CliStartupArgs; mcpHost?: McpHost }> {
   const startup = parseCliStartupArgs(argv);
   const config = await loadStartupConfig(startup, env);
   const workspaceRoot = await resolveWorkspace(startup.workspacePath, config.workspaceRoot, process.cwd());
@@ -30,7 +31,9 @@ export async function loadRuntime(argv: readonly string[] = process.argv.slice(2
         : (() => { throw new Error(`--models is not supported for the ${resolvedConfig.provider} provider`); })();
     process.stdout.write(`${JSON.stringify(models)}\n`);
   }
-  return { runtime: createRuntime(resolvedConfig), config: resolvedConfig, startup };
+  const mcpHost = resolvedConfig.mcpServers?.length ? new McpHost(resolvedConfig.mcpServers) : undefined;
+  if (mcpHost) await mcpHost.start();
+  return { runtime: createRuntime(resolvedConfig), config: resolvedConfig, startup, ...(mcpHost ? { mcpHost } : {}) };
 }
 
 async function loadStartupConfig(startup: CliStartupArgs, env: Record<string, string | undefined>): Promise<AppConfig> {

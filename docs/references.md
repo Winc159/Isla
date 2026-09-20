@@ -29,6 +29,8 @@
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — 用于审查插件边界、Provider 适配、会话日志和模型历史不变量；不作为 Isla 的依赖或脚手架。
 - [本次审查的 DSH 提交](https://github.com/deepseek-ai/deepseek-harness/commit/76fda729799fe9b3848dbe2c211d4b231032b81e) — `0.1.2-rc.1`，查看日期 2026-09-08；具体采用、暂缓和拒绝项见 [DSH 参考评审](dsh-reference-review.md)。
+- [DSH MCP package](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/mcp) — 多 Server 配置、限定工具名、原子 generation、transport 与结果规范化的对照实现；v0.4.0 采用设计不变量，不复制源码或 Cordis 服务层；查看日期 2026-09-20。
+- [DSH MCP client](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/mcp/mcp-client) — raw/public tool identity、stdio 环境、启动失败和资源入口的具体边界；用于 v0.4.0 安全与生命周期设计；查看日期 2026-09-20。
 - [DSH Session](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session.md) — 事实日志与模型消息投影，影响 v0.2.1 的“原始事实与上下文视图分离”；查看日期 2026-09-11。
 - [DSH Compaction](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/compaction.md) — 持久化压缩检查点、Tool 配对边界和失败语义；采用原则，拒绝完整事件框架；查看日期 2026-09-11。
 - [DSH Session Query](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session-query.md) — 确定性读取、过滤和全文检索；v0.2.1 采用职责分离，暂缓完整 Query 服务；查看日期 2026-09-11。
@@ -54,6 +56,13 @@
 - [DSH Compaction](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/compaction.md) — token pressure、Tool Pair 边界、pruning、summary 与 overflow recovery；v0.2.9 记录为后续重评依据，本版因缺少真实上下文压力而暂缓，查看日期 2026-09-15。
 - [LangGraph Memory](https://langchain-ai.github.io/langgraph/how-tos/memory/manage-conversation-history/) — Thread 持久化、裁剪和滚动摘要；采用派生摘要，拒绝 Graph 编排和删除原文；查看日期 2026-09-11。
 - [Letta Memory Architecture](https://github.com/letta-ai/skills/blob/main/letta/letta-api-client/memory-architecture.md) — Core Memory、消息窗口、归档和语义检索分层；直接影响 v0.2.1 的四层记忆模型；查看日期 2026-09-11。
+
+## Model Context Protocol
+
+- [MCP Specification](https://modelcontextprotocol.io/specification/) — MCP 当前稳定协议、版本与扩展边界；v0.4.0 使用官方 SDK，不手写 wire protocol；查看日期 2026-09-20。
+- [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) — 官方 TypeScript client/server/transport 实现；实施时必须再次确认 v2 稳定包名、版本与 Node 要求并锁定依赖；查看日期 2026-09-20。
+- [MCP Architecture](https://modelcontextprotocol.io/docs/learn/architecture) — Host、Client、Server 责任与 tools/resources/prompts 概念；Isla v0.4.0 只实现 Host 消费本地 stdio tools；查看日期 2026-09-20。
+- [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) — 小红书、抖音等平台采集能力的首个外部互操作候选；其非商业学习许可、浏览器状态和安装依赖均由独立项目负责，不进入 Isla 包；查看日期 2026-09-20。
 
 ## SQLite 与 Embedding
 

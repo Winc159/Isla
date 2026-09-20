@@ -3,6 +3,7 @@ import type { UserQuestion, UserQuestionAnswer } from "../user-questions/types.j
 import type { TaskStateV1, TaskStatus } from "../core/task-state.js";
 import type { VerificationStatus } from "../core/verification.js";
 import type { SessionSearchHit } from "../session-query.js";
+import type { McpStatus } from "../mcp/types.js";
 
 export interface ProtocolTaskSummary {
   readonly status: TaskStatus;
@@ -26,7 +27,8 @@ export type ProtocolRequest =
   | { readonly type: "skills_list"; readonly id: string }
   | { readonly type: "skill_invoke"; readonly id: string; readonly name: string; readonly text?: string }
   | { readonly type: "sessions_search"; readonly id: string; readonly query?: string; readonly status?: TaskStatus }
-  | { readonly type: "session_select"; readonly id: string; readonly sessionId: string };
+  | { readonly type: "session_select"; readonly id: string; readonly sessionId: string }
+  | { readonly type: "mcp_list"; readonly id: string };
 
 export type ProtocolToolErrorCode = ToolExecutionErrorCode;
 
@@ -50,7 +52,8 @@ export type ProtocolEvent =
   | { readonly type: "model_changed"; readonly id: string; readonly model: string; readonly effective: "next_start" }
   | ProtocolTaskStateEvent
   | { readonly type: "sessions_result"; readonly id: string; readonly sessions: readonly SessionSearchHit[]; readonly truncated: boolean }
-  | { readonly type: "skills_result"; readonly id: string; readonly skills: readonly { readonly name: string; readonly description: string; readonly modelInvocable: boolean; readonly userInvocable: boolean }[] };
+  | { readonly type: "skills_result"; readonly id: string; readonly skills: readonly { readonly name: string; readonly description: string; readonly modelInvocable: boolean; readonly userInvocable: boolean }[] }
+  | { readonly type: "mcp_result"; readonly id: string; readonly servers: readonly McpStatus[] };
 
 export interface ProtocolTaskStateEvent {
   readonly type: "task_state";
@@ -68,4 +71,5 @@ export interface ProtocolCapabilities {
   readonly webFetch?: boolean;
   readonly webSearch?: boolean;
   readonly userQuestions?: boolean;
+  readonly mcp?: boolean;
 }

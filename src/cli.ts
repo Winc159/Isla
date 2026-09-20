@@ -26,6 +26,7 @@ import { SessionQuery } from './session-query.js';
 import { SkillCatalog } from './skills/catalog.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { McpHost } from './mcp/host.js';
 
 export interface CliInterruptController {
   start(): void;
@@ -79,6 +80,7 @@ export async function runCli(
   diagnostics?: (event: import('./application.js').DiagnosticEvent) => void,
   webFetch?: import('./config.js').WebFetchConfig,
   webSearch?: import('./config.js').WebSearchConfig,
+  mcpHost?: McpHost,
 ): Promise<void> {
   writeHeader(output, providerId, model, workspaceRoot, webFetch?.enabled === true);
   const currentWorkspaceKey = workspaceKey(workspaceRoot);
@@ -114,7 +116,7 @@ export async function runCli(
       if (streamState.sawDelta) output.write('\n');
     }
   };
-  session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => stopActiveLoading());
+  session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => stopActiveLoading(), mcpHost);
 
   const handleLine = async (line: string): Promise<'continue' | 'exit'> => {
     const command = findCliCommand(line);
@@ -137,13 +139,14 @@ export async function runCli(
           ...(profileName ? { profileName } : {}),
           workspaceRoot,
           ...(openConfig ? { openConfig } : {}),
+          ...(mcpHost ? { mcpHost } : {}),
       });
       if (result.type === 'exit') {
         return 'exit';
       }
       if (result.type === 'switch-session') {
         storedSession = result.session;
-        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => stopActiveLoading());
+        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => stopActiveLoading(), mcpHost);
         output.write('\x1b[2J\x1b[3J\x1b[H');
         writeHeader(output, providerId, model, workspaceRoot);
         if (result.replayHistory) writeSessionHistory(output, storedSession);
@@ -252,10 +255,11 @@ export interface CliAdapterOptions {
   readonly diagnostics?: (event: import('./application.js').DiagnosticEvent) => void;
   readonly webFetch?: import('./config.js').WebFetchConfig;
   readonly webSearch?: import('./config.js').WebSearchConfig;
+  readonly mcpHost?: McpHost;
 }
 
 export async function runCliAdapter(options: CliAdapterOptions): Promise<void> {
-  return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics, options.webFetch, options.webSearch);
+  return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics, options.webFetch, options.webSearch, options.mcpHost);
 }
 
 function writeSessionHistory(output: Writable, session: StoredSession): void {
@@ -325,8 +329,9 @@ function createPersistentSession(
   webSearch?: import('./config.js').WebSearchConfig,
   onModelStepEvent?: (event: import('./core/events.js').ModelStepEvent) => void,
   onQuestion?: () => void,
+  mcpHost?: McpHost,
 ) {
-  const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}) });
+  const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}) });
   return factory.create({ stored: storedSession, input, output, interactive, ...(interactive ? { approvalService: new CliApprovalService(input, output), userQuestionService: new CliUserQuestionService(input, output, onQuestion) } : {}), ...(onModelStepEvent ? { onModelStepEvent } : {}) });
 }
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
@@ -340,16 +345,16 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
         if (!completed) process.exit(1);
       }
     }
-    const { runtime, config, startup } = await loadRuntime();
+    const { runtime, config, startup, mcpHost } = await loadRuntime();
     if (startup.models) process.exit(0);
-    const application = createApplication(config, runtime, { diagnostics: createStderrDiagnosticSink(config.logLevel ?? (config.debug ? 'debug' : 'normal'), process.stderr) });
+    const application = createApplication(config, runtime, { diagnostics: createStderrDiagnosticSink(config.logLevel ?? (config.debug ? 'debug' : 'normal'), process.stderr), ...(mcpHost ? { mcpHost } : {}) });
     const memoryRuntime = application.memory;
     try {
     if (startup.protocol !== undefined) {
       const protocol = startup.protocol;
       if (protocol !== 'ndjson') throw new Error('Unsupported protocol');
       const protocolStore = application.sessions;
-      const sessionFactory = createSessionFactory({ runtime, config, sessionStore: protocolStore, memoryRuntime, workspaceRoot: config.workspaceRoot ?? process.cwd(), diagnostics: event => application.diagnostics.emit(event) });
+      const sessionFactory = createSessionFactory({ runtime, config: { ...config, ...(mcpHost ? { mcpHost } : {}) }, sessionStore: protocolStore, memoryRuntime, workspaceRoot: config.workspaceRoot ?? process.cwd(), diagnostics: event => application.diagnostics.emit(event) });
       const currentWorkspaceKey = workspaceKey(config.workspaceRoot ?? process.cwd());
       let protocolStored = await protocolStore.loadLatest(config.provider, config.model, currentWorkspaceKey);
       if (!protocolStored) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : [], currentWorkspaceKey);
@@ -359,7 +364,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       const protocolSkillCatalog = new SkillCatalog({ workspaceRoot: join(config.workspaceRoot ?? process.cwd(), '.isla', 'skills'), personalRoot: join(homedir(), '.isla', 'skills') });
       await runProtocol(process.stdin, process.stdout, undefined, config.provider, config.model, {
         ...(config.workspaceRoot ? { workspace: config.workspaceRoot } : {}),
-        capabilities: { toolCalling: runtime.getProviderCapabilities(config.provider)?.toolCalling === true, cancellation: true, streaming: runtime.getProviderCapabilities(config.provider)?.nativeStreaming === true, streamingToolCalls: runtime.getProviderCapabilities(config.provider)?.streamingToolCalls === true, webFetch: config.webFetch?.enabled === true, webSearch: config.webSearch?.enabled === true, userQuestions: true },
+        capabilities: { toolCalling: runtime.getProviderCapabilities(config.provider)?.toolCalling === true, cancellation: true, streaming: runtime.getProviderCapabilities(config.provider)?.nativeStreaming === true, streamingToolCalls: runtime.getProviderCapabilities(config.provider)?.streamingToolCalls === true, webFetch: config.webFetch?.enabled === true, webSearch: config.webSearch?.enabled === true, userQuestions: true, mcp: Boolean(mcpHost) },
+        ...(mcpHost ? { mcpHost } : {}),
         invokeSkill: async (name, text) => {
           const definition = protocolSkillCatalog.loadSync(name);
           if (!definition || !definition.userInvocable) throw new Error('Skill 不存在或不可由用户调用');
@@ -414,6 +420,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       workspaceRoot: config.workspaceRoot ?? process.cwd(),
       ...(config.webFetch ? { webFetch: config.webFetch } : {}),
       ...(config.webSearch ? { webSearch: config.webSearch } : {}),
+      ...(mcpHost ? { mcpHost } : {}),
       diagnostics: event => application.diagnostics.emit(event),
     });
     } finally { application.close(); }

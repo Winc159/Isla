@@ -23,6 +23,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:smoke": "vitest run tests/smoke",
+    "test:smoke:mcp": "node scripts/run-mcp-eval.mjs",
+    "verify": "node scripts/verify.mjs",
     "test:smoke:real": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run tests/smoke/real-provider.test.ts",
     "test:smoke:real:ndjson": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run tests/smoke/real-ndjson.test.ts",
     "test:protocol": "vitest run tests/protocol.test.ts",
@@ -31,6 +33,7 @@
     "pack:check": "npm pack --dry-run"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
     "@vscode/ripgrep": "^1.18.0",
     "ipaddr.js": "^2.5.0",
     "openai": "^5.12.2",
@@ -39,11 +42,14 @@
     "undici": "^8.10.2"
   },
   "devDependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
     "@types/node": "^24.0.0",
     "msw": "^2.10.2",
-    "node-pty": "^1.1.0",
     "tsx": "^4.20.3",
     "typescript": "^5.9.2",
     "vitest": "^4.1.11"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
   }
 }

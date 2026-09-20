@@ -10,8 +10,9 @@ import { profileCommand } from './profile-command.js';
 import { modelsCommand } from './models-command.js';
 import { taskCommand } from './task-command.js';
 import { skillsCommand } from './skills-command.js';
+import { mcpCommand } from './mcp-command.js';
 
-const registeredCommands = [newCommand, sessionsCommand, taskCommand, skillsCommand, memoryCommand, traceCommand, configCommand, profileCommand, modelsCommand, helpCommand, exitCommand];
+const registeredCommands = [newCommand, sessionsCommand, taskCommand, skillsCommand, memoryCommand, traceCommand, configCommand, profileCommand, modelsCommand, mcpCommand, helpCommand, exitCommand];
 const commands = new Map<string, CliCommand>(
   registeredCommands.map(command => [command.name, command]),
 );

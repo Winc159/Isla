@@ -331,19 +331,35 @@
 
 设计、实施顺序、测试矩阵和真实评估记录见 `docs/proposals/v0.3.6/`。模型侧历史 Tool 已通过 snake_case 契约修正并完成 Qwen 两步真实评估。
 
-## v0.3.9：3.x Closeout and 4.0 Readiness（规划中）
+## v0.3.9：3.x Closeout and 4.0 Readiness（已完成）
 
 v0.3.6 的 Session Discovery、v0.3.7/v0.3.7.1 的 Skill 能力和 v0.3.8 的真实 PTY 测试已经补齐 3.x 的主要用户路径。下一步不继续堆叠 Agent 能力，而是统一 3.x 的稳定契约、入口语义、Provider capability、Session/Config 兼容边界、隐私门禁和跨平台验证事实。
 
 v0.3.9 只做收口与 4.0 准入，不新增 Agent Registry、Job、Workflow、Subagent、并行 Tool、完整事件溯源 Session、Cordis 或通用事件总线。DSH 只作为事实/观察分离、取消收敛、能力声明和资源所有权的不变量参考。
 
-设计、实施和测试门禁见 [`docs/proposals/v0.3.9/`](proposals/v0.3.9/README.md)。通过 3.9 P0 门禁不自动进入 4.0；必须再由真实新需求和用户确认选择 4.0 主题。
+设计、实施和测试门禁见 [`docs/proposals/v0.3.9/`](proposals/v0.3.9/README.md)。版本已更新为 `0.3.9`，并以 GitHub Release `.tgz` 作为 Linux/macOS 安装入口。
+
+## v0.4.0：MCP Host Foundation（实现中，Batch A–F 基础门禁已完成）
+
+现实需求：旅游攻略、汽车评测和真实用户反馈越来越多地位于小红书、抖音等平台；后续还会出现邮件、下载等外部能力。为每个来源继续编写 Isla 私有适配器会重复建设发现、schema、调用、取消、错误与权限边界，因此 4.x 以 MCP 外部能力协议作为主题。
+
+v0.4.0 是完整平台方向下的第一块可验收基座：
+
+1. Isla 作为 MCP Host/Client，消费用户 Profile 中配置的本地 stdio Server；
+2. 支持多 Server、稳定限定名、原始名称映射、原子 catalog 与严格预算；
+3. MCP Tool 复用现有 Tool Runtime、Approval、取消、Completion Gate 和 Journal；
+4. 默认按 `network` 权限处理，Server description、annotation、instructions 和结果均不可信；
+5. 支持有界 text/structuredContent，崩溃后撤下陈旧工具并收敛子进程；
+6. TTY `/mcp` 与 NDJSON `mcp_list` 提供等价只读状态；
+7. MediaCrawler 只作为独立安装的首个互操作目标，不进入 Isla npm 包或默认测试。
+
+Streamable HTTP/OAuth、resources、prompts、tasks、apps、远程注册中心、Isla 作为 MCP Server、动态热重载和自动重连留给后续 4.x。设计、实施、测试与验收模板见 [`docs/proposals/v0.4.0/`](proposals/v0.4.0/README.md)。
 
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。
 
-继续以真实能力为驱动扩展 Tool；先完成 Session Event 审计与重放，再考虑 Shell 或网络能力。不要先建设通用 MCP 平台。
+继续以真实能力为驱动扩展 Tool。MCP Host 基座进入 v0.4.0；Shell 等高风险通用执行能力仍需独立需求与设计，不能因 MCP 接入而自动开放。
 
 ## 候选阶段：文档与知识检索
 

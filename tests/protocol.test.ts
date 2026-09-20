@@ -30,6 +30,7 @@ describe("NDJSON protocol", () => {
     expect(parseProtocolRequest('{"type":"models_use","id":"m2","model":"qwen-plus"}')).toMatchObject({ type: "models_use", model: "qwen-plus" });
     expect(parseProtocolRequest('{"type":"task_get","id":"t1"}')).toMatchObject({ type: "task_get" });
     expect(parseProtocolRequest('{"type":"skills_list","id":"s1"}')).toMatchObject({ type: "skills_list" });
+    expect(parseProtocolRequest('{"type":"mcp_list","id":"m1"}')).toMatchObject({ type: "mcp_list" });
     expect(() => parseProtocolRequest("bad")).toThrow("INVALID_JSON");
     expect(() => parseProtocolRequest('{"type":"prompt","id":"1","text":""}')).toThrow("INVALID_REQUEST");
     expect(() => parseProtocolRequest('{"type":"approval_response","id":"1","approvalId":"","approved":true}')).toThrow("INVALID_REQUEST");
