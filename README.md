@@ -1,8 +1,8 @@
 # Isla
 
-Isla 是一个使用 TypeScript 开发的个人 Agent Runtime。目前通过 CLI 提供进程内连续对话，支持 OpenAI、DeepSeek、阿里云百炼和兼容 OpenAI 接口的本地模型服务。当前可用版本为 `0.3.9`；v0.4.0 MCP Host 已完成设计，尚未实现。
+Isla 是一个使用 TypeScript 开发的个人 Agent Runtime。目前通过 CLI 提供进程内连续对话，支持 OpenAI、DeepSeek、阿里云百炼和兼容 OpenAI 接口的本地模型服务。当前可用版本为 `0.3.9`；工作区中的 v0.4.0 MCP Host 基座已经实现，正在完成发布前目标系统验收。
 
-v0.4.0 将让 Isla 通过本地 stdio MCP Server 使用外部工具，并继续复用现有 Approval、取消、Session 与安全边界。范围、实施批次和测试门禁见 [`docs/proposals/v0.4.0/`](docs/proposals/v0.4.0/README.md)。`0.3.9` 发布包不包含 MCP；当前工作区已开始实现 MCP Host 基座。
+v0.4.0 让 Isla 通过本地 stdio MCP Server 使用外部工具，并继续复用现有 Approval、取消、Session 与安全边界。范围与验收见 [`docs/proposals/v0.4.0/`](docs/proposals/v0.4.0/README.md)。下一版 v0.4.1 将补齐 MCP 配置、诊断和独立第三方 Server 互操作，设计基线见 [`docs/proposals/v0.4.1/`](docs/proposals/v0.4.1/README.md)。`0.3.9` 发布包仍不包含 MCP。
 
 ## 安装
 

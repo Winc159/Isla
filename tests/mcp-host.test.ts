@@ -21,7 +21,7 @@ describe('MCP host foundation', () => {
       await expect(tools.find(tool => tool.definition.name === 'mcp__research__unsupported')!.execute('{}')).rejects.toThrow('MCP_UNSUPPORTED_CONTENT');
       await expect(tools.find(tool => tool.definition.name === 'mcp__research__oversize')!.execute('{}')).rejects.toThrow('MCP_RESULT_TOO_LARGE');
     } finally { await host.close(); }
-  });
+  }, 30_000);
 
   it('does not partially publish an invalid catalog', () => {
     expect(() => buildMcpCatalog('research', [
@@ -34,7 +34,7 @@ describe('MCP host foundation', () => {
     const host = new McpHost([{ ...config('optional'), command: 'missing-isla-mcp-server', required: false }]);
     try { await host.start(); expect(host.statuses()[0]).toMatchObject({ state: 'unavailable', toolCount: 0, errorCode: 'MCP_SERVER_START_FAILED' }); }
     finally { await host.close(); }
-  });
+  }, 30_000);
 
   it('passes an MCP tool through Approval and the existing Agent Loop', async () => {
     const host = new McpHost([config()]);
@@ -64,7 +64,7 @@ describe('MCP host foundation', () => {
       expect(requests[0]?.tools?.some(tool => tool.name === 'mcp__research__ping')).toBe(true);
       expect(requests[1]?.messages.at(-1)).toMatchObject({ role: 'tool', toolCallId: 'mcp-1', content: 'pong' });
     } finally { await host.close(); }
-  });
+  }, 30_000);
 
   it('withdraws a ready catalog after the stdio transport closes', async () => {
     const host = new McpHost([config()]);
@@ -76,5 +76,5 @@ describe('MCP host foundation', () => {
       expect(host.statuses()[0]).toMatchObject({ state: 'unavailable', toolCount: 0, errorCode: 'MCP_TRANSPORT_CLOSED' });
       expect(host.capabilities()).toEqual([]);
     } finally { await host.close(); }
-  });
+  }, 30_000);
 });

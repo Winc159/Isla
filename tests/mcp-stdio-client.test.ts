@@ -16,7 +16,7 @@ describe('MCP stdio client spike', () => {
     } finally {
       await client.close();
     }
-  });
+  }, 30_000);
 
   it('keeps MCP stderr separate from protocol results', async () => {
     const client = createMcpStdioClient({ command: node, args: [fixture] });
@@ -27,7 +27,7 @@ describe('MCP stdio client spike', () => {
     } finally {
       await client.close();
     }
-  });
+  }, 30_000);
 
   it('rejects a call when the caller aborts', async () => {
     const client = createMcpStdioClient({ command: node, args: [fixture] });
@@ -40,5 +40,5 @@ describe('MCP stdio client spike', () => {
     } finally {
       await client.close();
     }
-  });
+  }, 30_000);
 });

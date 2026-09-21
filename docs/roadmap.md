@@ -355,6 +355,12 @@ v0.4.0 是完整平台方向下的第一块可验收基座：
 
 Streamable HTTP/OAuth、resources、prompts、tasks、apps、远程注册中心、Isla 作为 MCP Server、动态热重载和自动重连留给后续 4.x。设计、实施、测试与验收模板见 [`docs/proposals/v0.4.0/`](proposals/v0.4.0/README.md)。
 
+## v0.4.1：MCP Usability and Interoperability（设计完成，待实施）
+
+v0.4.1 不扩展 MCP 协议面，集中补齐个人用户可操作性：通过 `/mcp setup` 原子修改当前 Profile 的本地 stdio Server 配置，通过 `/mcp config` 和 `/mcp check` 提供脱敏诊断，并明确所有修改下次启动生效。NDJSON 继续只读，不增加配置写协议。
+
+本版还将选择一个无需账号、只访问隔离临时目录的独立第三方 stdio MCP Server，完成 discover、Approval、call、cancel/close 和跨平台 `.tgz` 用户路径验收。自动下载、热重载、远程 transport、MediaCrawler 和浏览器状态管理继续暂缓。设计与执行基线见 [`docs/proposals/v0.4.1/`](proposals/v0.4.1/README.md)。
+
 ## 候选阶段：Tool 插件
 
 触发条件：Isla 需要执行第一个真实外部动作。

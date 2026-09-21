@@ -8,6 +8,7 @@ data/*.db
 data/*.sqlite
 data/*.sqlite3
 .isla-local/
+.mcp-eval/
 .npmrc
 
 scripts/real-bailian-eval.mjs
