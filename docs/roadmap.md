@@ -339,7 +339,7 @@ v0.3.9 只做收口与 4.0 准入，不新增 Agent Registry、Job、Workflow、
 
 设计、实施和测试门禁见 [`docs/proposals/v0.3.9/`](proposals/v0.3.9/README.md)。版本已更新为 `0.3.9`，并以 GitHub Release `.tgz` 作为 Linux/macOS 安装入口。
 
-## v0.4.0：MCP Host Foundation（实现中，Batch A–F 基础门禁已完成）
+## v0.4.0：MCP Host Foundation（已实现，进入验收收口）
 
 现实需求：旅游攻略、汽车评测和真实用户反馈越来越多地位于小红书、抖音等平台；后续还会出现邮件、下载等外部能力。为每个来源继续编写 Isla 私有适配器会重复建设发现、schema、调用、取消、错误与权限边界，因此 4.x 以 MCP 外部能力协议作为主题。
 

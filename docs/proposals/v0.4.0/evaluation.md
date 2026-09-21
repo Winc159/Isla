@@ -1,8 +1,8 @@
 # v0.4.0 验收记录
 
-状态：实现中，Batch A–F 基础门禁已完成  
+状态：已实现，Windows 自动化门禁已完成；Linux/macOS 目标系统验收待执行
 设计基线：2026-09-20  
-当前结论：仅完成设计，不代表 MCP 已可用
+当前结论：已通过仓库内真实 stdio MCP Server 互操作评估；尚不代表 MediaCrawler 已互操作
 
 ## 1. 验收声明规则
 
@@ -10,25 +10,23 @@
 
 ## 2. P0 功能门禁
 
-- [ ] 官方 MCP TypeScript SDK 版本、协议基线和 Node 要求已锁定。
-- [ ] Profile 可配置多个本地 stdio Server，旧 Profile 兼容。
-- [ ] required/optional 启动语义正确。
-- [ ] catalog 原子发布、命名稳定、raw/public 映射正确。
-- [ ] MCP Tool 进入现有 Tool Runtime、Approval、取消和 Journal。
-- [ ] 默认 `network` 权限不能被 Server annotation 降级。
-- [ ] text 与 structuredContent 有界投影；未支持内容明确失败。
-- [ ] 超时、取消、崩溃和退出无晚到提交、无孤儿进程。
-- [ ] TTY `/mcp` 与 NDJSON `mcp_list` 语义等价。
-- [ ] 无 MCP 配置时 3.9 行为不变。
+- [x] 官方 MCP TypeScript SDK 版本、协议基线和 Node 要求已锁定。
+- [x] Profile 可配置多个本地 stdio Server，旧 Profile 兼容。
+- [x] required/optional 启动语义正确。
+- [x] catalog 原子发布、命名稳定、raw/public 映射正确。
+- [x] MCP Tool 进入现有 Tool Runtime、Approval、取消和 Journal。
+- [x] 默认 `network` 权限不能被 Server annotation 降级。
+- [x] text 与 structuredContent 有界投影；未支持内容明确失败。
+- [x] 超时、取消、崩溃和退出无晚到提交、无孤儿进程。
+- [x] TTY `/mcp` 与 NDJSON `mcp_list` 语义等价。
+- [x] 无 MCP 配置时 3.9 行为不变。
 
-证据：待填写。
+证据：`npm run verify`、`npm run test:smoke:mcp`；Windows 开发机，2026-09-21。
 
 ## 3. 自动化门禁
 
 ```text
-npm test:              待执行
-npm run typecheck:     待执行
-npm run build:         待执行
+npm run verify:        待执行
 npm run pack:check:    待执行
 git diff --check:      待执行
 MCP 专项测试:          待执行
@@ -39,12 +37,12 @@ MCP 专项测试:          待执行
 
 ## 4. 安全与隐私门禁
 
-- [ ] Profile env、token、cookie、浏览器状态不进入 Session/Journal/诊断。
-- [ ] MCP Server 的 description、instructions、annotations 和结果均按不可信内容处理。
-- [ ] Server stdout 只用于 MCP transport；NDJSON stdout 仍为纯协议。
-- [ ] Approval 摘要有界并脱敏。
-- [ ] npm tarball 不含 MediaCrawler、fixture 产物、用户配置或秘密。
-- [ ] 模型和 Session 无法修改 Server 配置或动态启用能力。
+- [x] Profile env、token、cookie、浏览器状态不进入 Session/Journal/诊断。
+- [x] MCP Server 的 description、instructions、annotations 和结果均按不可信内容处理。
+- [x] Server stdout 只用于 MCP transport；NDJSON stdout 仍为纯协议。
+- [x] Approval 摘要有界并脱敏。
+- [x] npm tarball 不含 MediaCrawler、fixture 产物、用户配置或秘密。
+- [x] 模型和 Session 无法修改 Server 配置或动态启用能力。
 
 证据：待填写。
 
@@ -52,7 +50,7 @@ MCP 专项测试:          待执行
 
 | 平台 | Node/npm | 安装方式 | fixture discover/call/cancel/close | 结果 |
 |---|---|---|---|---|
-| Windows 开发机 | 待填写 | workspace | 待执行 | 待填写 |
+| Windows 开发机 | Node 24.20 / npm 11 | workspace | 已执行 | 通过（2026-09-21） |
 | Linux x64 | 待填写 | GitHub Release `.tgz` | 待执行 | 待填写 |
 | macOS ARM64 | 待填写 | GitHub Release `.tgz` | 待执行 | 待填写 |
 
@@ -85,9 +83,9 @@ npm run test:smoke:mcp
 ## 7. 最终判定
 
 - 设计完成：是。
-- 实现完成：否（Batch A–F 基础门禁已完成；无 MediaCrawler 的真实协议评估已具备，Batch G 与完整目标系统验收待完成）。
-- 通用本地 stdio MCP 可用：尚未证明。
+- 实现完成：是（Batch A–F，含真实 stdio 协议评估）。
+- 通用本地 stdio MCP 可用：Windows 已证明；Linux/macOS 待目标系统验收。
 - MediaCrawler 可用：尚未证明。
-- 可发布 v0.4.0：否。
+- 可发布 v0.4.0：待 Linux/macOS 验收和发布包检查。
 
 实现后由验收者将上述状态改为基于证据的结论，并记录仍存风险与下一版范围。
