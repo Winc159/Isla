@@ -63,9 +63,20 @@ describe('interactive input editor', () => {
     input.write('/s\t\r');
 
     await expect(reading).resolves.toEqual({ type: 'submit', value: '/sessions' });
-    expect(target.read()).toContain('you> /\n/new  开启新会话\n/sessions  选择历史会话\n/exit  退出 Isla');
-    expect(target.read()).toContain('you> /s\n/sessions  选择历史会话');
+    expect(target.read()).toContain('you> /\n  /new  开启新会话\n  /sessions  选择历史会话\n  /exit  退出 Isla');
+    expect(target.read()).toContain('you> /s\n  /sessions  选择历史会话');
     expect(target.read()).toContain('/sessions');
+  });
+
+  it('selects slash commands with arrows and accepts the selection with Enter', async () => {
+    const input = interactiveInput();
+    const target = output();
+    const reading = readInteractiveMessage(input, target.stream, [], '', commandSuggestions);
+
+    input.write('/\x1b[B\x1b[B\r use demo\r');
+
+    await expect(reading).resolves.toEqual({ type: 'submit', value: '/sessions use demo' });
+    expect(target.read()).toContain('> /sessions  选择历史会话');
   });
 
   it('counts wrapped command descriptions when restoring the cursor', async () => {
@@ -128,6 +139,13 @@ describe('interactive input editor', () => {
     const plain = readInteractiveMessage(plainInput, output().stream, []);
     plainInput.write('c\nd\r');
     await expect(plain).resolves.toEqual({ type: 'submit', value: 'c\nd' });
+  });
+
+  it('normalizes CRLF in bracketed paste without duplicating line breaks', async () => {
+    const input = interactiveInput();
+    const reading = readInteractiveMessage(input, output().stream, []);
+    input.write('\x1b[200~a\r\nb\x1b[201~\r');
+    await expect(reading).resolves.toEqual({ type: 'submit', value: 'a\nb' });
   });
 
   it('edits whole graphemes and browses history in a single-line buffer', async () => {

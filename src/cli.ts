@@ -106,7 +106,7 @@ export async function runCli(
   let draft = '';
   const streamingDisplay = interactive && (output as Writable & { isTTY?: boolean }).isTTY === true && runtime.getProviderCapabilities(providerId)?.nativeStreaming === true;
   const streamState = { sawDelta: false, hadToolStep: false };
-  let stopActiveLoading = (): void => {};
+  let activeLoading: LoadingIndicator | undefined;
   const onModelStepEvent = (event: import('./core/events.js').ModelStepEvent): void => {
     if (!streamingDisplay) return;
     if (event.type === 'model_step_start') return;
@@ -119,7 +119,7 @@ export async function runCli(
       if (streamState.sawDelta) output.write('\n');
     }
   };
-  session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => stopActiveLoading(), mcpHost);
+  session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => activeLoading?.pause(), () => activeLoading?.resume(), mcpHost);
 
   const handleLine = async (line: string): Promise<'continue' | 'exit'> => {
     const command = findCliCommand(line);
@@ -152,7 +152,7 @@ export async function runCli(
       }
       if (result.type === 'switch-session') {
         storedSession = result.session;
-        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => stopActiveLoading(), mcpHost);
+        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => activeLoading?.pause(), () => activeLoading?.resume(), mcpHost);
         output.write('\x1b[2J\x1b[3J\x1b[H');
         writeHeader(output, providerId, model, workspaceRoot);
         if (result.replayHistory) writeSessionHistory(output, storedSession);
@@ -160,17 +160,17 @@ export async function runCli(
       } else if (result.type === 'invoke-skill') {
         draft = '';
         const startedAt = performance.now();
-        const stopLoading = startLoading(output, startedAt, '生成中', logLevel !== 'debug' && !streamingDisplay);
-        stopActiveLoading = stopLoading;
+        const loading = startLoading(output, startedAt, '生成中', logLevel !== 'debug' && !streamingDisplay);
+        activeLoading = loading;
         const interrupt = interactive ? createCliInterruptController(session, output) : undefined;
         interrupt?.start();
         try {
           const response = await session.sendWithSkill({ name: result.name, ...(result.userInput ? { userInput: result.userInput } : {}), content: result.content });
-          stopLoading(); interrupt?.stop();
+          loading.stop(); interrupt?.stop();
           output.write(`isla> ${response.text}\n\n`);
         } catch (error) {
-          stopLoading(); interrupt?.stop();
-          errorOutput.write(`Error: ${error instanceof Error ? error.message : 'Unknown error'}\n耗时 ${formatElapsed(startedAt)}\n`);
+          loading.stop(); interrupt?.stop();
+          errorOutput.write(`Error: ${error instanceof Error ? error.message : 'Unknown error'}\n耗时 ${loading.elapsed()}\n`);
         }
       } else if (interactive && command.inputMode === 'raw') {
         draft = line;
@@ -183,23 +183,23 @@ export async function runCli(
     const startedAt = performance.now();
     streamState.sawDelta = false;
     streamState.hadToolStep = false;
-    const stopLoading = startLoading(output, startedAt, '生成中', logLevel !== 'debug' && !streamingDisplay);
-    stopActiveLoading = stopLoading;
+    const loading = startLoading(output, startedAt, '生成中', logLevel !== 'debug' && !streamingDisplay);
+    activeLoading = loading;
     const interrupt = interactive ? createCliInterruptController(session, output) : undefined;
     interrupt?.start();
     try {
       const response = await session.send(line);
-      stopLoading();
+      loading.stop();
       if (streamState.sawDelta && !streamState.hadToolStep) output.write('\n');
       else output.write(`isla> ${response.text}\n`);
       if (response.verificationStatus === 'passed_after_last_change') output.write('验证：已通过\n');
       else if (response.verificationStatus === 'not_run') output.write('验证：未运行\n');
       else if (response.verificationStatus === 'failed_after_last_change') output.write('验证：失败\n');
-      if (logLevel !== 'quiet') output.write(`耗时 ${formatElapsed(startedAt)}\n`);
+      if (logLevel !== 'quiet') output.write(`耗时 ${loading.elapsed()}\n`);
       output.write('\n');
       if (response.projectSources?.length) output.write(`参考：\n${response.projectSources.map(source => `- ${source.path}:${source.startLine}`).join("\n")}\n\n`);
     } catch (error) {
-      stopLoading();
+      loading.stop();
       if (streamState.sawDelta) output.write('\n');
       if (debug) {
         const name = error instanceof Error ? error.name : 'UnknownError';
@@ -212,10 +212,10 @@ export async function runCli(
         errorOutput.write(`[debug] provider=${providerId} model=${model} error=${name} category=${category}\n`);
       }
       errorOutput.write(
-        `Error: ${error instanceof Error ? error.message : 'Unknown error'}\n耗时 ${formatElapsed(startedAt)}\n`,
+        `Error: ${error instanceof Error ? error.message : 'Unknown error'}\n耗时 ${loading.elapsed()}\n`,
       );
     } finally {
-      stopActiveLoading = () => {};
+      activeLoading = undefined;
       await session.whenIdle();
       interrupt?.stop();
     }
@@ -277,29 +277,47 @@ function writeSessionHistory(output: Writable, session: StoredSession): void {
   output.write('\n');
 }
 
-function startLoading(output: Writable, startedAt: number, label = '生成中', enabled = true): () => void {
-  if (!enabled) return () => {};
-  if (!(output as Writable & { isTTY?: boolean }).isTTY) return () => {};
+interface LoadingIndicator { pause(): void; resume(): void; stop(): void; elapsed(): string }
+
+function startLoading(output: Writable, startedAt: number, label = '生成中', enabled = true): LoadingIndicator {
+  const visible = enabled && (output as Writable & { isTTY?: boolean }).isTTY === true;
   const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let frame = 0;
+  let pausedAt: number | undefined;
+  let pausedDuration = 0;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let stopped = false;
+  const elapsedMilliseconds = () => (pausedAt ?? performance.now()) - startedAt - pausedDuration;
   const render = () => {
-    output.write(`\risla> ${frames[frame % frames.length]} ${label} ${formatElapsed(startedAt)}`);
+    if (!visible) return;
+    output.write(`\risla> ${frames[frame % frames.length]} ${label} ${formatDuration(elapsedMilliseconds())}`);
     frame += 1;
   };
-  render();
-  const timer = setInterval(render, 1000);
-  timer.unref();
-  let stopped = false;
-  return () => {
-    if (stopped) return;
-    stopped = true;
-    clearInterval(timer);
-    output.write('\r\x1b[2K');
+  const pause = () => {
+    if (stopped || pausedAt !== undefined) return;
+    pausedAt = performance.now();
+    if (timer) clearInterval(timer);
+    timer = undefined;
+    if (visible) output.write('\r\x1b[2K');
   };
+  const resume = () => {
+    if (stopped || pausedAt === undefined) return;
+    pausedDuration += performance.now() - pausedAt;
+    pausedAt = undefined;
+    render();
+    if (visible) { timer = setInterval(render, 1000); timer.unref(); }
+  };
+  pausedAt = performance.now();
+  resume();
+  return { pause, resume, stop: () => { if (stopped) return; pause(); stopped = true; }, elapsed: () => formatDuration(elapsedMilliseconds()) };
 }
 
 function formatElapsed(startedAt: number): string {
-  const totalSeconds = Math.floor((performance.now() - startedAt) / 1000);
+  return formatDuration(performance.now() - startedAt);
+}
+
+function formatDuration(milliseconds: number): string {
+  const totalSeconds = Math.floor(milliseconds / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   if (minutes < 60) {
@@ -335,11 +353,12 @@ function createPersistentSession(
   webFetch?: import('./config.js').WebFetchConfig,
   webSearch?: import('./config.js').WebSearchConfig,
   onModelStepEvent?: (event: import('./core/events.js').ModelStepEvent) => void,
-  onQuestion?: () => void,
+  onInteractionStart?: () => void,
+  onInteractionEnd?: () => void,
   mcpHost?: McpHost,
 ) {
   const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}) });
-  return factory.create({ stored: storedSession, input, output, interactive, ...(interactive ? { approvalService: new CliApprovalService(input, output), userQuestionService: new CliUserQuestionService(input, output, onQuestion) } : {}), ...(onModelStepEvent ? { onModelStepEvent } : {}) });
+  return factory.create({ stored: storedSession, input, output, interactive, ...(interactive ? { approvalService: new CliApprovalService(input, output, onInteractionStart, onInteractionEnd), userQuestionService: new CliUserQuestionService(input, output, onInteractionStart, onInteractionEnd) } : {}), ...(onModelStepEvent ? { onModelStepEvent } : {}) });
 }
 if (isCliEntry(import.meta.url, process.argv[1])) {
   try {

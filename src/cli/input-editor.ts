@@ -13,6 +13,7 @@ export interface CommandSuggestion {
 
 const prompt = 'you> ';
 const defaultColumns = 80;
+const maxVisibleSuggestions = 10;
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
 export function readInteractiveMessage(
@@ -31,7 +32,9 @@ export function readInteractiveMessage(
   let historyDraft = initialValue;
   let preferredColumn: number | undefined;
   let pasteMode = false;
+  let pastePendingCarriageReturn = false;
   let pendingEnter: ReturnType<typeof setImmediate> | undefined;
+  let selectedSuggestion = -1;
 
   emitKeypressEvents(input);
   input.setRawMode(true);
@@ -50,11 +53,12 @@ export function readInteractiveMessage(
     const cursorPosition = getVisualPosition(buffer, cursor, columns);
     const endPosition = getVisualPosition(buffer, buffer.length, columns);
     const suggestions = getCommandSuggestions(buffer, cursor, commands);
-    if (suggestions.length > 0) {
-      output.write(`\n${suggestions.map(suggestion => `${suggestion.name}  ${suggestion.description}`).join('\n')}`);
+    const visibleSuggestions = getVisibleSuggestions(suggestions, selectedSuggestion);
+    if (visibleSuggestions.length > 0) {
+      output.write(`\n${visibleSuggestions.map(({ suggestion, index }) => `${index === selectedSuggestion ? '> ' : '  '}${suggestion.name}  ${suggestion.description}`).join('\n')}`);
     }
-    const suggestionRows = suggestions.reduce(
-      (rows, suggestion) => rows + getRenderedLineCount(`${suggestion.name}  ${suggestion.description}`, columns),
+    const suggestionRows = visibleSuggestions.reduce(
+      (rows, { suggestion }) => rows + getRenderedLineCount(`  ${suggestion.name}  ${suggestion.description}`, columns),
       0,
     );
     const renderedEndRow = endPosition.row + suggestionRows;
@@ -98,6 +102,17 @@ export function readInteractiveMessage(
       buffer.splice(cursor, 0, ...added);
       cursor += added.length;
       preferredColumn = undefined;
+      selectedSuggestion = -1;
+    };
+
+    const acceptSuggestion = (suggestion: CommandSuggestion) => {
+      const token = findSlashToken(buffer, cursor);
+      const completion = splitGraphemes(suggestion.name);
+      buffer.splice(token?.start ?? cursor, (token?.end ?? cursor) - (token?.start ?? cursor), ...completion);
+      cursor = (token?.start ?? cursor) + completion.length;
+      preferredColumn = undefined;
+      selectedSuggestion = -1;
+      render();
     };
 
     const onEnd = () => finish({ type: 'exit' });
@@ -111,15 +126,20 @@ export function readInteractiveMessage(
 
       if (key.name === 'paste-start') {
         pasteMode = true;
+        pastePendingCarriageReturn = false;
         return;
       }
       if (key.name === 'paste-end') {
         pasteMode = false;
+        pastePendingCarriageReturn = false;
         render();
         return;
       }
       if (pasteMode) {
-        insert(key.sequence ?? text ?? '');
+        let pasted = key.sequence ?? text ?? '';
+        if (pastePendingCarriageReturn && pasted.startsWith('\n')) pasted = pasted.slice(1);
+        pastePendingCarriageReturn = pasted.endsWith('\r');
+        insert(pasted.replaceAll(/\r\n?/g, '\n'));
         return;
       }
       if (isNewlineShortcut(key)) {
@@ -136,6 +156,12 @@ export function readInteractiveMessage(
         return;
       }
       if (key.name === 'return' || key.name === 'enter') {
+        const suggestions = getCommandSuggestions(buffer, cursor, commands);
+        const selected = selectedSuggestion >= 0 ? suggestions[selectedSuggestion] : undefined;
+        if (selected) {
+          acceptSuggestion(selected);
+          return;
+        }
         pendingEnter = setImmediate(() => {
           pendingEnter = undefined;
           submit();
@@ -143,23 +169,27 @@ export function readInteractiveMessage(
         return;
       }
       if (key.name === 'tab') {
-        const token = findSlashToken(buffer, cursor);
         const suggestions = getCommandSuggestions(buffer, cursor, commands);
-        if (suggestions.length === 1) {
-          const completion = splitGraphemes(suggestions[0]?.name ?? '');
-          buffer.splice(token?.start ?? cursor, (token?.end ?? cursor) - (token?.start ?? cursor), ...completion);
-          cursor = (token?.start ?? cursor) + completion.length;
-          preferredColumn = undefined;
-          render();
-        }
+        const suggestion = selectedSuggestion >= 0 ? suggestions[selectedSuggestion] : suggestions.length === 1 ? suggestions[0] : undefined;
+        if (suggestion) acceptSuggestion(suggestion);
+        return;
+      }
+      const suggestions = getCommandSuggestions(buffer, cursor, commands);
+      if ((key.name === 'up' || key.name === 'down') && suggestions.length > 0) {
+        selectedSuggestion = key.name === 'down'
+          ? Math.min(suggestions.length - 1, selectedSuggestion + 1)
+          : selectedSuggestion < 0 ? suggestions.length - 1 : Math.max(0, selectedSuggestion - 1);
+        render();
         return;
       }
       if (key.name === 'left') {
         cursor = Math.max(0, cursor - 1);
         preferredColumn = undefined;
+        selectedSuggestion = -1;
       } else if (key.name === 'right') {
         cursor = Math.min(buffer.length, cursor + 1);
         preferredColumn = undefined;
+        selectedSuggestion = -1;
       } else if (key.name === 'home') {
         cursor = findLineStart(buffer, cursor);
         preferredColumn = undefined;
@@ -169,9 +199,11 @@ export function readInteractiveMessage(
       } else if (key.name === 'backspace') {
         if (cursor > 0) buffer.splice(--cursor, 1);
         preferredColumn = undefined;
+        selectedSuggestion = -1;
       } else if (key.name === 'delete') {
         if (cursor < buffer.length) buffer.splice(cursor, 1);
         preferredColumn = undefined;
+        selectedSuggestion = -1;
       } else if (key.name === 'up' || key.name === 'down') {
         if (buffer.includes('\n')) {
           const targetColumn = preferredColumn ?? getLineColumn(buffer, cursor);
@@ -197,6 +229,14 @@ export function readInteractiveMessage(
     signal?.addEventListener('abort', onAbort, { once: true });
     if (signal?.aborted) onAbort();
   });
+}
+
+function getVisibleSuggestions(
+  suggestions: readonly CommandSuggestion[],
+  selected: number,
+): Array<{ readonly suggestion: CommandSuggestion; readonly index: number }> {
+  const pageStart = selected < 0 ? 0 : Math.floor(selected / maxVisibleSuggestions) * maxVisibleSuggestions;
+  return suggestions.slice(pageStart, pageStart + maxVisibleSuggestions).map((suggestion, offset) => ({ suggestion, index: pageStart + offset }));
 }
 
 function getCommandSuggestions(

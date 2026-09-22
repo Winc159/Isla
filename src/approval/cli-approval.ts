@@ -3,12 +3,13 @@ import type { ApprovalRequest, ApprovalRequestOptions, ApprovalService } from ".
 
 export class CliApprovalService implements ApprovalService {
   private readonly approved = new Set<string>();
-  constructor(private readonly input: Readable, private readonly output: Writable) {}
+  constructor(private readonly input: Readable, private readonly output: Writable, private readonly onPromptStart?: () => void, private readonly onPromptEnd?: () => void) {}
 
   request(request: ApprovalRequest, options: ApprovalRequestOptions = {}): Promise<{ approved: true } | { approved: false; reason?: string }> {
     const approvalKey = `${request.toolName}:${request.permission.kind}`;
     if (options.signal?.aborted) return Promise.resolve({ approved: false, reason: "当前回合已取消。" });
     if (this.approved.has(approvalKey)) return Promise.resolve({ approved: true });
+    this.onPromptStart?.();
     return new Promise(resolve => {
       const input = this.input as Readable & { isTTY?: boolean; setRawMode?: (value: boolean) => void };
       const previousDataListeners = input.rawListeners('data');
@@ -19,6 +20,7 @@ export class CliApprovalService implements ApprovalService {
         input.setRawMode?.(false);
         input.pause();
         this.output.write("\n");
+        this.onPromptEnd?.();
         resolve(decision);
       };
       const decide = (value: string) => {

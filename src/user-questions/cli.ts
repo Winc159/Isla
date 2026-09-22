@@ -5,19 +5,21 @@ import { ToolFailure } from "../tools/errors.js";
 import type { UserQuestion, UserQuestionAnswer, UserQuestionRequest, UserQuestionResult, UserQuestionService } from "./types.js";
 
 export class CliUserQuestionService implements UserQuestionService {
-  constructor(private readonly input: Readable, private readonly output: Writable, private readonly onQuestion?: () => void) {}
+  constructor(private readonly input: Readable, private readonly output: Writable, private readonly onQuestionStart?: () => void, private readonly onQuestionEnd?: () => void) {}
 
   async ask(request: UserQuestionRequest, options: { readonly signal?: AbortSignal } = {}): Promise<UserQuestionResult> {
-    this.onQuestion?.();
-    const answers: UserQuestionAnswer[] = [];
-    for (const question of request.questions) {
-      if (options.signal?.aborted) throw new ToolFailure("TURN_CANCELLED", "当前回合已取消。");
-      this.output.write(renderQuestion(question));
-      const answer = await readInteractiveMessage(this.input as InteractiveInput, this.output, [], "", [], options.signal);
-      if (answer.type === "exit" || options.signal?.aborted) throw new ToolFailure("TURN_CANCELLED", "当前回合已取消。");
-      answers.push(parseAnswer(question, answer.value));
-    }
-    return { answers };
+    this.onQuestionStart?.();
+    try {
+      const answers: UserQuestionAnswer[] = [];
+      for (const question of request.questions) {
+        if (options.signal?.aborted) throw new ToolFailure("TURN_CANCELLED", "当前回合已取消。");
+        this.output.write(renderQuestion(question));
+        const answer = await readInteractiveMessage(this.input as InteractiveInput, this.output, [], "", [], options.signal);
+        if (answer.type === "exit" || options.signal?.aborted) throw new ToolFailure("TURN_CANCELLED", "当前回合已取消。");
+        answers.push(parseAnswer(question, answer.value));
+      }
+      return { answers };
+    } finally { this.onQuestionEnd?.(); }
   }
 }
 
