@@ -10,10 +10,10 @@ const MAX_OUTPUT_BYTES = 64_000;
 const TERMINATION_GRACE_MS = 250;
 const SENSITIVE_ENV_PATTERN = /KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTH|AUTHORIZATION|CREDENTIAL|COOKIE|SESSION/i;
 
-export interface CommandRunRequest { readonly command: string; readonly workdir?: string; readonly timeoutMs?: number; readonly signal?: AbortSignal; }
+export interface CommandRunRequest { readonly command?: string; readonly executable?: string; readonly argv?: readonly string[]; readonly workdir?: string; readonly timeoutMs?: number; readonly signal?: AbortSignal; }
 export interface BoundedOutput { readonly text: string; readonly truncated: boolean; }
 export interface CommandRunResult {
-  readonly shell: ShellInvocation["shell"];
+  readonly shell: ShellInvocation["shell"] | "direct";
   readonly workdir: string;
   readonly exitCode: number | null;
   readonly signal: NodeJS.Signals | null;
@@ -24,10 +24,10 @@ export interface CommandRunResult {
 }
 
 export async function runCommand(workspaceRoot: string, request: CommandRunRequest): Promise<CommandRunResult> {
-  if (!request.command.trim()) throw new Error("command must be a non-empty string");
+  if ((!request.command || !request.command.trim()) && (!request.executable || !request.executable.trim())) throw new Error("executable must be a non-empty string");
   const workdir = await resolveWorkdir(workspaceRoot, request.workdir ?? "");
   const timeoutMs = clampTimeout(request.timeoutMs);
-  const invocation = createShellInvocation(request.command);
+  const invocation = request.executable ? { shell: "direct" as const, argv: [request.executable, ...(request.argv ?? [])] } : createShellInvocation(request.command!);
   const stdout = new OutputCollector(MAX_OUTPUT_BYTES);
   const stderr = new OutputCollector(MAX_OUTPUT_BYTES);
   const child = spawn(invocation.argv[0]!, invocation.argv.slice(1), {

@@ -2,8 +2,15 @@ import { describe, expect, it } from "vitest";
 import { createRunCommandTool } from "../../src/tools/command-execution.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { ToolRuntime } from "../../src/tools/runtime.js";
+import { execPath } from "node:process";
 
 describe("run_command tool", () => {
+  it("accepts executable and argv without shell interpretation", async () => {
+    const tool = createRunCommandTool(process.cwd());
+    const result = await tool.execute(JSON.stringify({ executable: execPath, argv: ["-e", "process.stdout.write(process.argv[1])", "a;b"] }));
+    expect(result.content).toContain("a;b");
+    expect(result.details).toMatchObject({ shell: "direct", exitCode: 0 });
+  });
   it("returns separated output and structured execution details", async () => {
     const tool = createRunCommandTool(process.cwd());
     const result = await tool.execute(JSON.stringify({ command: "Write-Output ok; Write-Error warning; exit 2" }));

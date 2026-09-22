@@ -1,6 +1,6 @@
 # v0.4.5：Resident Host and Second Surface
 
-状态：设计完成，等待 v0.4.4
+状态：服务化核心与自动化验收通过，已完成当前版本验收
 
 ## 目标
 

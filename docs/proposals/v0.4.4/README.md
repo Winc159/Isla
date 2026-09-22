@@ -1,6 +1,6 @@
 # v0.4.4：Controlled Shell and Execution World
 
-状态：设计完成，等待 v0.4.3
+状态：核心实现与自动化/真实评估通过，已收口
 
 ## 目标
 

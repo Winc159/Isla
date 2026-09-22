@@ -1,0 +1,12 @@
+[Unit]
+Description=Isla Resident Host
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/env isla --profile main
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

@@ -144,6 +144,8 @@ export async function runCli(
           ...(openConfig ? { openConfig } : {}),
           ...(mcpHost ? { mcpHost } : {}),
           capabilitySnapshot: inventoryFactory.capabilitySnapshot,
+          maxContextTurns,
+          maxContextChars,
       });
       if (result.type === 'exit') {
         return 'exit';

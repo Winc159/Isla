@@ -9,6 +9,11 @@ const cleanup: string[] = [];
 afterEach(async () => { await Promise.all(cleanup.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
 describe("shell adapter", () => {
+  it("runs direct executable argv without shell expansion", async () => {
+    const result = await runCommand(process.cwd(), { executable: process.execPath, argv: ["-e", "process.stdout.write(process.argv[1])", "a;b"] });
+    expect(result.shell).toBe("direct");
+    expect(result.stdout.text).toBe("a;b");
+  });
   it("passes the command as one bash argv element", () => expect(createShellInvocation("echo 'a b'", "linux")).toEqual({ shell: "bash", argv: ["bash", "-c", "echo 'a b'"] }));
   it("uses non-interactive PowerShell on Windows", () => expect(createShellInvocation("Write-Output x", "win32")).toEqual({ shell: "powershell", argv: ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Write-Output x"] }));
 });

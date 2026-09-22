@@ -32,6 +32,8 @@ export interface CliCommandContext {
   readonly openConfig?: (path: string) => Promise<void>;
   readonly mcpHost?: McpHost;
   readonly capabilitySnapshot?: () => CapabilitySnapshot;
+  readonly maxContextTurns?: number;
+  readonly maxContextChars?: number;
 }
 
 export type CliCommandResult =

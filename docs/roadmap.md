@@ -373,13 +373,13 @@ v0.4.1 不扩展 MCP 协议面，集中补齐个人用户可操作性：通过 `
 
 本版不建设后台总结任务、向量记忆或不可逆历史重写。设计、Batch、测试矩阵和验收模板见 [`docs/proposals/v0.4.3/`](proposals/v0.4.3/README.md)。
 
-## v0.4.4：Controlled Shell and Execution World（设计完成，等待 v0.4.3）
+## v0.4.4：Controlled Shell and Execution World（已完成收口）
 
 以一个真实外部动作需求驱动受控命令执行：仅接受 argv，限制 cwd、环境变量、输出、超时和进程树；按只读、workspace-write、full 三档策略接入现有 Approval、Permission、Cancel 和 Journal。
 
 本版不提供任意 shell 字符串、持久 PTY、后台 Job、远程 Sandbox、sudo 或自动安装依赖，也不借机抽象通用执行框架。设计、Batch、测试矩阵和验收模板见 [`docs/proposals/v0.4.4/`](proposals/v0.4.4/README.md)。
 
-## v0.4.5：Resident Host and Second Surface（设计完成，等待 v0.4.4）
+## v0.4.5：Resident Host and Second Surface（已完成当前版本验收）
 
 当 CLI 已不足以支持全天在线时，把同一 Application 和 SessionFactory 暴露为仅回环地址监听、带认证的常驻 Host，并提供第二个最小 HTTP + NDJSON/SSE Surface。它覆盖会话创建/恢复、prompt、cancel、status、断线重连和优雅关闭，不复制 Runtime 规则。
 
