@@ -2,8 +2,8 @@
 import { createInterface } from 'node:readline';
 import { performance } from 'node:perf_hooks';
 import type { Readable, Writable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
 import { isInteractiveInput } from './cli/command.js';
+import { isCliEntry } from './cli-entry.js';
 import { findCliCommand, listCliCommands } from './cli/commands.js';
 import { readInteractiveMessage } from './cli/input-editor.js';
 import { DEFAULT_MAX_CONTEXT_TURNS } from './core/session.js';
@@ -341,7 +341,7 @@ function createPersistentSession(
   const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}) });
   return factory.create({ stored: storedSession, input, output, interactive, ...(interactive ? { approvalService: new CliApprovalService(input, output), userQuestionService: new CliUserQuestionService(input, output, onQuestion) } : {}), ...(onModelStepEvent ? { onModelStepEvent } : {}) });
 }
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isCliEntry(import.meta.url, process.argv[1])) {
   try {
     const startupArgs = parseCliStartupArgs(process.argv.slice(2));
     if (!startupArgs.useEnv && !startupArgs.profileName && process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') {
