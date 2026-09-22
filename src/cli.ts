@@ -27,6 +27,7 @@ import { SkillCatalog } from './skills/catalog.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { McpHost } from './mcp/host.js';
+import type { CapabilityPolicy } from './capabilities.js';
 
 export interface CliInterruptController {
   start(): void;
@@ -81,6 +82,7 @@ export async function runCli(
   webFetch?: import('./config.js').WebFetchConfig,
   webSearch?: import('./config.js').WebSearchConfig,
   mcpHost?: McpHost,
+  capabilityPolicy?: CapabilityPolicy,
 ): Promise<void> {
   writeHeader(output, providerId, model, workspaceRoot, webFetch?.enabled === true);
   const currentWorkspaceKey = workspaceKey(workspaceRoot);
@@ -98,6 +100,7 @@ export async function runCli(
     );
   }
   const interactive = isInteractiveInput(input);
+  const inventoryFactory = createSessionFactory({ runtime, config: { provider: providerId, model, maxContextTurns, maxContextChars, contextRetainTurns, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}), ...(capabilityPolicy ? { capabilityPolicy } : {}) }, sessionStore, workspaceRoot });
   let session: ChatSession;
   const history: string[] = [];
   let draft = '';
@@ -140,6 +143,7 @@ export async function runCli(
           workspaceRoot,
           ...(openConfig ? { openConfig } : {}),
           ...(mcpHost ? { mcpHost } : {}),
+          capabilitySnapshot: inventoryFactory.capabilitySnapshot,
       });
       if (result.type === 'exit') {
         return 'exit';
@@ -256,10 +260,11 @@ export interface CliAdapterOptions {
   readonly webFetch?: import('./config.js').WebFetchConfig;
   readonly webSearch?: import('./config.js').WebSearchConfig;
   readonly mcpHost?: McpHost;
+  readonly capabilityPolicy?: CapabilityPolicy;
 }
 
 export async function runCliAdapter(options: CliAdapterOptions): Promise<void> {
-  return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics, options.webFetch, options.webSearch, options.mcpHost);
+  return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics, options.webFetch, options.webSearch, options.mcpHost, options.capabilityPolicy);
 }
 
 function writeSessionHistory(output: Writable, session: StoredSession): void {
@@ -366,6 +371,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
         ...(config.workspaceRoot ? { workspace: config.workspaceRoot } : {}),
         capabilities: { toolCalling: runtime.getProviderCapabilities(config.provider)?.toolCalling === true, cancellation: true, streaming: runtime.getProviderCapabilities(config.provider)?.nativeStreaming === true, streamingToolCalls: runtime.getProviderCapabilities(config.provider)?.streamingToolCalls === true, webFetch: config.webFetch?.enabled === true, webSearch: config.webSearch?.enabled === true, userQuestions: true, mcp: Boolean(mcpHost) },
         ...(mcpHost ? { mcpHost } : {}),
+        capabilitySnapshot: sessionFactory.capabilitySnapshot,
         invokeSkill: async (name, text) => {
           const definition = protocolSkillCatalog.loadSync(name);
           if (!definition || !definition.userInvocable) throw new Error('Skill 不存在或不可由用户调用');
@@ -421,6 +427,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       ...(config.webFetch ? { webFetch: config.webFetch } : {}),
       ...(config.webSearch ? { webSearch: config.webSearch } : {}),
       ...(mcpHost ? { mcpHost } : {}),
+      ...(config.capabilityPolicy ? { capabilityPolicy: config.capabilityPolicy } : {}),
       diagnostics: event => application.diagnostics.emit(event),
     });
     } finally { application.close(); }

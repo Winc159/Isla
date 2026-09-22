@@ -112,6 +112,7 @@ describe.skipIf(!PTY_AVAILABLE)('CLI PTY acceptance', () => {
       fixture.driver.enter('/mcp setup');
       await fixture.driver.waitForText('MCP 操作');
       fixture.driver.enter('remove');
+      await fixture.driver.waitForText('Server id:');
       fixture.driver.enter('fixture');
       await fixture.driver.waitForText('确认删除 fixture');
       fixture.driver.enter('y');

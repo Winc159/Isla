@@ -2,9 +2,9 @@ import type { SkillCatalog } from "../skills/catalog.js";
 import type { ToolCapability, Tool } from "./types.js";
 import { renderSkillContent } from "../skills/render.js";
 
-export function createSkillCapability(catalog: SkillCatalog): ToolCapability | undefined {
+export function createSkillCapability(catalog: SkillCatalog, allow?: readonly string[], deny?: readonly string[]): ToolCapability | undefined {
   const snapshot = catalog.listSync();
-  const modelEntries = snapshot.entries.filter(entry => entry.modelInvocable);
+  const modelEntries = snapshot.entries.filter(entry => entry.modelInvocable && !deny?.includes(entry.name) && (!allow || allow.includes(entry.name)));
   if (!modelEntries.length) return undefined;
   const tool: Tool = {
     definition: {

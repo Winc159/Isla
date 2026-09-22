@@ -21,6 +21,8 @@ export interface ToolCompositionContext {
   readonly workspaceKey?: string;
   readonly currentSessionId?: () => string;
   readonly skillCatalog?: SkillCatalog;
+  readonly skillAllow?: readonly string[];
+  readonly skillDeny?: readonly string[];
 }
 
 export type ToolCapabilityFactory = (context: ToolCompositionContext) => ToolCapability | undefined;
@@ -31,7 +33,7 @@ const capabilityFactories: readonly ToolCapabilityFactory[] = [
   context => createCommandExecutionCapability(context.workspaceRoot),
   () => createTaskStateCapability(),
   context => context.sessionQuery && context.workspaceKey && context.currentSessionId ? createSessionQueryCapability(context.sessionQuery, context.workspaceKey, context.currentSessionId) : undefined,
-  context => context.skillCatalog ? createSkillCapability(context.skillCatalog) : undefined,
+  context => context.skillCatalog ? createSkillCapability(context.skillCatalog, context.skillAllow, context.skillDeny) : undefined,
   context => context.userQuestionService ? createUserInteractionCapability(context.userQuestionService) : undefined,
   context => context.webFetch?.enabled || context.webSearch?.enabled
     ? createWebCapability({

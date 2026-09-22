@@ -28,7 +28,8 @@ export type ProtocolRequest =
   | { readonly type: "skill_invoke"; readonly id: string; readonly name: string; readonly text?: string }
   | { readonly type: "sessions_search"; readonly id: string; readonly query?: string; readonly status?: TaskStatus }
   | { readonly type: "session_select"; readonly id: string; readonly sessionId: string }
-  | { readonly type: "mcp_list"; readonly id: string };
+  | { readonly type: "mcp_list"; readonly id: string }
+  | { readonly type: "capabilities_list"; readonly id: string };
 
 export type ProtocolToolErrorCode = ToolExecutionErrorCode;
 
@@ -53,7 +54,8 @@ export type ProtocolEvent =
   | ProtocolTaskStateEvent
   | { readonly type: "sessions_result"; readonly id: string; readonly sessions: readonly SessionSearchHit[]; readonly truncated: boolean }
   | { readonly type: "skills_result"; readonly id: string; readonly skills: readonly { readonly name: string; readonly description: string; readonly modelInvocable: boolean; readonly userInvocable: boolean }[] }
-  | { readonly type: "mcp_result"; readonly id: string; readonly servers: readonly McpStatus[] };
+  | { readonly type: "mcp_result"; readonly id: string; readonly servers: readonly McpStatus[] }
+  | { readonly type: "capabilities_result"; readonly id: string; readonly version: 1; readonly hash: string; readonly entries: readonly import('../capabilities.js').CapabilityInventoryEntry[] };
 
 export interface ProtocolTaskStateEvent {
   readonly type: "task_state";

@@ -3,6 +3,7 @@ import { DEFAULT_CONTEXT_RETAIN_TURNS, DEFAULT_MAX_CONTEXT_CHARS } from './core/
 import { DEFAULT_PERSONALITY_PROMPT } from './prompts/base.js';
 import { isIP } from 'node:net';
 import type { McpServerConfig } from './mcp/types.js';
+import type { CapabilityPolicy } from './capabilities.js';
 
 export interface WebFetchConfig {
   readonly enabled: boolean;
@@ -52,6 +53,7 @@ export type OpenAIConfig = {
   readonly webFetch?: WebFetchConfig;
   readonly webSearch?: WebSearchConfig;
   readonly mcpServers?: readonly McpServerConfig[];
+  readonly capabilityPolicy?: CapabilityPolicy;
 };
 export type DeepSeekConfig = {
   readonly provider: 'deepseek';
@@ -78,6 +80,7 @@ export type DeepSeekConfig = {
   readonly webFetch?: WebFetchConfig;
   readonly webSearch?: WebSearchConfig;
   readonly mcpServers?: readonly McpServerConfig[];
+  readonly capabilityPolicy?: CapabilityPolicy;
 };
 export type BailianConfig = {
   readonly provider: 'bailian';
@@ -105,6 +108,7 @@ export type BailianConfig = {
   readonly webFetch?: WebFetchConfig;
   readonly webSearch?: WebSearchConfig;
   readonly mcpServers?: readonly McpServerConfig[];
+  readonly capabilityPolicy?: CapabilityPolicy;
 };
 export type LocalConfig = {
   readonly provider: 'local';
@@ -132,6 +136,7 @@ export type LocalConfig = {
   readonly webFetch?: WebFetchConfig;
   readonly webSearch?: WebSearchConfig;
   readonly mcpServers?: readonly McpServerConfig[];
+  readonly capabilityPolicy?: CapabilityPolicy;
 };
 export type AppConfig = OpenAIConfig | DeepSeekConfig | BailianConfig | LocalConfig;
 
@@ -170,6 +175,7 @@ export interface ProfileWebFetchSettingsV1 {
 export interface ProfileWebSearchSettingsV1 { readonly enabled?: boolean; readonly provider?: 'deepseek-official'; readonly maxResults?: number; readonly timeoutMs?: number; readonly maxOutputChars?: number; }
 export interface ProfileToolsSettingsV1 { readonly webFetch?: ProfileWebFetchSettingsV1; readonly webSearch?: ProfileWebSearchSettingsV1; }
 export interface ProfileMcpSettingsV1 { readonly servers?: readonly McpServerConfig[]; }
+export interface ProfileCapabilitiesSettingsV1 extends CapabilityPolicy {}
 
 interface StartupProfileBaseV1 {
   readonly model: string;
@@ -180,6 +186,7 @@ interface StartupProfileBaseV1 {
   readonly appearance?: ProfileAppearanceSettingsV1;
   readonly tools?: ProfileToolsSettingsV1;
   readonly mcp?: ProfileMcpSettingsV1;
+  readonly capabilities?: ProfileCapabilitiesSettingsV1;
 }
 
 export type StartupProfileV1 =
@@ -255,6 +262,7 @@ export function profileToAppConfig(profile: StartupProfileV1): AppConfig {
     ...(profile.tools?.webFetch ? { webFetch: normalizeWebFetchConfig(profile.tools.webFetch) } : { webFetch: normalizeWebFetchConfig({ enabled: true, allowedHosts: ['*'] }) }),
     ...(profile.tools?.webSearch?.enabled && profile.provider === 'deepseek' ? { webSearch: normalizeWebSearchConfig(profile.tools.webSearch, profile.apiKey, profile.model) } : {}),
     ...(profile.mcp?.servers?.length ? { mcpServers: profile.mcp.servers } : {}),
+    ...(profile.capabilities ? { capabilityPolicy: profile.capabilities } : {}),
   };
   if (profile.provider === 'local') return { ...common, provider: 'local', baseURL: profile.baseURL, ...(profile.apiKey ? { apiKey: profile.apiKey } : {}) };
   if (profile.provider === 'bailian') return { ...common, provider: 'bailian', baseURL: profile.baseURL, apiKey: profile.apiKey, ...(profile.streaming === undefined ? {} : { streaming: profile.streaming }) };
@@ -265,7 +273,7 @@ function isRecord(value: unknown): value is UnknownRecord { return Boolean(value
 
 function parseProfile(name: string, value: unknown, onWarning?: (message: string) => void): StartupProfileV1 {
   if (!isRecord(value)) throw new Error(`Isla profile ${name} must be an object`);
-  warnUnknown(value, ['provider', 'model', 'apiKey', 'baseURL', 'streaming', 'workspace', 'sessionDirectory', 'runtime', 'memory', 'appearance', 'tools', 'mcp'], `profile ${name}`, onWarning);
+  warnUnknown(value, ['provider', 'model', 'apiKey', 'baseURL', 'streaming', 'workspace', 'sessionDirectory', 'runtime', 'memory', 'appearance', 'tools', 'mcp', 'capabilities'], `profile ${name}`, onWarning);
   const provider = value.provider;
   const model = nonEmptyString(value.model, `Isla profile ${name}.model`);
   const workspace = value.workspace === undefined ? undefined : nonEmptyString(value.workspace, `Isla profile ${name}.workspace`);
@@ -278,6 +286,7 @@ function parseProfile(name: string, value: unknown, onWarning?: (message: string
     ...(value.appearance !== undefined ? { appearance: parseAppearance(name, value.appearance, onWarning) } : {}),
     ...(value.tools !== undefined ? { tools: parseTools(name, value.tools, onWarning) } : {}),
     ...(value.mcp !== undefined ? { mcp: parseMcp(name, value.mcp) } : {}),
+    ...(value.capabilities !== undefined ? { capabilities: parseCapabilities(name, value.capabilities) } : {}),
   };
   if (provider === 'deepseek' || provider === 'openai') return { ...base, provider, apiKey: nonEmptyString(value.apiKey, `Isla profile ${name}.apiKey`) };
   if (provider === 'bailian') return { ...base, provider, baseURL: validURL(value.baseURL, `Isla profile ${name}.baseURL`), apiKey: nonEmptyString(value.apiKey, `Isla profile ${name}.apiKey`), ...(value.streaming === undefined ? {} : { streaming: booleanValue(value.streaming, `Isla profile ${name}.streaming`) }) };
@@ -354,6 +363,24 @@ function parseMcp(name: string, value: unknown): ProfileMcpSettingsV1 {
     return Object.freeze({ id, transport: 'stdio' as const, command, args: Object.freeze([...args as string[]]), ...(cwd ? { cwd } : {}), required: raw.required === undefined ? false : booleanValue(raw.required, field('required')), startupTimeoutMs: bounded('startupTimeoutMs', 10_000), callTimeoutMs: bounded('callTimeoutMs', 60_000), env: Object.freeze({ ...(envValue as Record<string, string>) }) });
   });
   return Object.freeze({ servers: Object.freeze(servers) });
+}
+
+function parseCapabilities(name: string, value: unknown): ProfileCapabilitiesSettingsV1 {
+  if (!isRecord(value)) throw new Error(`Isla profile ${name}.capabilities must be an object`);
+  const arrays = ['skillAllow', 'skillDeny', 'mcpServerAllow', 'mcpServerDeny', 'mcpToolAllow', 'mcpToolDeny'] as const;
+  const result: Record<string, unknown> = {};
+  warnUnknown(value, [...arrays, 'maxTools', 'maxSchemaBytes', 'maxSkillDescriptionChars', 'maxSkillCatalogChars'], `profile ${name}.capabilities`);
+  for (const key of arrays) {
+    if (value[key] === undefined) continue;
+    if (!Array.isArray(value[key]) || (value[key] as unknown[]).some(item => typeof item !== 'string' || !item.trim())) throw new Error(`Isla profile ${name}.capabilities.${key} must be an array of strings`);
+    result[key] = Object.freeze([...(value[key] as string[])]);
+  }
+  for (const key of ['maxTools', 'maxSchemaBytes', 'maxSkillDescriptionChars', 'maxSkillCatalogChars'] as const) {
+    if (value[key] === undefined) continue;
+    if (!Number.isInteger(value[key]) || (value[key] as number) <= 0) throw new Error(`Isla profile ${name}.capabilities.${key} must be a positive integer`);
+    result[key] = value[key];
+  }
+  return Object.freeze(result as ProfileCapabilitiesSettingsV1);
 }
 
 export type { McpServerConfig } from './mcp/types.js';

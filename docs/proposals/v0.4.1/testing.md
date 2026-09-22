@@ -67,7 +67,7 @@
 | MCP41-TTY-11 | command/args/cwd/required/timeout | 所有目标字段均可编辑，args 保持逐项边界 |
 | MCP41-TTY-12 | 退出向导后继续普通输入 | listener、raw mode 和 pause/resume 已恢复，无输入被吞 |
 
-当前基线：命令入口已有，尚无满足本表的真实 PTY setup 覆盖；全部作为 v0.4.1 发布门禁。
+验收结果：Windows 真实 PTY 已覆盖 setup 主路径和终端恢复；Linux/macOS PTY 作为目标平台发布证据后置。
 
 ## 5. P0 Surface 与兼容
 
@@ -94,7 +94,7 @@
 | MCP41-INT-07 | 默认测试 | 未显式开启时 skip，不联网、不下载 |
 | MCP41-INT-08 | 证据 | 记录版本/许可/平台，不记录用户数据或秘密 |
 
-当前基线：仓库已有使用内部 fixture 的可选 smoke 测试，不能满足 INT-01 至 INT-08；官方 filesystem Server 的手工评估仅作为候选与历史证据。
+验收结果：官方 Filesystem Server 已完成 discover/read/close 真实评估；拒绝 Approval 由离线自动测试覆盖。需要特定可取消长调用的第三方 Server 才能闭合 INT-06 的远端 cancel 分支，该分支作为环境证据后置。
 
 ## 7. P1 打包与目标系统
 
@@ -109,4 +109,4 @@
 
 ## 8. 发布阻断条件
 
-任一条件出现即阻断 v0.4.1：配置写入可被模型触发；秘密出现在输出或测试产物；向导把 argv 当 shell 字符串；并发修改被静默覆盖；保存后当前 Host 被半热更新；诊断启动第二个未托管进程；默认测试下载或联网；第三方 Server 被打入 Isla 包；目标系统用户路径未完成。
+任一条件出现即阻断 v0.4.1 核心验收：配置写入可被模型触发；秘密出现在输出或测试产物；向导把 argv 当 shell 字符串；并发修改被静默覆盖；保存后当前 Host 被半热更新；诊断启动第二个未托管进程；默认测试下载或联网；第三方 Server 被打入 Isla 包。Linux/macOS 目标系统路径仍是正式跨平台发布的阻断条件，但不阻塞后续版本在 Windows 开发基线上推进。

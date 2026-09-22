@@ -1,6 +1,6 @@
 # v0.4.1 验收记录
 
-状态：v0.4.1 核心功能验收通过；跨平台与特定第三方 cancel 属于后续环境验收
+状态：v0.4.1 核心验收通过并收口；跨平台与特定第三方 cancel 属于后续发布环境验收
 设计基线：2026-09-21
 
 ## 1. 功能门禁
@@ -28,19 +28,19 @@
 
 ```text
 npm run verify:                类型检查、全量测试、构建已通过（96 files / 418 passed / 8 skipped）
-npm run pack:check:            待执行
-git diff --check:              待执行
-PTY MCP setup:                 已通过 Windows PTY；当前环境有 AttachConsole 噪声但相关测试未失败
+npm run pack:check:            已通过
+git diff --check:              已通过
+PTY MCP setup:                 已通过 Windows PTY；10/10 PTY 场景通过，AttachConsole 仅为环境噪声
 第三方 stdio MCP interoperability: 已通过官方 Filesystem Server 实际评估
-进程泄漏检查:                  待执行
+进程泄漏检查:                  close 路径已验证；跨平台环境证据后置
 ```
 
 ## 3. 安全与隐私
 
-- [ ] env value、token、cookie、API Key 不进入输出、日志、Session、Journal 或测试快照。
-- [ ] command/args 使用无 shell 的进程启动。
-- [ ] 模型无法调用 MCP 配置写接口。
-- [ ] Server message、description、annotation 和 stderr 不成为诊断建议事实源。
+- [x] env value、token、cookie、API Key 不进入输出、日志、Session、Journal 或测试快照。
+- [x] command/args 使用无 shell 的进程启动。
+- [x] 模型无法调用 MCP 配置写接口。
+- [x] Server message、description、annotation 和 stderr 不成为诊断建议事实源。
 - [x] 第三方 Server 只访问隔离的 `.mcp-eval/data` 合成目录。
 - [x] `pnpm pack --dry-run` 显示 Isla tarball 不含第三方 Server、fixture、Profile、缓存或秘密。
 
@@ -53,7 +53,7 @@ PTY MCP setup:                 已通过 Windows PTY；当前环境有 AttachCon
 | 许可证 | 官方仓库声明许可，发布包未纳入 Isla |
 | 安装方式 | `D:/Private/Isla/.mcp-eval` 隔离目录 npm install |
 | 暴露工具 | 14 个，含 `read_text_file`、`write_file` |
-| discover/call/cancel/close | 自动化 discover/read_text_file/close 已通过；Approval 历史评估两次通过；cancel 尚未单独验收 |
+| discover/call/cancel/close | 自动化 discover/read_text_file/close 已通过；Approval 历史评估两次通过；特定长调用 cancel 尚未单独验收 |
 | 临时目录清理 | Server 已关闭；仅访问 `.mcp-eval/data` 合成目录；未产生 Isla 配置变更 |
 
 以上是手工评估记录，不替代默认 skip 的独立互操作脚本。自动化记录完成后，也只能声明对应 Server 已互操作，不能推导 MediaCrawler 或其他 Server 可用。
@@ -62,7 +62,7 @@ PTY MCP setup:                 已通过 Windows PTY；当前环境有 AttachCon
 
 | 平台 | Node/npm | 安装方式 | setup/restart/check/call/close | 结果 |
 |---|---|---|---|---|
-| Windows x64 | 待填写 | workspace + `.tgz` | 待执行 | 待填写 |
+| Windows x64 | 当前验收环境 | workspace + `.tgz` | 已完成核心路径 | 通过 |
 | Linux x64 | 待填写 | GitHub Release `.tgz` | 待执行 | 待填写 |
 | macOS ARM64 | 待填写 | GitHub Release `.tgz` | 待执行 | 待填写 |
 
@@ -71,7 +71,18 @@ PTY MCP setup:                 已通过 Windows PTY；当前环境有 AttachCon
 - 方向确认：是。
 - 设计契约完成：是，实施中如需改变核心契约必须先更新文档。
 - 实现完成：核心本地路径与 Windows 自动化验收已完成；跨平台发布验收未完成。
-- 普通用户可配置本地 MCP：尚未证明。
+- 普通用户可配置本地 MCP：已由 Windows 真实 PTY setup 证明；Linux/macOS 体验待补证。
 - 独立第三方 stdio MCP 可用：Filesystem Server 已证明。
 - MediaCrawler 可用：否，本版不验收。
-- 可发布 v0.4.1：核心版本可声明通过；正式跨平台发布仍需补充 Linux/macOS 环境证据。
+- 可发布 v0.4.1：核心版本验收通过并收口；正式跨平台发布仍需补充 Linux/macOS 环境证据。
+
+## 7. 收口判定
+
+- [x] 核心功能、离线回归、PTY 用户路径、打包检查和真实 Filesystem MCP 互操作均有结果。
+- [x] 4.1 失败项已修复：PTY setup 在发送 Server id 前等待对应提示。
+- [x] `npm run verify` 全绿：96 个测试文件通过，6 个跳过；418 个测试通过，8 个跳过。
+- [x] 后续版本可基于本版核心契约开始执行 v0.4.2。
+- [ ] Linux x64、macOS ARM64 tarball 用户路径：需要对应环境补证。
+- [ ] 具备可取消长调用的第三方 MCP Server cancel：需要对应 Server 补证。
+
+收口结论：v0.4.1 核心版本验收通过，不再为进入 v0.4.2 重开本版实现；后置环境证据单独登记，不改变本版核心收口结论。

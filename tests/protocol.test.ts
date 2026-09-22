@@ -31,6 +31,7 @@ describe("NDJSON protocol", () => {
     expect(parseProtocolRequest('{"type":"task_get","id":"t1"}')).toMatchObject({ type: "task_get" });
     expect(parseProtocolRequest('{"type":"skills_list","id":"s1"}')).toMatchObject({ type: "skills_list" });
     expect(parseProtocolRequest('{"type":"mcp_list","id":"m1"}')).toMatchObject({ type: "mcp_list" });
+    expect(parseProtocolRequest('{"type":"capabilities_list","id":"c1"}')).toMatchObject({ type: "capabilities_list" });
     expect(() => parseProtocolRequest("bad")).toThrow("INVALID_JSON");
     expect(() => parseProtocolRequest('{"type":"prompt","id":"1","text":""}')).toThrow("INVALID_REQUEST");
     expect(() => parseProtocolRequest('{"type":"approval_response","id":"1","approvalId":"","approved":true}')).toThrow("INVALID_REQUEST");
@@ -51,6 +52,14 @@ describe("NDJSON protocol", () => {
     expect(output).toContain('"type":"skills_result"');
     expect(output).toContain('release-check');
     expect(output).not.toContain("SKILL.md");
+  });
+  it("lists a safe capability inventory through NDJSON", async () => {
+    let output = "";
+    const out = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });
+    await runProtocol(Readable.from(['{"type":"capabilities_list","id":"c1"}\n{"type":"exit","id":"e1"}\n']), out, new ChatSession(new FakeProvider([])), "fake", "fake-model", { capabilitySnapshot: () => ({ version: 1, hash: "deadbeef", entries: [{ id: "read", kind: "builtin-tool", origin: "files", available: true, modelVisible: true, userInvocable: true }] , toolDefinitions: [] }) });
+    expect(output).toContain('"type":"capabilities_result"');
+    expect(output).toContain('deadbeef');
+    expect(output).not.toContain('command');
   });
   it("lists and switches models through NDJSON callbacks", async () => {
     let output = "";

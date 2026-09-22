@@ -339,7 +339,7 @@ v0.3.9 只做收口与 4.0 准入，不新增 Agent Registry、Job、Workflow、
 
 设计、实施和测试门禁见 [`docs/proposals/v0.3.9/`](proposals/v0.3.9/README.md)。版本已更新为 `0.3.9`，并以 GitHub Release `.tgz` 作为 Linux/macOS 安装入口。
 
-## v0.4.0：MCP Host Foundation（已实现，进入验收收口）
+## v0.4.0：MCP Host Foundation（已完成）
 
 现实需求：旅游攻略、汽车评测和真实用户反馈越来越多地位于小红书、抖音等平台；后续还会出现邮件、下载等外部能力。为每个来源继续编写 Isla 私有适配器会重复建设发现、schema、调用、取消、错误与权限边界，因此 4.x 以 MCP 外部能力协议作为主题。
 
@@ -355,11 +355,37 @@ v0.4.0 是完整平台方向下的第一块可验收基座：
 
 Streamable HTTP/OAuth、resources、prompts、tasks、apps、远程注册中心、Isla 作为 MCP Server、动态热重载和自动重连留给后续 4.x。设计、实施、测试与验收模板见 [`docs/proposals/v0.4.0/`](proposals/v0.4.0/README.md)。
 
-## v0.4.1：MCP Usability and Interoperability（设计完成，待实施）
+## v0.4.1：MCP Usability and Interoperability（核心验收通过）
 
 v0.4.1 不扩展 MCP 协议面，集中补齐个人用户可操作性：通过 `/mcp setup` 原子修改当前 Profile 的本地 stdio Server 配置，通过 `/mcp config` 和 `/mcp check` 提供脱敏诊断，并明确所有修改下次启动生效。NDJSON 继续只读，不增加配置写协议。
 
-本版还将选择一个无需账号、只访问隔离临时目录的独立第三方 stdio MCP Server，完成 discover、Approval、call、cancel/close 和跨平台 `.tgz` 用户路径验收。自动下载、热重载、远程 transport、MediaCrawler 和浏览器状态管理继续暂缓。设计与执行基线见 [`docs/proposals/v0.4.1/`](proposals/v0.4.1/README.md)。
+本版已完成收口：Windows 用户路径、真实 PTY setup、配置诊断、离线回归和官方 Filesystem Server 的 discover/call/close 核心验收均通过。Linux x64、macOS ARM64 和需要特定长调用 Server 的 cancel 行为作为发布环境证据后置，不阻塞 v0.4.2。自动下载、热重载、远程 transport、MediaCrawler 和浏览器状态管理继续暂缓。事实记录见 [`docs/proposals/v0.4.1/`](proposals/v0.4.1/README.md)。
+
+## v0.4.2：Capability Composition and Exposure（核心实现与自动化验收通过，待收口）
+
+把内建 Tool、Skill 和 MCP Tool 投影为统一、只读的能力目录，由 Profile 的显式规则和预算决定模型在一次请求中实际看到的能力。请求开始时生成不可变 Capability Snapshot，TTY `/capabilities` 与 NDJSON `capabilities_list` 提供等价诊断。
+
+本版只解决组合、暴露、预算和可解释性，不引入通用插件框架、热重载、Subagent 或 Shell。设计、Batch、测试矩阵和验收模板见 [`docs/proposals/v0.4.2/`](proposals/v0.4.2/README.md)。
+
+## v0.4.3：Context Budget and Compaction（设计完成，等待 v0.4.2）
+
+在能力暴露预算稳定后，为长会话建立可测量的上下文预算：优先保留系统约束、当前任务和近期消息，先裁剪可重新获取的旧 Tool 结果，再为已经闭合的旧轮次生成可追溯 checkpoint。原始 Session 事实不删除，压缩只改变模型输入投影。
+
+本版不建设后台总结任务、向量记忆或不可逆历史重写。设计、Batch、测试矩阵和验收模板见 [`docs/proposals/v0.4.3/`](proposals/v0.4.3/README.md)。
+
+## v0.4.4：Controlled Shell and Execution World（设计完成，等待 v0.4.3）
+
+以一个真实外部动作需求驱动受控命令执行：仅接受 argv，限制 cwd、环境变量、输出、超时和进程树；按只读、workspace-write、full 三档策略接入现有 Approval、Permission、Cancel 和 Journal。
+
+本版不提供任意 shell 字符串、持久 PTY、后台 Job、远程 Sandbox、sudo 或自动安装依赖，也不借机抽象通用执行框架。设计、Batch、测试矩阵和验收模板见 [`docs/proposals/v0.4.4/`](proposals/v0.4.4/README.md)。
+
+## v0.4.5：Resident Host and Second Surface（设计完成，等待 v0.4.4）
+
+当 CLI 已不足以支持全天在线时，把同一 Application 和 SessionFactory 暴露为仅回环地址监听、带认证的常驻 Host，并提供第二个最小 HTTP + NDJSON/SSE Surface。它覆盖会话创建/恢复、prompt、cancel、status、断线重连和优雅关闭，不复制 Runtime 规则。
+
+本版不开放公网、多用户、Web UI、Webhook、Job 队列或云服务。设计、Batch、测试矩阵和验收模板见 [`docs/proposals/v0.4.5/`](proposals/v0.4.5/README.md)。
+
+上述版本严格顺序推进：每版先完成 P0 自动化和真实评估，再解锁下一版；后续版本的设计完成不代表允许并行扩大实现范围。
 
 ## 候选阶段：Tool 插件
 

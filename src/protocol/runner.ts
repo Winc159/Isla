@@ -16,12 +16,13 @@ import type { VerificationStatus } from "../core/verification.js";
 import type { SessionSearchHit, SessionQuery } from "../session-query.js";
 import type { TaskStatus } from "../core/task-state.js";
 import type { McpHost } from "../mcp/host.js";
+import type { CapabilitySnapshot } from "../capabilities.js";
 export interface ProtocolSessionEvents {
   readonly onToolStarted: (tool: string, callId: string, argumentsJson?: string) => void;
   readonly onToolFinished: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly onModelStepEvent: (event: ModelStepEvent) => void;
 }
- export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly onNewSession?: () => void; readonly beforeNewSession?: () => Promise<void>; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly questionService?: ProtocolUserQuestionService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents, questionService: ProtocolUserQuestionService) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string; readonly listModels?: (query?: string) => Promise<readonly ModelCatalogEntry[]>; readonly useModel?: (model: string) => Promise<void>; readonly sessionQuery?: SessionQuery; readonly workspaceKey?: string; readonly selectSession?: (sessionId: string) => Promise<boolean>; readonly invokeSkill?: (name: string, text?: string) => Promise<import("../core/types.js").ModelResponse>; readonly mcpHost?: McpHost } = {}): Promise<void> {
+ export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly capabilitySnapshot?: () => CapabilitySnapshot; readonly onNewSession?: () => void; readonly beforeNewSession?: () => Promise<void>; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly questionService?: ProtocolUserQuestionService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents, questionService: ProtocolUserQuestionService) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string; readonly listModels?: (query?: string) => Promise<readonly ModelCatalogEntry[]>; readonly useModel?: (model: string) => Promise<void>; readonly sessionQuery?: SessionQuery; readonly workspaceKey?: string; readonly selectSession?: (sessionId: string) => Promise<boolean>; readonly invokeSkill?: (name: string, text?: string) => Promise<import("../core/types.js").ModelResponse>; readonly mcpHost?: McpHost } = {}): Promise<void> {
   const writer = new ProtocolWriter(output);
   const ids = new Set<string>();
   const maxRequestIds = 4096;
@@ -94,6 +95,12 @@ export interface ProtocolSessionEvents {
     }
     if (request.type === "mcp_list") {
       writer.write({ type: "mcp_result", id: request.id, servers: options.mcpHost?.statuses() ?? [] });
+      continue;
+    }
+    if (request.type === "capabilities_list") {
+      const snapshot = options.capabilitySnapshot?.();
+      if (!snapshot) writer.write({ type: "error", id: request.id, code: "UNSUPPORTED", message: "当前协议不支持能力目录", recoverable: false });
+      else writer.write({ type: "capabilities_result", id: request.id, version: snapshot.version, hash: snapshot.hash, entries: snapshot.entries });
       continue;
     }
     if (request.type === "skills_list") {

@@ -16,6 +16,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { StoredSkillCatalogV1 } from './session-store.js';
 import type { McpHost } from './mcp/host.js';
+import { composeCapabilitySnapshot, type CapabilityPolicy, type CapabilitySnapshot } from './capabilities.js';
 
 export interface SessionFactoryOptions {
   readonly runtime: IslaRuntime;
@@ -36,6 +37,7 @@ export interface SessionFactoryConfig {
   readonly webFetch?: WebFetchConfig;
   readonly webSearch?: WebSearchConfig;
   readonly mcpHost?: McpHost;
+  readonly capabilityPolicy?: CapabilityPolicy;
 }
 
 export interface SessionEntryOptions {
@@ -71,9 +73,18 @@ export function createSessionFactory(options: SessionFactoryOptions) {
   const { runtime, config, sessionStore, memoryRuntime, workspaceRoot, diagnostics } = options;
   const sessionQuery = new SessionQuery(sessionStore);
   const skillCatalog = new SkillCatalog({ workspaceRoot: join(workspaceRoot, '.isla', 'skills'), personalRoot: join(homedir(), '.isla', 'skills') });
+  const capabilitySnapshot = (): CapabilitySnapshot => {
+    const capabilities = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => 'inventory', skillCatalog, ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(config.mcpHost?.capabilities() ?? [])];
+    return composeCapabilitySnapshot(capabilities, skillCatalog.listSync().entries, config.capabilityPolicy);
+  };
   return {
+    capabilitySnapshot,
     create(entry: SessionEntryOptions) {
       let current = entry.stored;
+      const composed = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, skillCatalog, ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(config.mcpHost?.capabilities() ?? [])];
+      const snapshot = composeCapabilitySnapshot(composed, skillCatalog.listSync().entries, config.capabilityPolicy);
+      const visible = new Set(snapshot.toolDefinitions.map(tool => tool.name));
+      const filtered = composed.map(capability => ({ ...capability, tools: capability.tools.filter(tool => visible.has(tool.definition.name)) })).filter(capability => capability.tools.length > 0);
       return runtime.createSession({
         providerId: config.provider,
         ...projectStoredSession(current),
@@ -84,7 +95,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         enableTools: true,
         skillCatalog: ('skillCatalog' in current && current.skillCatalog) ? current.skillCatalog : { version: 1, entries: skillCatalog.listSync().entries },
         agentLoop: true,
-        capabilities: [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, skillCatalog, ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(config.mcpHost?.capabilities() ?? [])],
+        capabilities: filtered,
         projectRoot: workspaceRoot,
         ...(diagnostics ? { onDiagnostic: diagnostics } : {}),
         permissionPreset: 'workspace',

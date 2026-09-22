@@ -84,3 +84,10 @@
 - `tests/smoke/`：显式第三方互操作。
 
 文件名可按现有职责微调。若实施需要修改 Session 格式、Provider 接口、Tool 身份规则或 Host 生命周期，视为设计偏离，先停止并更新设计。
+
+## 执行结论
+
+- Batch A 至 E 的本地核心路径已经完成并通过 Windows 验收。
+- `npm run verify`、`npm run pack:check`、`git diff --check` 和官方 Filesystem Server 的 discover/read/close 已通过。
+- Linux x64、macOS ARM64 与特定第三方 Server 的可取消长调用属于发布环境证据，不阻塞 v0.4.2。
+- Luna 执行 v0.4.2 时不得重新实现 v0.4.1；只有出现回归或补充目标环境证据时才回到本目录。
