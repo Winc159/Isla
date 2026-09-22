@@ -12,15 +12,16 @@ import { taskCommand } from './task-command.js';
 import { skillsCommand } from './skills-command.js';
 import { mcpCommand } from './mcp-command.js';
 import { capabilitiesCommand } from './capabilities-command.js';
+import { contextCommand } from './context-command.js';
 
-const registeredCommands = [newCommand, sessionsCommand, taskCommand, skillsCommand, capabilitiesCommand, memoryCommand, traceCommand, configCommand, profileCommand, modelsCommand, mcpCommand, helpCommand, exitCommand];
+const registeredCommands = [newCommand, sessionsCommand, taskCommand, skillsCommand, capabilitiesCommand, contextCommand, memoryCommand, traceCommand, configCommand, profileCommand, modelsCommand, mcpCommand, helpCommand, exitCommand];
 const commands = new Map<string, CliCommand>(
   registeredCommands.map(command => [command.name, command]),
 );
 
 export function findCliCommand(line: string): CliCommand | undefined {
   if (line === '/skill') return commands.get('/skills');
-  return commands.get(line) ?? (line.startsWith('/skills ') || line.startsWith('/skill ') ? commands.get('/skills') : undefined) ?? (line.startsWith('/capabilities ') ? commands.get('/capabilities') : undefined) ?? (line.startsWith('/memory ') ? commands.get('/memory') : undefined) ?? (line.startsWith('/trace ') ? commands.get('/trace') : undefined) ?? (line.startsWith('/config ') ? commands.get('/config') : undefined) ?? (line.startsWith('/profile ') ? commands.get('/profile') : undefined) ?? (line.startsWith('/models ') ? commands.get('/models') : undefined) ?? (line.startsWith('/mcp ') ? commands.get('/mcp') : undefined);
+  return commands.get(line) ?? (line.startsWith('/skills ') || line.startsWith('/skill ') ? commands.get('/skills') : undefined) ?? (line.startsWith('/capabilities ') ? commands.get('/capabilities') : undefined) ?? (line.startsWith('/context ') ? commands.get('/context') : undefined) ?? (line.startsWith('/memory ') ? commands.get('/memory') : undefined) ?? (line.startsWith('/trace ') ? commands.get('/trace') : undefined) ?? (line.startsWith('/config ') ? commands.get('/config') : undefined) ?? (line.startsWith('/profile ') ? commands.get('/profile') : undefined) ?? (line.startsWith('/models ') ? commands.get('/models') : undefined) ?? (line.startsWith('/mcp ') ? commands.get('/mcp') : undefined);
 }
 
 export function listCliCommands(): readonly CliCommand[] {

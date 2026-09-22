@@ -361,13 +361,13 @@ v0.4.1 不扩展 MCP 协议面，集中补齐个人用户可操作性：通过 `
 
 本版已完成收口：Windows 用户路径、真实 PTY setup、配置诊断、离线回归和官方 Filesystem Server 的 discover/call/close 核心验收均通过。Linux x64、macOS ARM64 和需要特定长调用 Server 的 cancel 行为作为发布环境证据后置，不阻塞 v0.4.2。自动下载、热重载、远程 transport、MediaCrawler 和浏览器状态管理继续暂缓。事实记录见 [`docs/proposals/v0.4.1/`](proposals/v0.4.1/README.md)。
 
-## v0.4.2：Capability Composition and Exposure（核心实现与自动化验收通过，待收口）
+## v0.4.2：Capability Composition and Exposure（已完成收口）
 
 把内建 Tool、Skill 和 MCP Tool 投影为统一、只读的能力目录，由 Profile 的显式规则和预算决定模型在一次请求中实际看到的能力。请求开始时生成不可变 Capability Snapshot，TTY `/capabilities` 与 NDJSON `capabilities_list` 提供等价诊断。
 
 本版只解决组合、暴露、预算和可解释性，不引入通用插件框架、热重载、Subagent 或 Shell。设计、Batch、测试矩阵和验收模板见 [`docs/proposals/v0.4.2/`](proposals/v0.4.2/README.md)。
 
-## v0.4.3：Context Budget and Compaction（设计完成，等待 v0.4.2）
+## v0.4.3：Context Budget and Compaction（已完成收口）
 
 在能力暴露预算稳定后，为长会话建立可测量的上下文预算：优先保留系统约束、当前任务和近期消息，先裁剪可重新获取的旧 Tool 结果，再为已经闭合的旧轮次生成可追溯 checkpoint。原始 Session 事实不删除，压缩只改变模型输入投影。
 

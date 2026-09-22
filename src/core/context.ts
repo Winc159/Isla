@@ -44,6 +44,27 @@ export interface ContextProjection {
   readonly truncated: boolean;
 }
 
+export interface ContextBudgetReport {
+  readonly estimatedChars: number;
+  readonly maxChars: number;
+  readonly turns: number;
+  readonly maxTurns: number;
+  readonly checkpointThroughMessageIndex?: number;
+  readonly needsCompaction: boolean;
+}
+
+export function measureContextBudget(messages: readonly Message[], options: { readonly maxTurns: number; readonly maxChars: number }, checkpoint?: ContextCheckpoint): ContextBudgetReport {
+  const units = splitConversationUnits(messages);
+  return {
+    estimatedChars: messages.reduce((total, message) => total + estimateMessageChars(message), 0),
+    maxChars: options.maxChars,
+    turns: units.length,
+    maxTurns: options.maxTurns,
+    ...(checkpoint ? { checkpointThroughMessageIndex: checkpoint.throughMessageIndex } : {}),
+    needsCompaction: shouldCompact(messages, options),
+  };
+}
+
 /**
  * Splits non-system messages into complete user turns. Tool messages remain
  * attached to the user turn that caused them, so a projection cannot split a

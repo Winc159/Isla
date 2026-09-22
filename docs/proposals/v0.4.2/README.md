@@ -1,6 +1,6 @@
 # v0.4.2：Capability Composition and Exposure
 
-状态：核心实现与自动化验收通过，待收口
+状态：核心实现与自动化验收通过，已收口
 
 前置基线：v0.4.1 核心功能验收通过。
 
