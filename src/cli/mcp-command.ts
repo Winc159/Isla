@@ -1,6 +1,6 @@
 import { isInteractiveInput, type CliCommand, type InteractiveInput } from './command.js';
 import { createInterface } from 'node:readline/promises';
-import { projectMcpDiagnostic } from '../mcp/diagnostics.js';
+import { fingerprintMcpServers, projectMcpDiagnostic } from '../mcp/diagnostics.js';
 import { listMcpConfig, saveMcpServers } from '../mcp/profile-config.js';
 import type { McpServerConfig } from '../mcp/types.js';
 
@@ -23,8 +23,10 @@ export const mcpCommand: CliCommand = {
       if (loaded.status !== 'ready') { context.output.write(`配置不可用：${loaded.status === 'invalid' || loaded.status === 'unreadable' ? loaded.message : '未找到可用 Profile'}\n`); return { type: 'continue' }; }
       const entries = listMcpConfig(loaded.config, context.profileName);
       context.output.write(`Profile：${context.profileName}\nMCP 配置：${entries.length ? '' : '未配置'}\n`);
-      for (const item of entries) context.output.write(`  ${item.id} · ${item.required ? 'required' : 'optional'} · args=${item.argsCount} · env=${item.envKeys.length ? `${item.envKeys.length} 个 key（值已隐藏）` : '无'} · timeout=${item.startupTimeoutMs}/${item.callTimeoutMs}\n`);
-      context.output.write('修改将在下次启动生效。\n');
+      for (const item of entries) context.output.write(`  ${item.id} · ${item.required ? 'required' : 'optional'} · args=${item.argsCount} · env=${item.envKeys.length || item.sensitiveEnvCount ? `${item.envKeys.length} 个公开 key${item.sensitiveEnvCount ? `、secret(${item.sensitiveEnvCount})` : ''}（值已隐藏）` : '无'} · timeout=${item.startupTimeoutMs}/${item.callTimeoutMs}\n`);
+      const configuredServers = loaded.config.profiles[context.profileName]?.mcp?.servers;
+      const restartRequired = context.mcpHost ? fingerprintMcpServers(configuredServers) !== context.mcpHost.configFingerprint : false;
+      context.output.write(`${restartRequired ? '当前 MCP 配置已改变，请重启 Isla。' : '当前 MCP 配置与本次启动一致。'}\n`);
       return { type: 'continue' };
     }
     if (subcommand && subcommand !== 'check') {
@@ -47,6 +49,12 @@ export const mcpCommand: CliCommand = {
       return { type: 'continue' };
     }
     const diagnostics = (status ? [projectMcpDiagnostic(status)] : statuses.map(projectMcpDiagnostic));
+    const loaded = context.profileName && context.configStore ? await context.configStore.load() : undefined;
+    const configuredServers = loaded?.status === 'ready' && context.profileName ? loaded.config.profiles[context.profileName]?.mcp?.servers : undefined;
+    const restartRequired = context.mcpHost && configuredServers
+      ? fingerprintMcpServers(configuredServers) !== context.mcpHost.configFingerprint
+      : false;
+    if (restartRequired) context.output.write('当前 MCP 配置已改变，请重启 Isla 后再检查运行状态。\n');
     for (const item of diagnostics) {
       context.output.write(`${item.id} · ${item.state} · tools=${item.toolCount}${item.errorCode ? ` · ${item.errorCode}` : ''}\n`);
       for (const tool of item.tools) context.output.write(`  - ${tool}\n`);
@@ -81,19 +89,38 @@ async function runMcpSetup(context: Parameters<CliCommand['execute']>[0]): Promi
       const old = index >= 0 ? current[index] : undefined;
       const command = (await rl.question(`command${old ? ` [${old.command}]` : ''}: `)).trim() || old?.command;
       if (!command) { context.output.write('command 不能为空，未写入配置。\n'); return; }
-      const rawArgs = (await rl.question(`args（以 JSON 数组填写）${old ? ` [${JSON.stringify(old.args)}]` : ' []'}: `)).trim();
-      let args: string[];
-      try { args = rawArgs ? JSON.parse(rawArgs) : [...(old?.args ?? [])]; } catch { context.output.write('args 必须是 JSON 字符串数组，未写入配置。\n'); return; }
-      if (!Array.isArray(args) || args.some(item => typeof item !== 'string')) { context.output.write('args 必须是 JSON 字符串数组，未写入配置。\n'); return; }
+      const args = await promptArguments(rl, old?.args ?? []);
+      if (!args) { context.output.write('args 输入无效，未写入配置。\n'); return; }
+      const cwdInput = (await rl.question(`cwd（留空表示无；workspace 或绝对路径）${old?.cwd ? ` [${old.cwd}]` : ''}: `)).trim();
+      const cwd = cwdInput || old?.cwd;
+      const requiredInput = (await rl.question(`required（y/N）${old?.required ? ' [y]' : ''}: `)).trim().toLowerCase();
+      const required = requiredInput ? requiredInput === 'y' : (old?.required ?? false);
+      const startupInput = (await rl.question(`startupTimeoutMs${old ? ` [${old.startupTimeoutMs}]` : ' [10000]'}: `)).trim();
+      const callInput = (await rl.question(`callTimeoutMs${old ? ` [${old.callTimeoutMs}]` : ' [60000]'}: `)).trim();
+      const startupTimeoutMs = Number(startupInput || old?.startupTimeoutMs || 10_000);
+      const callTimeoutMs = Number(callInput || old?.callTimeoutMs || 60_000);
+      if (!Number.isInteger(startupTimeoutMs) || startupTimeoutMs <= 0 || !Number.isInteger(callTimeoutMs) || callTimeoutMs <= 0) { context.output.write('timeout 必须是正整数，未写入配置。\n'); return; }
       const env = await promptEnvironment(rl, context.input, context.output, old?.env ?? {});
       if (!env) { context.output.write('已取消，未写入配置。\n'); return; }
-      const next: McpServerConfig = { id, transport: 'stdio', command, args, ...(old?.cwd ? { cwd: old.cwd } : {}), required: old?.required ?? false, startupTimeoutMs: old?.startupTimeoutMs ?? 10_000, callTimeoutMs: old?.callTimeoutMs ?? 60_000, env };
+      const next: McpServerConfig = { id, transport: 'stdio', command, args, ...(cwd ? { cwd } : {}), required, startupTimeoutMs, callTimeoutMs, env };
       if (index >= 0) current[index] = next; else current.push(next);
     } else { context.output.write('用法：add、edit、remove 或 cancel。\n'); return; }
     if ((await rl.question('保存 MCP 配置？(y/N): ')).trim().toLowerCase() !== 'y') { context.output.write('已取消，未写入配置。\n'); return; }
-    await saveMcpServers(context.configStore, context.profileName, current);
+    await saveMcpServers(context.configStore, context.profileName, current, loaded.revision);
     context.output.write('MCP 配置已保存，下次启动 Isla 时生效。\n');
   } finally { rl.close(); }
+}
+
+async function promptArguments(rl: ReturnType<typeof createInterface>, existing: readonly string[]): Promise<string[] | undefined> {
+  const countText = (await rl.question(`args 数量${existing.length ? ` [${existing.length}]` : ' [0]'}: `)).trim();
+  const count = countText ? Number(countText) : existing.length;
+  if (!Number.isInteger(count) || count < 0 || count > 64) return undefined;
+  const result: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const value = (await rl.question(`args[${index + 1}]${existing[index] !== undefined ? ` [${existing[index]}]` : ''}: `)).trim();
+    result.push(value || existing[index] || '');
+  }
+  return result;
 }
 
 async function promptEnvironment(rl: ReturnType<typeof createInterface>, input: InteractiveInput, output: NodeJS.WritableStream, existing: Readonly<Record<string, string>>): Promise<Record<string, string> | undefined> {
@@ -107,7 +134,7 @@ async function promptEnvironment(rl: ReturnType<typeof createInterface>, input: 
     if (!key || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) { output.write('env key 无效。\n'); return undefined; }
     const value = await readSecretValue(input, output, `env[${key}] value${existing[key] ? '（已配置，重新输入以替换）' : ''}: `);
     if (value === undefined) return undefined;
-    result[key] = value;
+    result[key] = value === '' && existing[key] !== undefined ? existing[key] : value;
   }
   return result;
 }

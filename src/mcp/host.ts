@@ -2,6 +2,7 @@ import type { ToolCapability, Tool } from '../tools/types.js';
 import { buildMcpCatalog, type McpCatalogGeneration } from './catalog.js';
 import { createMcpStdioClient, type McpStdioClient } from './stdio-client.js';
 import { createMcpTool } from './tool.js';
+import { fingerprintMcpServers } from './diagnostics.js';
 import { MCP_MAX_SERVERS, MCP_MAX_TOTAL_TOOLS, type McpServerConfig, type McpStatus } from './types.js';
 
 interface Entry {
@@ -13,10 +14,12 @@ interface Entry {
 }
 
 export class McpHost {
+  readonly configFingerprint: string;
   private readonly entries = new Map<string, Entry>();
   private closed = false;
 
   constructor(private readonly configs: readonly McpServerConfig[]) {
+    this.configFingerprint = fingerprintMcpServers(configs);
     if (configs.length > MCP_MAX_SERVERS) throw new Error('MCP_SERVER_LIMIT');
     for (const config of configs) {
       if (this.entries.has(config.id)) throw new Error('MCP_DUPLICATE_SERVER');

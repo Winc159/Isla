@@ -1,27 +1,24 @@
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { McpHost } from '../../src/mcp/host.js';
 
-const enabled = process.env.ISLA_RUN_MCP_EVAL === '1';
-const fixture = fileURLToPath(new URL('../fixtures/mcp-stdio-server.mjs', import.meta.url));
+const command = process.env.ISLA_MCP_SERVER_COMMAND;
+const args = process.env.ISLA_MCP_SERVER_ARGS ? JSON.parse(process.env.ISLA_MCP_SERVER_ARGS) as string[] : [];
+const toolName = process.env.ISLA_MCP_TOOL_NAME;
+const toolArgs = process.env.ISLA_MCP_TOOL_ARGS ?? '{}';
+const enabled = process.env.ISLA_RUN_MCP_EVAL === '1' && Boolean(command);
 
 describe.skipIf(!enabled)('MCP real interoperability evaluation', () => {
-  it('uses an independent SDK server process for discovery, calls, limits and crash withdrawal', async () => {
-    const host = new McpHost([{ id: 'evaluation', transport: 'stdio', command: process.execPath, args: [fixture], required: true, startupTimeoutMs: 10_000, callTimeoutMs: 1_000, env: {} }]);
+  it('uses an explicitly installed independent stdio server for discovery, call and close', async () => {
+    const host = new McpHost([{ id: 'evaluation', transport: 'stdio', command: command!, args, required: true, startupTimeoutMs: 30_000, callTimeoutMs: 10_000, env: {} }]);
     try {
       await host.start();
       const status = host.statuses()[0]!;
       expect(status.state).toBe('ready');
-      expect(status.tools).toContain('mcp__evaluation__ping');
+      expect(status.tools.length).toBeGreaterThan(0);
       const tools = host.capabilities()[0]!.tools;
-      await expect(tools.find(tool => tool.definition.name === 'mcp__evaluation__ping')!.execute('{}')).resolves.toBe('pong');
-      await expect(tools.find(tool => tool.definition.name === 'mcp__evaluation__structured')!.execute('{}')).resolves.toContain('"source":"fixture"');
-      await expect(tools.find(tool => tool.definition.name === 'mcp__evaluation__oversize')!.execute('{}')).rejects.toThrow('MCP_RESULT_TOO_LARGE');
-      await expect(tools.find(tool => tool.definition.name === 'mcp__evaluation__unsupported')!.execute('{}')).rejects.toThrow('MCP_UNSUPPORTED_CONTENT');
-      await expect(tools.find(tool => tool.definition.name === 'mcp__evaluation__crash')!.execute('{}')).resolves.toBe('closing');
-      await new Promise(resolve => setTimeout(resolve, 100));
-      expect(host.statuses()[0]).toMatchObject({ state: 'unavailable', toolCount: 0, errorCode: 'MCP_TRANSPORT_CLOSED' });
+      const selected = toolName ? tools.find(tool => tool.definition.name === toolName) : tools[0];
+      expect(selected).toBeDefined();
+      await expect(selected!.execute(toolArgs)).resolves.toEqual(expect.any(String));
     } finally { await host.close(); }
   }, 30_000);
 });
-

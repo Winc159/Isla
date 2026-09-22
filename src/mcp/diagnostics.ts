@@ -1,4 +1,5 @@
-import type { McpStatus } from './types.js';
+import { createHash } from 'node:crypto';
+import type { McpServerConfig, McpStatus } from './types.js';
 
 export interface McpDiagnostic {
   readonly id: string;
@@ -32,3 +33,18 @@ export function projectMcpDiagnostics(statuses: readonly McpStatus[]): readonly 
   return statuses.map(projectMcpDiagnostic);
 }
 
+/** 只在进程内比较启动配置，不把指纹写入持久化状态或协议输出。 */
+export function fingerprintMcpServers(servers: readonly McpServerConfig[] | undefined): string {
+  const normalized = (servers ?? []).map(server => ({
+    id: server.id,
+    transport: server.transport,
+    command: server.command,
+    args: [...server.args],
+    ...(server.cwd === undefined ? {} : { cwd: server.cwd }),
+    required: server.required,
+    startupTimeoutMs: server.startupTimeoutMs,
+    callTimeoutMs: server.callTimeoutMs,
+    env: Object.fromEntries(Object.entries(server.env).sort(([a], [b]) => a.localeCompare(b))),
+  }));
+  return createHash('sha256').update(JSON.stringify(normalized), 'utf8').digest('hex');
+}

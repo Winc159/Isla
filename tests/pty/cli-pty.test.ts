@@ -106,6 +106,23 @@ describe.skipIf(!PTY_AVAILABLE)('CLI PTY acceptance', () => {
     } finally { await fixture.dispose(); }
   }, 30_000);
 
+  it('configures an MCP server through the interactive setup wizard', async () => {
+    const fixture = await createPtyFixture({ withMcp: true });
+    try {
+      fixture.driver.enter('/mcp setup');
+      await fixture.driver.waitForText('MCP 操作');
+      fixture.driver.enter('remove');
+      fixture.driver.enter('fixture');
+      await fixture.driver.waitForText('确认删除 fixture');
+      fixture.driver.enter('y');
+      await fixture.driver.waitForText('保存 MCP 配置');
+      fixture.driver.enter('y');
+      await fixture.driver.waitForText('下次启动 Isla 时生效');
+      fixture.driver.enter('/exit');
+      expect((await fixture.driver.waitForExit()).exitCode).toBe(0);
+    } finally { await fixture.dispose(); }
+  }, 30_000);
+
   it('remembers an approved tool and skips the second same-tool prompt', async () => {
     const fixture = await createPtyFixture();
     try {
