@@ -385,6 +385,12 @@ v0.4.1 不扩展 MCP 协议面，集中补齐个人用户可操作性：通过 `
 
 本版不开放公网、多用户、Web UI、Webhook、Job 队列或云服务。设计、Batch、测试矩阵和验收模板见 [`docs/proposals/v0.4.5/`](proposals/v0.4.5/README.md)。
 
+## v0.4.6：Model Limits and Token-aware Context Guardrails（设计完成）
+
+在 v0.4.3 字符/轮次预算和 checkpoint 压缩之上，使用模型目录中的上下文、输入和输出限制建立请求前 Token 防线。模型硬限制、Profile 工作预算与输出预留取更严格值；超限时先压缩已闭合旧轮次，当前单轮仍无法容纳则明确拒绝，不等待 Provider 400，也不静默截断用户输入。
+
+本版复用百炼现有 `GET /api/v1/models` 和缓存，普通启动不新增联网依赖；首版使用保守确定的 Token 估算，不引入模型专属 tokenizer、自动选模或自动路由。设计、Batch、测试矩阵和验收模板见 [`docs/proposals/v0.4.6/`](proposals/v0.4.6/README.md)。
+
 上述版本严格顺序推进：每版先完成 P0 自动化和真实评估，再解锁下一版；后续版本的设计完成不代表允许并行扩大实现范围。
 
 ## 候选阶段：Tool 插件

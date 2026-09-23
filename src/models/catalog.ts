@@ -6,6 +6,9 @@ export interface ModelCatalogEntry {
   readonly owner?: string;
   readonly capabilities?: readonly string[];
   readonly contextWindow?: number;
+  readonly maxInputTokens?: number;
+  readonly maxOutputTokens?: number;
+  readonly maxReasoningTokens?: number;
 }
 
 export interface ModelCatalogQuery {

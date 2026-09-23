@@ -5,7 +5,7 @@ export interface MessageSource { readonly kind: "skill-invocation"; readonly nam
 export interface Message { readonly role: MessageRole; readonly content: string; readonly toolCalls?: readonly ToolCall[]; readonly toolCallId?: string; readonly source?: MessageSource; }
 export interface ToolDefinition { readonly name: string; readonly description: string; readonly parameters: Record<string, unknown>; }
 export interface ToolCall { readonly id: string; readonly name: string; readonly arguments: string; }
-export interface ModelRequest { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[]; readonly toolChoice?: "auto" | "required" | { readonly name: string }; readonly responseFormat?: { readonly type: "json_object" }; }
+export interface ModelRequest { readonly messages: readonly Message[]; readonly tools?: readonly ToolDefinition[]; readonly toolChoice?: "auto" | "required" | { readonly name: string }; readonly responseFormat?: { readonly type: "json_object" }; readonly maxCompletionTokens?: number; }
 export interface ModelCallOptions { readonly signal?: AbortSignal; }
 export interface TokenUsage { readonly input?: number; readonly output?: number; readonly total?: number; }
 export interface ProviderCapabilities {

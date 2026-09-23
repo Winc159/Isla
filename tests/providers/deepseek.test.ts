@@ -56,7 +56,7 @@ describe('DeepSeek provider contract', () => {
     }));
     const session = provider();
     await session.send('你好');
-    expect(body).toEqual({ model: 'deepseek-v4-flash', messages: [{ role: 'user', content: '你好' }], thinking: { type: 'disabled' } });
+    expect(body).toEqual({ model: 'deepseek-v4-flash', messages: [{ role: 'user', content: '你好' }], thinking: { type: 'disabled' }, max_tokens: 2048 });
     expect(authorization).toBe('Bearer test-only-key');
   });
 
@@ -69,7 +69,7 @@ describe('DeepSeek provider contract', () => {
     const session = provider();
     await session.send('第一句');
     await session.send('第二句');
-    expect(requests[1]).toEqual({ model: 'deepseek-v4-flash', thinking: { type: 'disabled' }, messages: [
+    expect(requests[1]).toEqual({ model: 'deepseek-v4-flash', thinking: { type: 'disabled' }, max_tokens: 2048, messages: [
       { role: 'user', content: '第一句' },
       { role: 'assistant', content: 'ok' },
       { role: 'user', content: '第二句' },

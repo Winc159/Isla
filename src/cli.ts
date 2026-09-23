@@ -83,6 +83,9 @@ export async function runCli(
   webSearch?: import('./config.js').WebSearchConfig,
   mcpHost?: McpHost,
   capabilityPolicy?: CapabilityPolicy,
+  maxContextTokens = 16000,
+  maxOutputTokens = 2048,
+  contextReserveTokens = 512,
 ): Promise<void> {
   writeHeader(output, providerId, model, workspaceRoot, webFetch?.enabled === true);
   const currentWorkspaceKey = workspaceKey(workspaceRoot);
@@ -100,7 +103,7 @@ export async function runCli(
     );
   }
   const interactive = isInteractiveInput(input);
-  const inventoryFactory = createSessionFactory({ runtime, config: { provider: providerId, model, maxContextTurns, maxContextChars, contextRetainTurns, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}), ...(capabilityPolicy ? { capabilityPolicy } : {}) }, sessionStore, workspaceRoot });
+  const inventoryFactory = createSessionFactory({ runtime, config: { provider: providerId, model, maxContextTurns, maxContextChars, contextRetainTurns, maxContextTokens, maxOutputTokens, contextReserveTokens, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}), ...(capabilityPolicy ? { capabilityPolicy } : {}) }, sessionStore, workspaceRoot });
   let session: ChatSession;
   const history: string[] = [];
   let draft = '';
@@ -119,7 +122,7 @@ export async function runCli(
       if (streamState.sawDelta) output.write('\n');
     }
   };
-  session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => activeLoading?.pause(), () => activeLoading?.resume(), mcpHost);
+  session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => activeLoading?.pause(), () => activeLoading?.resume(), mcpHost, maxContextTokens, maxOutputTokens, contextReserveTokens);
 
   const handleLine = async (line: string): Promise<'continue' | 'exit'> => {
     const command = findCliCommand(line);
@@ -152,7 +155,7 @@ export async function runCli(
       }
       if (result.type === 'switch-session') {
         storedSession = result.session;
-        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => activeLoading?.pause(), () => activeLoading?.resume(), mcpHost);
+        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => activeLoading?.pause(), () => activeLoading?.resume(), mcpHost, maxContextTokens, maxOutputTokens, contextReserveTokens);
         output.write('\x1b[2J\x1b[3J\x1b[H');
         writeHeader(output, providerId, model, workspaceRoot);
         if (result.replayHistory) writeSessionHistory(output, storedSession);
@@ -250,6 +253,9 @@ export interface CliAdapterOptions {
   readonly sessionStore: SessionStore;
   readonly maxContextChars?: number;
   readonly contextRetainTurns?: number;
+  readonly maxContextTokens?: number;
+  readonly maxOutputTokens?: number;
+  readonly contextReserveTokens?: number;
   readonly memoryRuntime?: MemoryRuntime;
   readonly modelRetries?: number;
   readonly configStore?: import('./config-store.js').ConfigStore;
@@ -266,7 +272,7 @@ export interface CliAdapterOptions {
 }
 
 export async function runCliAdapter(options: CliAdapterOptions): Promise<void> {
-  return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics, options.webFetch, options.webSearch, options.mcpHost, options.capabilityPolicy);
+  return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics, options.webFetch, options.webSearch, options.mcpHost, options.capabilityPolicy, options.maxContextTokens, options.maxOutputTokens, options.contextReserveTokens);
 }
 
 function writeSessionHistory(output: Writable, session: StoredSession): void {
@@ -356,8 +362,11 @@ function createPersistentSession(
   onInteractionStart?: () => void,
   onInteractionEnd?: () => void,
   mcpHost?: McpHost,
+  maxContextTokens = 16000,
+  maxOutputTokens = 2048,
+  contextReserveTokens = 512,
 ) {
-  const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}) });
+  const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, maxContextTokens, maxOutputTokens, contextReserveTokens, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}) });
   return factory.create({ stored: storedSession, input, output, interactive, ...(interactive ? { approvalService: new CliApprovalService(input, output, onInteractionStart, onInteractionEnd), userQuestionService: new CliUserQuestionService(input, output, onInteractionStart, onInteractionEnd) } : {}), ...(onModelStepEvent ? { onModelStepEvent } : {}) });
 }
 if (isCliEntry(import.meta.url, process.argv[1])) {
@@ -449,6 +458,9 @@ if (isCliEntry(import.meta.url, process.argv[1])) {
       ...(config.webSearch ? { webSearch: config.webSearch } : {}),
       ...(mcpHost ? { mcpHost } : {}),
       ...(config.capabilityPolicy ? { capabilityPolicy: config.capabilityPolicy } : {}),
+      maxContextTokens: config.maxContextTokens,
+      maxOutputTokens: config.maxOutputTokens,
+      contextReserveTokens: config.contextReserveTokens,
       diagnostics: event => application.diagnostics.emit(event),
     });
     } finally { application.close(); }

@@ -351,4 +351,12 @@ describe("session", () => {
     expect(states.at(-1)?.messages).toEqual([{ role: "user", content: "cancel me" }]);
     expect(states.at(-1)?.journal?.turns.at(-1)).toMatchObject({ status: "cancelled", error: { code: "TURN_CANCELLED" } });
   });
+
+  it('rejects a single oversized request before calling the provider', async () => {
+    let calls = 0;
+    const provider = { id: 'budget-test', model: 'budget-model', generate: async () => { calls += 1; return { text: 'unexpected' }; } };
+    const session = new ChatSession(provider, { maxContextTokens: 10, maxOutputTokens: 20, contextReserveTokens: 1 });
+    await expect(session.send('这是一段明显超过输入预算的长文本')).rejects.toMatchObject({ code: 'CONTEXT_INPUT_TOO_LARGE' });
+    expect(calls).toBe(0);
+  });
 });

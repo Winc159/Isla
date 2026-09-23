@@ -13,6 +13,9 @@ export interface CreateSessionOptions {
   readonly maxContextTurns?: number;
   readonly maxContextChars?: number;
   readonly contextRetainTurns?: number;
+  readonly maxContextTokens?: number;
+  readonly maxOutputTokens?: number;
+  readonly contextReserveTokens?: number;
   readonly modelRetries?: number;
   readonly context?: import("./context.js").SessionContext;
   readonly journal?: SessionJournal;

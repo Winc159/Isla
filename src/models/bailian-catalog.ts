@@ -12,6 +12,7 @@ export interface BailianModelCatalogEntry extends ModelCatalogEntry {
   readonly contextWindow?: number;
   readonly maxInputTokens?: number;
   readonly maxOutputTokens?: number;
+  readonly maxReasoningTokens?: number;
 }
 
 export interface BailianModelCatalogQuery extends ModelCatalogQuery {
@@ -70,6 +71,7 @@ function projectModel(raw: unknown): BailianModelCatalogEntry {
     ...(typeof info.context_window === 'number' ? { contextWindow: info.context_window } : {}),
     ...(typeof info.max_input_tokens === 'number' ? { maxInputTokens: info.max_input_tokens } : {}),
     ...(typeof info.max_output_tokens === 'number' ? { maxOutputTokens: info.max_output_tokens } : {}),
+    ...(typeof info.max_reasoning_tokens === 'number' ? { maxReasoningTokens: info.max_reasoning_tokens } : {}),
   };
 }
 

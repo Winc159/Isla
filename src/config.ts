@@ -37,6 +37,9 @@ export type OpenAIConfig = {
   readonly maxContextTurns: number;
   readonly maxContextChars: number;
   readonly contextRetainTurns: number;
+  readonly maxContextTokens: number;
+  readonly maxOutputTokens: number;
+  readonly contextReserveTokens: number;
   readonly modelRetries: number;
   readonly apiKey: string;
   readonly streaming?: boolean;
@@ -64,6 +67,9 @@ export type DeepSeekConfig = {
   readonly maxContextTurns: number;
   readonly maxContextChars: number;
   readonly contextRetainTurns: number;
+  readonly maxContextTokens: number;
+  readonly maxOutputTokens: number;
+  readonly contextReserveTokens: number;
   readonly modelRetries: number;
   readonly apiKey: string;
   readonly streaming?: boolean;
@@ -91,6 +97,9 @@ export type BailianConfig = {
   readonly maxContextTurns: number;
   readonly maxContextChars: number;
   readonly contextRetainTurns: number;
+  readonly maxContextTokens: number;
+  readonly maxOutputTokens: number;
+  readonly contextReserveTokens: number;
   readonly modelRetries: number;
   readonly apiKey: string;
   readonly baseURL: string;
@@ -119,6 +128,9 @@ export type LocalConfig = {
   readonly maxContextTurns: number;
   readonly maxContextChars: number;
   readonly contextRetainTurns: number;
+  readonly maxContextTokens: number;
+  readonly maxOutputTokens: number;
+  readonly contextReserveTokens: number;
   readonly modelRetries: number;
   readonly baseURL: string;
   readonly apiKey?: string;
@@ -146,6 +158,9 @@ export interface ProfileRuntimeSettingsV1 {
   readonly maxContextTurns?: number;
   readonly maxContextChars?: number;
   readonly contextRetainTurns?: number;
+  readonly maxContextTokens?: number;
+  readonly maxOutputTokens?: number;
+  readonly contextReserveTokens?: number;
 }
 
 export interface ProfileMemorySettingsV1 {
@@ -248,6 +263,9 @@ export function profileToAppConfig(profile: StartupProfileV1): AppConfig {
     maxContextTurns: runtime.maxContextTurns ?? DEFAULT_MAX_CONTEXT_TURNS,
     maxContextChars: runtime.maxContextChars ?? DEFAULT_MAX_CONTEXT_CHARS,
     contextRetainTurns: runtime.contextRetainTurns ?? DEFAULT_CONTEXT_RETAIN_TURNS,
+    maxContextTokens: runtime.maxContextTokens ?? 16000,
+    maxOutputTokens: runtime.maxOutputTokens ?? 2048,
+    contextReserveTokens: runtime.contextReserveTokens ?? 512,
     modelRetries: runtime.modelRetries ?? 1,
     memoryEnabled: memory.enabled ?? true,
     ...(memory.database ? { memoryDatabase: memory.database } : {}),
@@ -401,15 +419,18 @@ function normalizeWebHost(value: unknown, field: string): string {
 
 function parseRuntime(name: string, value: unknown, onWarning?: (message: string) => void): ProfileRuntimeSettingsV1 {
   if (!isRecord(value)) throw new Error(`Isla profile ${name}.runtime must be an object`);
-  warnUnknown(value, ['timeoutMs', 'modelRetries', 'maxContextTurns', 'maxContextChars', 'contextRetainTurns'], `profile ${name}.runtime`, onWarning);
+  warnUnknown(value, ['timeoutMs', 'modelRetries', 'maxContextTurns', 'maxContextChars', 'contextRetainTurns', 'maxContextTokens', 'maxOutputTokens', 'contextReserveTokens'], `profile ${name}.runtime`, onWarning);
   const positive = (field: string): number | undefined => value[field] === undefined ? undefined : positiveInteger(value[field], `Isla profile ${name}.runtime.${field}`);
   const timeoutMs = positive('timeoutMs');
   const maxContextTurns = positive('maxContextTurns');
   const maxContextChars = positive('maxContextChars');
   const contextRetainTurns = positive('contextRetainTurns');
+  const maxContextTokens = positive('maxContextTokens');
+  const maxOutputTokens = positive('maxOutputTokens');
+  const contextReserveTokens = positive('contextReserveTokens');
   const retries = value.modelRetries === undefined ? undefined : value.modelRetries;
   if (retries !== undefined && (retries !== 0 && retries !== 1)) throw new Error(`Isla profile ${name}.runtime.modelRetries is invalid`);
-  return { ...(timeoutMs !== undefined ? { timeoutMs } : {}), ...(retries !== undefined ? { modelRetries: retries } : {}), ...(maxContextTurns !== undefined ? { maxContextTurns } : {}), ...(maxContextChars !== undefined ? { maxContextChars } : {}), ...(contextRetainTurns !== undefined ? { contextRetainTurns } : {}) };
+  return { ...(timeoutMs !== undefined ? { timeoutMs } : {}), ...(retries !== undefined ? { modelRetries: retries } : {}), ...(maxContextTurns !== undefined ? { maxContextTurns } : {}), ...(maxContextChars !== undefined ? { maxContextChars } : {}), ...(contextRetainTurns !== undefined ? { contextRetainTurns } : {}), ...(maxContextTokens !== undefined ? { maxContextTokens } : {}), ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}), ...(contextReserveTokens !== undefined ? { contextReserveTokens } : {}) };
 }
 
 function parseMemory(name: string, value: unknown, onWarning?: (message: string) => void): ProfileMemorySettingsV1 {
@@ -472,6 +493,10 @@ export function readConfig(env: Env = process.env): AppConfig {
   const contextRetainTurns = Number(env.ISLA_CONTEXT_RETAIN_TURNS ?? DEFAULT_CONTEXT_RETAIN_TURNS);
   if (!Number.isInteger(contextRetainTurns) || contextRetainTurns <= 0)
     throw new Error('ISLA_CONTEXT_RETAIN_TURNS must be a positive integer');
+  const maxContextTokens = Number(env.ISLA_MAX_CONTEXT_TOKENS ?? '16000');
+  const maxOutputTokens = Number(env.ISLA_MAX_OUTPUT_TOKENS ?? '2048');
+  const contextReserveTokens = Number(env.ISLA_CONTEXT_RESERVE_TOKENS ?? '512');
+  if (![maxContextTokens, maxOutputTokens, contextReserveTokens].every(value => Number.isInteger(value) && value > 0)) throw new Error('ISLA token budgets must be positive integers');
   const modelRetries = Number(env.ISLA_MODEL_RETRIES ?? '1');
   if (!Number.isInteger(modelRetries) || modelRetries < 0 || modelRetries > 1)
     throw new Error('ISLA_MODEL_RETRIES must be 0 or 1');
@@ -488,6 +513,9 @@ export function readConfig(env: Env = process.env): AppConfig {
     maxContextTurns,
     maxContextChars,
     contextRetainTurns,
+    maxContextTokens,
+    maxOutputTokens,
+    contextReserveTokens,
     modelRetries,
     memoryEnabled: env.ISLA_MEMORY_ENABLED !== '0' && env.ISLA_MEMORY_ENABLED !== 'false',
     ...(env.ISLA_MEMORY_DB ? { memoryDatabase: env.ISLA_MEMORY_DB } : {}),

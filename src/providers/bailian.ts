@@ -30,6 +30,7 @@ class BailianProvider implements ModelProvider {
         model: this.model,
         messages: request.messages.map(message => ({ role: message.role, content: message.content })) as never,
         stream: false,
+        ...(request.maxCompletionTokens ? { max_completion_tokens: request.maxCompletionTokens } : {}),
       }, options?.signal ? { signal: options.signal } : undefined);
       const text = response.choices[0]?.message.content;
       if (!text?.trim()) throw new RuntimeError({ code: 'PROVIDER_EMPTY_RESPONSE', recoverable: false, message: '百炼模型返回了空回答。' });
@@ -51,6 +52,7 @@ class BailianProvider implements ModelProvider {
         ...(request.tools ? { tools: request.tools.map(toChatTool) } : {}),
         ...(request.toolChoice ? { tool_choice: request.toolChoice === 'auto' || request.toolChoice === 'required' ? request.toolChoice : { type: 'function', function: { name: request.toolChoice.name } } } : {}),
         stream: false,
+        ...(request.maxCompletionTokens ? { max_completion_tokens: request.maxCompletionTokens } : {}),
       } as never, options?.signal ? { signal: options.signal } : undefined);
       const message = response.choices[0]?.message as { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> } | undefined;
       const toolCalls = message?.tool_calls?.map(call => ({ id: call.id ?? '', name: call.function?.name ?? '', arguments: call.function?.arguments ?? '' })) ?? [];
@@ -63,7 +65,7 @@ class BailianProvider implements ModelProvider {
 
   private async *stream(request: ModelRequest, options?: ModelCallOptions): AsyncIterable<ModelStreamEvent> {
     try {
-      const response = await this.client.chat.completions.create({ model: this.model, messages: request.messages.map(message => toChatMessage(message)) as never, stream: true } as never, options?.signal ? { signal: options.signal } : undefined) as unknown as AsyncIterable<{ readonly choices: readonly { readonly delta?: unknown; readonly finish_reason?: string | null }[]; readonly model: string; readonly usage?: { readonly prompt_tokens: number; readonly completion_tokens: number; readonly total_tokens: number } | null }>;
+      const response = await this.client.chat.completions.create({ model: this.model, messages: request.messages.map(message => toChatMessage(message)) as never, stream: true, ...(request.maxCompletionTokens ? { max_completion_tokens: request.maxCompletionTokens } : {}) } as never, options?.signal ? { signal: options.signal } : undefined) as unknown as AsyncIterable<{ readonly choices: readonly { readonly delta?: unknown; readonly finish_reason?: string | null }[]; readonly model: string; readonly usage?: { readonly prompt_tokens: number; readonly completion_tokens: number; readonly total_tokens: number } | null }>;
       for await (const chunk of response) {
         const choice = chunk.choices[0];
         const delta = choice?.delta as { content?: string | null; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } | undefined;

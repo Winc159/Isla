@@ -44,6 +44,7 @@ class DeepSeekProvider implements ModelProvider {
       messages: toChatMessages(request.messages),
       thinking: { type: 'disabled' as const },
       ...(request.responseFormat ? { response_format: request.responseFormat } : {}),
+      ...(request.maxCompletionTokens ? { max_tokens: request.maxCompletionTokens } : {}),
     };
     try {
     const r = await this.client.chat.completions.create(body as never, options?.signal ? { signal: options.signal } : undefined);
@@ -72,6 +73,7 @@ class DeepSeekProvider implements ModelProvider {
       ...(request.tools ? { tools: request.tools.map(toChatTool) } : {}),
       ...(request.toolChoice ? { tool_choice: request.toolChoice === 'auto' || request.toolChoice === 'required' ? request.toolChoice : { type: 'function', function: { name: request.toolChoice.name } } } : {}),
       thinking: { type: 'disabled' as const },
+      ...(request.maxCompletionTokens ? { max_tokens: request.maxCompletionTokens } : {}),
     } as never, options?.signal ? { signal: options.signal } : undefined);
     const message = r.choices[0]?.message as { content?: string | null; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } | undefined;
     const structuredCalls = message?.tool_calls?.map(call => ({ id: call.id, name: call.function.name ?? '', arguments: call.function.arguments })) ?? [];

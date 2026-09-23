@@ -30,6 +30,7 @@ import {
   type SessionContext,
   type ContextCheckpoint,
 } from "./context.js";
+import { estimateRequestTokens, resolveTokenBudget, type TokenBudgetPolicy } from './token-budget.js';
 export const DEFAULT_MAX_CONTEXT_TURNS = 20;
 export const DEFAULT_MAX_TOOL_ROUNDS = 8;
 type ModelRequestPhase = "legacy" | "agent_step";
@@ -39,6 +40,9 @@ export interface ChatSessionOptions {
   readonly maxContextTurns?: number;
   readonly maxContextChars?: number;
   readonly contextRetainTurns?: number;
+  readonly maxContextTokens?: number;
+  readonly maxOutputTokens?: number;
+  readonly contextReserveTokens?: number;
   readonly modelRetries?: number;
   readonly context?: SessionContext;
   readonly journal?: SessionJournal;
@@ -74,6 +78,7 @@ export class ChatSession {
   private readonly maxContextChars: number;
   private readonly contextRetainTurns: number;
   private readonly modelRetries: number;
+  private readonly tokenBudget: TokenBudgetPolicy;
   private context: SessionContext | undefined;
   constructor(private readonly provider: ModelProvider, options: ChatSessionOptions = {}) {
     this.messages = options.messages
@@ -89,6 +94,7 @@ export class ChatSession {
       throw new Error("maxContextChars must be a positive integer");
     this.contextRetainTurns = options.contextRetainTurns ?? DEFAULT_CONTEXT_RETAIN_TURNS;
     this.modelRetries = options.modelRetries ?? 1;
+    this.tokenBudget = resolveTokenBudget(options);
     if (!Number.isInteger(this.modelRetries) || this.modelRetries < 0 || this.modelRetries > 1) throw new Error("modelRetries must be 0 or 1");
     if (!Number.isInteger(this.contextRetainTurns) || this.contextRetainTurns <= 0)
       throw new Error("contextRetainTurns must be a positive integer");
@@ -111,7 +117,9 @@ export class ChatSession {
     this.onContextCompacted = options.onContextCompacted;
     this.onDiagnostic = options.onDiagnostic;
     // Explicit capabilities are the application path; retain the projectRoot fallback for direct legacy ChatSession callers.
-    this.capabilities = this.enableTools && this.provider.generateWithTools ? (options.capabilities ?? (this.projectRoot ? [createProjectFilesCapability(this.projectRoot)] : [])) : [];
+    this.capabilities = this.enableTools && this.provider.generateWithTools && this.provider.capabilities?.toolCalling !== false
+      ? (options.capabilities ?? (this.projectRoot ? [createProjectFilesCapability(this.projectRoot)] : []))
+      : [];
     this.requestContextBuilder = new RequestContextBuilder({ capabilities: this.capabilities });
     this.toolRegistry = new ToolRegistry();
     for (const capability of this.capabilities) this.toolRegistry.registerCapability(capability);
@@ -336,6 +344,8 @@ export class ChatSession {
   private generateModel(request: ModelRequest & { readonly tools: readonly ToolDefinition[] }, withTools: true, signal: AbortSignal, phase?: ModelRequestPhase): Promise<ToolResponse>;
   private generateModel(request: ModelRequest, withTools: false, signal: AbortSignal, phase?: ModelRequestPhase): Promise<ModelResponse>;
   private async generateModel(request: ModelRequest, withTools: boolean, signal: AbortSignal, phase: ModelRequestPhase = "legacy"): Promise<ModelResponse | ToolResponse> {
+    request = { ...request, maxCompletionTokens: request.maxCompletionTokens ?? this.tokenBudget.maxOutputTokens };
+    this.assertTokenBudget(request);
     const turn = this.journal.turns.at(-1);
     const step = turn?.attempts.length ?? 0;
     for (let attempt = 0; ; attempt += 1) {
@@ -385,6 +395,7 @@ export class ChatSession {
     }
     const phase = this.capabilities.length ? "agent_step" as const : "legacy" as const;
     const request = this.requestContextBuilder.build(history, phase, memoryContext);
+    this.assertTokenBudget(request);
     let response: ModelResponse;
     if (this.agentLoop && this.capabilities.length && this.provider.generateWithTools) {
       response = await this.runAgentLoop(history, memoryContext, signal);
@@ -427,6 +438,13 @@ export class ChatSession {
     const turn = this.journal.turns.at(-1);
     if (turn) (turn.actions as TurnActionRecord[]).push({ type: "phase", phase: "agent_step" });
     return this.generateWithAvailableTools(request, signal);
+  }
+
+  private assertTokenBudget(request: ModelRequest): void {
+    const estimated = estimateRequestTokens(request);
+    if (estimated > this.tokenBudget.maxInputTokens) {
+      throw new RuntimeError({ code: 'CONTEXT_INPUT_TOO_LARGE', recoverable: false, message: `当前请求上下文过大（估算 ${estimated} tokens，预算 ${this.tokenBudget.maxInputTokens} tokens）。请压缩会话或拆分任务。` });
+    }
   }
 
   private async commitResponse(response: ModelResponse, signal: AbortSignal): Promise<ModelResponse> {

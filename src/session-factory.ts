@@ -33,6 +33,9 @@ export interface SessionFactoryConfig {
   readonly maxContextTurns: number;
   readonly maxContextChars: number;
   readonly contextRetainTurns: number;
+  readonly maxContextTokens: number;
+  readonly maxOutputTokens: number;
+  readonly contextReserveTokens: number;
   readonly modelRetries: number;
   readonly webFetch?: WebFetchConfig;
   readonly webSearch?: WebSearchConfig;
@@ -91,6 +94,9 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         maxContextTurns: config.maxContextTurns,
         maxContextChars: config.maxContextChars,
         contextRetainTurns: config.contextRetainTurns,
+        maxContextTokens: config.maxContextTokens,
+        maxOutputTokens: config.maxOutputTokens,
+        contextReserveTokens: config.contextReserveTokens,
         modelRetries: config.modelRetries,
         enableTools: true,
         skillCatalog: ('skillCatalog' in current && current.skillCatalog) ? current.skillCatalog : { version: 1, entries: skillCatalog.listSync().entries },
