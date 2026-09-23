@@ -149,6 +149,9 @@ export async function runCli(
           capabilitySnapshot: inventoryFactory.capabilitySnapshot,
           maxContextTurns,
           maxContextChars,
+          maxContextTokens,
+          maxOutputTokens,
+          contextReserveTokens,
       });
       if (result.type === 'exit') {
         return 'exit';

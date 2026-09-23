@@ -34,6 +34,9 @@ export interface CliCommandContext {
   readonly capabilitySnapshot?: () => CapabilitySnapshot;
   readonly maxContextTurns?: number;
   readonly maxContextChars?: number;
+  readonly maxContextTokens?: number;
+  readonly maxOutputTokens?: number;
+  readonly contextReserveTokens?: number;
 }
 
 export type CliCommandResult =

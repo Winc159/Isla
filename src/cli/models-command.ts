@@ -10,7 +10,7 @@ import { modelCatalogCacheIdentity, modelCatalogCachePath, readModelCatalogCache
 export const modelsCommand: CliCommand = {
   name: '/models',
   description: '查询模型；用 /models use <model-id> 切换',
-  usage: '/models [list|browse|search <text>|refresh|use <model>]',
+  usage: '/models [list|browse|search <text>|refresh|info <model-id>|use <model>]',
   inputMode: 'line',
   async execute(context) {
     if (!context.configStore || !context.configPath) { context.output.write('当前运行没有连接到 Profile 配置文件。\n'); return { type: 'continue' }; }
@@ -23,12 +23,26 @@ export const modelsCommand: CliCommand = {
     const selectedProfileName = profileName;
     const tokens = (context.commandLine ?? '/models').trim().split(/\s+/);
     const action = tokens[1] ?? 'list';
-    if (action !== 'list' && action !== 'browse' && action !== 'refresh' && !(action === 'search' && tokens.length === 3) && !(action === 'use' && tokens.length === 3)) { context.output.write('用法：/models [list|browse|search <text>|refresh|use <model>]\n'); return { type: 'continue' }; }
+    if (action !== 'list' && action !== 'browse' && action !== 'refresh' && !(action === 'search' && tokens.length === 3) && !(action === 'use' && tokens.length === 3) && !(action === 'info' && tokens.length === 3)) { context.output.write('用法：/models [list|browse|search <text>|refresh|info <model-id>|use <model>]\n'); return { type: 'continue' }; }
     const catalogEndpoint = profile.provider === 'bailian'
       ? new URL('/api/v1/models', new URL(profile.baseURL).origin).toString()
       : 'https://api.deepseek.com/models';
     const cacheIdentity = modelCatalogCacheIdentity(profile.provider, selectedProfileName, catalogEndpoint);
     const cachePath = modelCatalogCachePath(configPath, profile.provider, selectedProfileName, catalogEndpoint);
+    if (action === 'info') {
+      const requestedModel = tokens[2]!;
+      try {
+        let available = (await readModelCatalogCache<ModelCatalogEntry>(cachePath, cacheIdentity))?.models;
+        if (!available) {
+          available = profile.provider === 'bailian' ? await listBailianModels(profile.baseURL, profile.apiKey) : await listDeepSeekModels(profile.apiKey!);
+          await writeModelCatalogCache(cachePath, available, cacheIdentity);
+        }
+        const model = available.find(item => item.id === requestedModel);
+        if (!model) { context.output.write(`模型 ${requestedModel} 不在当前目录中。\n`); return { type: 'continue' }; }
+        context.output.write(`${JSON.stringify({ id: model.id, name: model.name, capabilities: model.capabilities, features: ('features' in model ? model.features : undefined), contextWindow: model.contextWindow, maxInputTokens: ('maxInputTokens' in model ? model.maxInputTokens : undefined), maxOutputTokens: ('maxOutputTokens' in model ? model.maxOutputTokens : undefined), maxReasoningTokens: ('maxReasoningTokens' in model ? model.maxReasoningTokens : undefined) })}\n`);
+      } catch (error) { context.output.write(`模型信息查询失败：${error instanceof Error ? error.message : 'Unknown error'}\n`); }
+      return { type: 'continue' };
+    }
     if (action === 'use') {
       const requestedModel = tokens[2]!;
       try {
