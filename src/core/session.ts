@@ -31,8 +31,11 @@ import {
   type ContextCheckpoint,
 } from "./context.js";
 import { estimateRequestTokens, resolveTokenBudget, type TokenBudgetPolicy } from './token-budget.js';
+import { pruneToolResult } from './tool-result-pruner.js';
+import { LoopBudgetState } from './loop-budget.js';
+import type { UserQuestionService } from "../user-questions/types.js";
 export const DEFAULT_MAX_CONTEXT_TURNS = 20;
-export const DEFAULT_MAX_TOOL_ROUNDS = 8;
+export const DEFAULT_MAX_TOOL_ROUNDS = 12;
 type ModelRequestPhase = "legacy" | "agent_step";
 export interface ChatSessionOptions {
   readonly systemPrompt?: string;
@@ -66,6 +69,8 @@ export interface ChatSessionOptions {
   readonly onContextCompacted?: (checkpoint: ContextCheckpoint) => Promise<void>;
   readonly capabilities?: readonly ToolCapability[];
   readonly onDiagnostic?: (event: { readonly code: string; readonly component: string; readonly severity: 'warning' | 'error' | 'debug'; readonly detail?: string }) => void;
+  readonly userQuestionService?: UserQuestionService;
+  readonly agentLoopTimeoutMs?: number;
 }
 
 function sameTaskState(current: TaskStateV1, next: Omit<TaskStateV1, "revision" | "version" | "updatedAt">): boolean {
@@ -116,6 +121,8 @@ export class ChatSession {
     this.onTurnCommitted = options.onTurnCommitted;
     this.onContextCompacted = options.onContextCompacted;
     this.onDiagnostic = options.onDiagnostic;
+    this.userQuestionService = options.userQuestionService;
+    this.agentLoopTimeoutMs = options.agentLoopTimeoutMs ?? 600_000;
     // Explicit capabilities are the application path; retain the projectRoot fallback for direct legacy ChatSession callers.
     this.capabilities = this.enableTools && this.provider.generateWithTools && this.provider.capabilities?.toolCalling !== false
       ? (options.capabilities ?? (this.projectRoot ? [createProjectFilesCapability(this.projectRoot)] : []))
@@ -149,6 +156,8 @@ export class ChatSession {
   private readonly requestContextBuilder: RequestContextBuilder;
   private readonly toolRegistry: ToolRegistry;
   private readonly toolRuntime: ToolRuntime;
+  private readonly userQuestionService: UserQuestionService | undefined;
+  private readonly agentLoopTimeoutMs: number;
   private activeTurn: { readonly controller: AbortController; readonly promise: Promise<ModelResponse> } | undefined;
   private readonly retrievedProjectSources = new Set<string>();
   private readonly projectSourceReferences = new Map<string, ProjectSourceReference>();
@@ -207,8 +216,16 @@ export class ChatSession {
     const failures = new Map<string, number>();
     const completionRejections: CompletionRejectionReason[] = [];
     const successfulWrites = new Set<string>();
-    const tools: readonly ToolDefinition[] = this.toolRegistry.definitions();
-    for (let round = 0; round < DEFAULT_MAX_TOOL_ROUNDS; round += 1) {
+    const tools: readonly ToolDefinition[] = this.selectToolDefinitions(current.map(message => message.content).join("\n"));
+    const loopBudget = new LoopBudgetState();
+    const loopStartedAt = Date.now();
+    let wrapUpSent = false;
+    for (let round = 0; round < loopBudget.currentBudget; round += 1) {
+      if (Date.now() - loopStartedAt >= this.agentLoopTimeoutMs) {
+        const turn = this.journal.turns.at(-1);
+        if (turn) (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: round, event: "stop", budget: loopBudget.currentBudget, reason: "wall_clock_timeout" });
+        return { text: "Agent Loop 达到时间上限，已暂停执行。", outcome: "blocked", model: provider.model };
+      }
       const mustSearch = requiredTool === "web_search" && !evidence.some(item => item.startsWith("web_search:"));
       const mustFetch = requiredTool === "web_search" && !mustSearch && !evidence.some(item => item.startsWith("web_fetch:")) && tools.some(tool => tool.name === "web_fetch");
       const requiredToolChoice = mustSearch ? requiredTool : mustFetch ? "web_fetch" : undefined;
@@ -322,12 +339,21 @@ export class ChatSession {
         }
         if (!execution.ok && execution.code === "TURN_CANCELLED") throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
         this.onToolsUsed?.([call.name]);
+        const prunedResult = pruneToolResult(result);
+        if (prunedResult.pruned) this.onDiagnostic?.({ code: "TOOL_RESULT_PRUNED", component: "context", severity: "debug", detail: `tool=${call.name};originalChars=${prunedResult.originalChars};retainedChars=${prunedResult.retainedChars}` });
+        result = prunedResult.content;
         const toolMessage = { role: "tool" as const, toolCallId: call.id, content: result };
         next.push(toolMessage);
         await this.appendMessage(toolMessage);
-        if (terminalResponse) {
+          if (terminalResponse) {
           await this.appendSkippedToolResults(response.toolCalls.slice(callIndex + 1), "本批次前序调用已使执行停止。", next);
           return terminalResponse;
+        }
+        loopBudget.record({ action: `${call.name}:${call.arguments}`, result: execution.ok ? execution.content.slice(0, 500) : execution.message, changed: execution.ok, ...(execution.ok ? {} : { errorCode: execution.code }) });
+        if (!execution.ok && loopBudget.hasRepeatedFailure()) {
+          const turn = this.journal.turns.at(-1);
+          if (turn) (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: round, event: "stop", budget: loopBudget.currentBudget, reason: `repeated_failure:${call.name}:${execution.code}` });
+          return { text: `工具 ${call.name} 连续失败，错误类型为 ${execution.code}，原因：${execution.message.slice(0, 240)}。已停止重复重试。`, outcome: "blocked", model: provider.model };
         }
       }
       const verificationStatus = deriveVerificationStatus(this.journal);
@@ -337,8 +363,41 @@ export class ChatSession {
       current = observations.length === 0 ? next : lastToolIndex >= 0
         ? [...next.slice(0, lastToolIndex), ...observations, ...next.slice(lastToolIndex)]
         : [...next, ...observations];
+      if (round + 1 >= loopBudget.currentBudget - 2 && loopBudget.tryExtend()) {
+        const turn = this.journal.turns.at(-1);
+        if (turn) (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: round, event: "auto_extend", budget: loopBudget.currentBudget });
+        this.onDiagnostic?.({ code: 'LOOP_BUDGET_EXTENDED', component: 'agent_loop', severity: 'debug', detail: `budget=${loopBudget.currentBudget}` });
+      } else if (round + 1 >= loopBudget.currentBudget - 2 && !loopBudget.shouldStop() && !loopBudget.hardStopReached()) {
+        if (!wrapUpSent) {
+          current = [...current, { role: "system", content: "即将达到当前 Agent Loop 自动预算。请先收束已完成工作；若仍有明确未完成目标，请改变策略并说明下一步，不要重复最近动作。" }];
+          wrapUpSent = true;
+          this.onDiagnostic?.({ code: "LOOP_WRAP_UP", component: "agent_loop", severity: "debug" });
+        }
+        const approved = await this.askForLoopContinuation(loopBudget, signal);
+        if (!approved) {
+          const turn = this.journal.turns.at(-1);
+          if (turn) (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: round, event: "stop", budget: loopBudget.currentBudget, reason: "user_or_interaction_stop" });
+          return { text: "工具调用预算已达到自动上限，已暂停执行。", outcome: "blocked", model: provider.model };
+        }
+        const turn = this.journal.turns.at(-1);
+        if (turn) (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: round, event: "user_extend", budget: loopBudget.currentBudget });
+      }
     }
     return { text: "工具调用达到本轮上限，已停止继续执行。", outcome: "blocked", model: provider.model };
+  }
+
+  private async askForLoopContinuation(loopBudget: LoopBudgetState, signal: AbortSignal): Promise<boolean> {
+    if (!this.userQuestionService) return false;
+    try {
+      const result = await this.userQuestionService.ask({ questions: [{ id: "agent_loop_continue", header: "继续执行", question: `Agent Loop 已使用约 ${loopBudget.currentBudget} 步，近期仍有进展。是否再增加 8 步？`, options: [{ label: "继续", description: "增加一段有界预算" }, { label: "停止", description: "暂停并把当前结果交给用户" }] }] }, { signal });
+      const selected = result.answers.find(item => item.id === "agent_loop_continue")?.selected[0]?.trim().toLowerCase();
+      const approved = selected === "继续" || selected === "continue" || selected === "yes" || selected === "y";
+      if (approved && loopBudget.extendAfterApproval()) {
+        this.onDiagnostic?.({ code: 'LOOP_BUDGET_EXTENDED_BY_USER', component: 'agent_loop', severity: 'debug', detail: `budget=${loopBudget.currentBudget}` });
+        return true;
+      }
+    } catch { /* treat unavailable interaction as a safe stop */ }
+    return false;
   }
 
   private generateModel(request: ModelRequest & { readonly tools: readonly ToolDefinition[] }, withTools: true, signal: AbortSignal, phase?: ModelRequestPhase): Promise<ToolResponse>;
@@ -380,21 +439,46 @@ export class ChatSession {
     try { await this.persistState(); } catch (error) { this.messages.pop(); (this.journal.turns as TurnRecord[]).pop(); throw error; }
     await this.onSessionEvent?.({ type: "user", input });
     try { await this.compactIfNeeded(signal);
-    const modelMessages = this.messages.filter(message => message.source?.kind !== "skill-invocation" || message.source.userMessageIndex === userIndex);
-    const projection = buildContextProjection(modelMessages, {
-      maxTurns: this.context?.checkpoint ? this.contextRetainTurns : this.maxContextTurns,
-      maxChars: this.maxContextChars,
-    });
-    const history = appendCheckpoint(projection, this.context?.checkpoint);
-    let memoryContext: string | undefined;
-    if (this.retrieveContext) {
-      try {
-        const retrieved = await this.retrieveContext(input, history);
-        if (retrieved?.trim()) memoryContext = retrieved;
-      } catch { this.onDiagnostic?.({ code: "MEMORY_RETRIEVAL_DEGRADED", component: "memory", severity: "debug" }); }
+    const prepareRequest = async () => {
+      const checkpointThrough = this.context?.checkpoint?.throughMessageIndex ?? -1;
+      const modelMessages = this.messages.filter((message, index) =>
+        (message.role === "system" || index > checkpointThrough)
+        && (message.source?.kind !== "skill-invocation" || message.source.userMessageIndex === userIndex));
+      const projection = buildContextProjection(modelMessages, {
+        maxTurns: this.context?.checkpoint ? this.contextRetainTurns : this.maxContextTurns,
+        maxChars: this.maxContextChars,
+      });
+      const history = appendCheckpoint(projection, this.context?.checkpoint);
+      let memoryContext: string | undefined;
+      if (this.retrieveContext) {
+        try {
+          const retrieved = await this.retrieveContext(input, history);
+          if (retrieved?.trim()) memoryContext = retrieved;
+        } catch { this.onDiagnostic?.({ code: "MEMORY_RETRIEVAL_DEGRADED", component: "memory", severity: "debug" }); }
+      }
+      const phase = this.capabilities.length ? "agent_step" as const : "legacy" as const;
+      const request = this.requestContextBuilder.build(history, phase, memoryContext, this.agentLoop ? this.task : undefined);
+      return { history, memoryContext, request };
+    };
+    let prepared = await prepareRequest();
+    const requestTokenEstimate = (value: ModelRequest): number => estimateRequestTokens({ ...value, ...(this.capabilities.length && this.provider.generateWithTools ? { tools: this.selectToolDefinitions(input) } : {}) });
+    if (requestTokenEstimate(prepared.request) > this.tokenBudget.maxInputTokens) {
+      await this.compactIfNeeded(signal, true);
+      prepared = await prepareRequest();
     }
-    const phase = this.capabilities.length ? "agent_step" as const : "legacy" as const;
-    const request = this.requestContextBuilder.build(history, phase, memoryContext);
+    if (requestTokenEstimate(prepared.request) > this.tokenBudget.maxInputTokens) {
+      // Tool schemas can consume a large fixed portion of the budget. If a
+      // checkpoint plus schemas still cannot fit, preserve the current user
+      // request and system policy but drop derived historical context.
+      const minimalHistory = prepared.history.filter(message => message.role === "system");
+      const currentMessage = [...this.messages].reverse().find(message => message.role === "user");
+      if (currentMessage) minimalHistory.push(currentMessage);
+      const phase = this.capabilities.length ? "agent_step" as const : "legacy" as const;
+      const minimalRequest = this.requestContextBuilder.build(minimalHistory, phase, undefined, this.agentLoop ? this.task : undefined);
+      prepared = { history: minimalHistory, memoryContext: undefined, request: minimalRequest };
+      this.onDiagnostic?.({ code: "CONTEXT_MINIMAL_FALLBACK", component: "context", severity: "warning", detail: `estimated=${requestTokenEstimate(minimalRequest)};budget=${this.tokenBudget.maxInputTokens}` });
+    }
+    const { history, memoryContext, request } = prepared;
     this.assertTokenBudget(request);
     let response: ModelResponse;
     if (this.agentLoop && this.capabilities.length && this.provider.generateWithTools) {
@@ -447,6 +531,27 @@ export class ChatSession {
     }
   }
 
+  private selectToolDefinitions(context: string): readonly ToolDefinition[] {
+    const tools = this.toolRegistry.definitions();
+    const estimated = estimateRequestTokens({ messages: [{ role: "user", content: context }], tools });
+    if (estimated <= this.tokenBudget.maxInputTokens) return tools;
+    const lower = context.toLowerCase();
+    const browserIntent = /https?:\/\/|网页|网站|浏览器|登录|小红书|github|帖子|页面/.test(lower);
+    const fileIntent = /文件|目录|读取|写入|编辑|workspace|代码/.test(lower);
+    const commandIntent = /命令|测试|构建|运行|npm|shell|终端/.test(lower);
+    const selected = tools.filter(tool =>
+      (browserIntent && tool.name.startsWith("browser_"))
+      || (fileIntent && /file|directory|project_search/i.test(tool.name))
+      || (commandIntent && /command|shell|run/i.test(tool.name))
+      || /ask_user|user_question|task/i.test(tool.name),
+    );
+    if (selected.length) {
+      this.onDiagnostic?.({ code: "TOOL_SCHEMA_MINIMAL_FALLBACK", component: "context", severity: "warning", detail: `tools=${selected.length}/${tools.length}` });
+      return selected;
+    }
+    return tools;
+  }
+
   private async commitResponse(response: ModelResponse, signal: AbortSignal): Promise<ModelResponse> {
     if (signal.aborted) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
     await this.appendMessage({ role: "assistant", content: response.text });
@@ -472,11 +577,11 @@ export class ChatSession {
     }
   }
 
-  private async compactIfNeeded(signal: AbortSignal): Promise<void> {
+  private async compactIfNeeded(signal: AbortSignal, force = false): Promise<void> {
     if (signal.aborted) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
-    if (!shouldCompact(this.messages, { maxTurns: this.maxContextTurns, maxChars: this.maxContextChars })) return;
+    if (!force && !shouldCompact(this.messages, { maxTurns: this.maxContextTurns, maxChars: this.maxContextChars })) return;
     const previousCheckpoint = this.context?.checkpoint;
-    const units = selectCompactionUnits(this.messages, this.contextRetainTurns, previousCheckpoint?.throughMessageIndex ?? -1);
+    const units = selectCompactionUnits(this.messages, force ? 1 : this.contextRetainTurns, previousCheckpoint?.throughMessageIndex ?? -1);
     if (!units.length) return;
     const sourceMessages = units.flatMap(unit => unit.messages);
     const prompt = [

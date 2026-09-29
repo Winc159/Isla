@@ -31,6 +31,9 @@ function renderQuestion(question: UserQuestion): string {
 }
 
 function parseAnswer(question: UserQuestion, value: string): UserQuestionAnswer {
+  const normalized = value.trim().toLocaleLowerCase();
+  const labelMatches = question.options?.filter(option => option.label.trim().toLocaleLowerCase() === normalized).map(option => option.label) ?? [];
+  if (labelMatches.length) return { id: question.id, selected: question.multiSelect ? labelMatches : [labelMatches[0]!] };
   const indexes = question.options?.length ? value.split(/[,，]/u).map(item => Number(item.trim()) - 1) : [];
   const validIndexes = indexes.filter(index => Number.isInteger(index) && index >= 0 && index < (question.options?.length ?? 0));
   const selected = [...new Set(validIndexes.map(index => question.options![index]!.label))];

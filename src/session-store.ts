@@ -297,7 +297,8 @@ export function parseStoredSession(source: string): StoredSession {
     ...(value.context ? { context: value.context } : {}),
     journal: emptyJournal(),
   };
-  validateSessionJournal(value.journal, value.messages);
+  const journal = recoverInterruptedJournal(value.journal);
+  validateSessionJournal(journal, value.messages);
   if (value.version === 4) return {
     version: 4,
     id: value.id,
@@ -309,7 +310,7 @@ export function parseStoredSession(source: string): StoredSession {
     messages: value.messages,
     ...(value.context ? { context: value.context } : {}),
     ...(value.task ? { task: value.task } : {}),
-    journal: value.journal,
+    journal,
   };
   if (value.version === 5) return {
     version: 5,
@@ -322,7 +323,7 @@ export function parseStoredSession(source: string): StoredSession {
     messages: value.messages,
     ...(value.context ? { context: value.context } : {}),
     ...(value.task ? { task: value.task } : {}),
-    journal: value.journal,
+    journal,
     skillCatalog: value.skillCatalog,
   };
   return {
@@ -363,6 +364,17 @@ function isTaskBrief(value: unknown): value is TaskBrief {
   const task = value as Record<string, unknown>;
   return typeof task.goal === "string" && Array.isArray(task.confirmedConstraints)
     && Array.isArray(task.openQuestions) && Array.isArray(task.assumptions);
+}
+
+function recoverInterruptedJournal(journal: SessionJournal): SessionJournal {
+  const now = new Date().toISOString();
+  let changed = false;
+  const turns = journal.turns.map(turn => {
+    if (turn.status !== 'running') return turn;
+    changed = true;
+    return { ...turn, status: 'interrupted' as const, endedAt: turn.endedAt ?? now, error: { code: 'INTERRUPTED' as const, recoverable: true, message: '进程在本回合完成前退出；已在启动时恢复为可继续状态。' } };
+  });
+  return changed ? { ...journal, turns } : journal;
 }
 
 function isSkillCatalog(value: unknown): value is StoredSkillCatalogV1 {

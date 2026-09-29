@@ -22,7 +22,19 @@ export async function loadRuntime(argv: readonly string[] = process.argv.slice(2
   const startup = parseCliStartupArgs(argv);
   const config = await loadStartupConfig(startup, env);
   const workspaceRoot = await resolveWorkspace(startup.workspacePath, config.workspaceRoot, process.cwd());
-  const resolvedConfig = { ...config, workspaceRoot } as AppConfig;
+  let resolvedConfig = { ...config, workspaceRoot } as AppConfig;
+  if (resolvedConfig.provider === 'bailian') {
+    try {
+      const matches = await listBailianModels(resolvedConfig.baseURL, resolvedConfig.apiKey, { model: resolvedConfig.model, maxPages: 1 });
+      const entry = matches.find(item => item.id === resolvedConfig.model);
+      if (entry) {
+        const markers = [...entry.features, ...entry.capabilities].map(value => value.toLowerCase().replaceAll('_', '-'));
+        resolvedConfig = { ...resolvedConfig, toolCalling: markers.some(value => value === 'function-calling' || value === 'functioncalling' || value === 'tool-calling' || value === 'tools') };
+      }
+    } catch {
+      resolvedConfig = { ...resolvedConfig, toolCalling: true };
+    }
+  }
   if (startup.models) {
     const models = resolvedConfig.provider === 'bailian'
       ? await listBailianModels(resolvedConfig.baseURL, resolvedConfig.apiKey)

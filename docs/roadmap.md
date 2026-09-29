@@ -391,6 +391,12 @@ v0.4.1 不扩展 MCP 协议面，集中补齐个人用户可操作性：通过 `
 
 本版复用百炼现有 `GET /api/v1/models` 和缓存，普通启动不新增联网依赖；首版使用保守确定的 Token 估算，不引入模型专属 tokenizer、自动选模或自动路由。设计、Batch、测试矩阵和验收模板见 [`docs/proposals/v0.4.6/`](proposals/v0.4.6/README.md)。
 
+## v0.4.7：Headless Browser and Human Control Surface（设计完成，Batch A 已实施）
+
+面向 Linux 无头常驻主机增加隔离 Chromium、受控 Browser Tool 和只监听 loopback 的 Browser Console。用户通过 SSH 本地端口转发查看页面、人工接管登录和处理验证码；Agent 恢复前必须重新观察页面。
+
+本版同时增加精确 Origin 绑定的本地加密密码簿。模型只能发现可用凭据并申请使用，用户通过 y/n/other 决定；Runtime 直接将凭据填入浏览器，明文不进入模型、Session、Tool Result、Journal 或普通日志。公网监听、多用户、noVNC、任意 JavaScript、支付自动化和云端密码同步不在范围内。设计、Batch、测试矩阵和验收模板见 [`docs/proposals/v0.4.7/`](proposals/v0.4.7/README.md)。
+
 上述版本严格顺序推进：每版先完成 P0 自动化和真实评估，再解锁下一版；后续版本的设计完成不代表允许并行扩大实现范围。
 
 ## 候选阶段：Tool 插件

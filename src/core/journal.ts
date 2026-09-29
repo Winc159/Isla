@@ -35,7 +35,8 @@ export type TurnActionRecord =
   | { readonly type: "checkpoint"; readonly throughMessageIndex: number }
   | { readonly type: "memory_retrieval"; readonly sourceIds: readonly string[] }
   | { readonly type: "project_retrieval"; readonly sourceIds: readonly string[]; readonly truncated: boolean }
-  | { readonly type: "phase"; readonly phase: "agent_step" };
+  | { readonly type: "phase"; readonly phase: "agent_step" }
+  | { readonly type: "loop_budget"; readonly step: number; readonly event: "auto_extend" | "user_extend" | "stop"; readonly budget: number; readonly reason?: string };
 
 export interface TurnRecord {
   readonly id: string;

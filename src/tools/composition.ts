@@ -11,6 +11,8 @@ import { createSessionQueryCapability } from "./session-query.js";
 import type { SessionQuery } from "../session-query.js";
 import type { SkillCatalog } from "../skills/catalog.js";
 import { createSkillCapability } from "./skill.js";
+import { createContextCapability } from './context.js';
+import type { Message } from '../core/types.js';
 
 export interface ToolCompositionContext {
   readonly workspaceRoot: string;
@@ -23,6 +25,7 @@ export interface ToolCompositionContext {
   readonly skillCatalog?: SkillCatalog;
   readonly skillAllow?: readonly string[];
   readonly skillDeny?: readonly string[];
+  readonly contextMessages?: () => readonly Message[];
 }
 
 export type ToolCapabilityFactory = (context: ToolCompositionContext) => ToolCapability | undefined;
@@ -34,6 +37,7 @@ const capabilityFactories: readonly ToolCapabilityFactory[] = [
   () => createTaskStateCapability(),
   context => context.sessionQuery && context.workspaceKey && context.currentSessionId ? createSessionQueryCapability(context.sessionQuery, context.workspaceKey, context.currentSessionId) : undefined,
   context => context.skillCatalog ? createSkillCapability(context.skillCatalog, context.skillAllow, context.skillDeny) : undefined,
+  context => context.contextMessages ? createContextCapability(context.contextMessages) : undefined,
   context => context.userQuestionService ? createUserInteractionCapability(context.userQuestionService) : undefined,
   context => context.webFetch?.enabled || context.webSearch?.enabled
     ? createWebCapability({

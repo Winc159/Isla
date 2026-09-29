@@ -37,9 +37,9 @@ describe('Bailian provider contract', () => {
     await expect(runtime.createSession({ providerId: 'bailian' }).send('test')).rejects.toThrow('空回答');
   });
 
-  it('disables Tool Calling for an unverified model', () => {
+  it('disables Tool Calling when the model catalog explicitly rejects it', () => {
     const runtime = new IslaRuntime();
-    runtime.use(createBailianPlugin({ provider: 'bailian', model: 'deepseek-v4-flash', apiKey: 'test-only-key', baseURL: 'https://workspace.example/compatible-mode/v1', timeoutMs: 1000, debug: false, maxContextTurns: 20, maxContextChars: 60000, contextRetainTurns: 6, modelRetries: 0, memoryEnabled: false }));
+    runtime.use(createBailianPlugin({ provider: 'bailian', model: 'deepseek-v4-flash', toolCalling: false, apiKey: 'test-only-key', baseURL: 'https://workspace.example/compatible-mode/v1', timeoutMs: 1000, debug: false, maxContextTurns: 20, maxContextChars: 60000, contextRetainTurns: 6, modelRetries: 0, memoryEnabled: false }));
     expect(runtime.getProviderCapabilities('bailian')).toEqual({ toolCalling: false, nativeStreaming: false, streamingToolCalls: false });
   });
 
@@ -50,7 +50,7 @@ describe('Bailian provider contract', () => {
       return HttpResponse.json({ model: 'deepseek-r1-distill-qwen-7b', choices: [{ message: { role: 'assistant', content: '文本回答' } }] });
     }));
     const runtime = new IslaRuntime();
-    runtime.use(createBailianPlugin({ provider: 'bailian', model: 'deepseek-r1-distill-qwen-7b', apiKey: 'test-only-key', baseURL: 'https://workspace.example/compatible-mode/v1', timeoutMs: 1000, debug: false, maxContextTurns: 20, maxContextChars: 60000, contextRetainTurns: 6, modelRetries: 0, memoryEnabled: false }));
+    runtime.use(createBailianPlugin({ provider: 'bailian', model: 'deepseek-r1-distill-qwen-7b', toolCalling: false, apiKey: 'test-only-key', baseURL: 'https://workspace.example/compatible-mode/v1', timeoutMs: 1000, debug: false, maxContextTurns: 20, maxContextChars: 60000, contextRetainTurns: 6, modelRetries: 0, memoryEnabled: false }));
 
     await expect(runtime.createSession({ providerId: 'bailian', enableTools: true, projectRoot: process.cwd() }).send('你好')).resolves.toMatchObject({ text: '文本回答' });
     expect(body).toEqual({ model: 'deepseek-r1-distill-qwen-7b', messages: [{ role: 'user', content: '你好' }], stream: false, max_completion_tokens: 2048 });

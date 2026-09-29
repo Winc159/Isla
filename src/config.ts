@@ -118,6 +118,7 @@ export type BailianConfig = {
   readonly webSearch?: WebSearchConfig;
   readonly mcpServers?: readonly McpServerConfig[];
   readonly capabilityPolicy?: CapabilityPolicy;
+  readonly toolCalling?: boolean;
 };
 export type LocalConfig = {
   readonly provider: 'local';

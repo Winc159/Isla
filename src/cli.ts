@@ -16,7 +16,7 @@ import { ConfigStore, defaultConfigPath } from './config-store.js';
 import { parseCliStartupArgs } from './cli-args.js';
 import { runSetupWizard } from './cli/setup-wizard.js';
 import { createApplication, createStderrDiagnosticSink } from './application.js';
-import { createSessionFactory } from './session-factory.js';
+import { createSessionFactory, ensureBrowserConsole, closeBrowserConsole } from './session-factory.js';
 import { workspaceKey } from './session-workspace.js';
 import type { ChatSession } from './core/session.js';
 import { listBailianModels } from './models/bailian-catalog.js';
@@ -87,7 +87,7 @@ export async function runCli(
   maxOutputTokens = 2048,
   contextReserveTokens = 512,
 ): Promise<void> {
-  writeHeader(output, providerId, model, workspaceRoot, webFetch?.enabled === true);
+  writeHeader(output, providerId, model, workspaceRoot, webFetch?.enabled === true, runtime.getProviderCapabilities(providerId)?.toolCalling === true);
   const currentWorkspaceKey = workspaceKey(workspaceRoot);
   const sessionQuery = new SessionQuery(sessionStore);
   const latestSession = await sessionStore.loadLatest(providerId, model, currentWorkspaceKey);
@@ -337,9 +337,9 @@ function formatDuration(milliseconds: number): string {
   return `${hours}h${minutes % 60}m`;
 }
 
-function writeHeader(output: Writable, providerId: string, model: string, workspaceRoot = process.cwd(), webFetchEnabled = false): void {
+function writeHeader(output: Writable, providerId: string, model: string, workspaceRoot = process.cwd(), webFetchEnabled = false, toolCallingEnabled?: boolean): void {
   output.write(
-    `Isla v0 · provider=${providerId} · model=${model} · workspace=${workspaceRoot} · web_fetch=${webFetchEnabled ? 'on' : 'off'}\nmaster,你好，我叫（Error划掉）Isla，很高兴认识你\n输入 /new 开启新对话，输入 /sessions 选择会话，输入 /exit 或按 Esc 退出。\n\n`,
+    `Isla v0 · provider=${providerId} · model=${model} · workspace=${workspaceRoot} · tools=${toolCallingEnabled === false ? 'unavailable' : 'available'} · web_fetch=${webFetchEnabled ? 'on' : 'off'}\nmaster,你好，我叫（Error划掉）Isla，很高兴认识你\n输入 /new 开启新对话，输入 /sessions 选择会话，输入 /exit 或按 Esc 退出。\n\n`,
   );
 }
 
@@ -385,6 +385,9 @@ if (isCliEntry(import.meta.url, process.argv[1])) {
     }
     const { runtime, config, startup, mcpHost } = await loadRuntime();
     if (startup.models) process.exit(0);
+    const consoleWorkspace = config.workspaceRoot ?? process.cwd();
+    const browserConsoleEnabled = process.env.ISLA_BROWSER_CONSOLE === '1' || (startup.protocol === undefined && !process.env.VITEST);
+    if (browserConsoleEnabled) { const browserConsole = await ensureBrowserConsole(consoleWorkspace); process.stderr.write(`[browser-console] ${browserConsole.url} token=${browserConsole.token}\n`); }
     const application = createApplication(config, runtime, { diagnostics: createStderrDiagnosticSink(config.logLevel ?? (config.debug ? 'debug' : 'normal'), process.stderr), ...(mcpHost ? { mcpHost } : {}) });
     const memoryRuntime = application.memory;
     try {
@@ -435,6 +438,7 @@ if (isCliEntry(import.meta.url, process.argv[1])) {
         },
         ...(config.provider === 'bailian' ? { listModels: query => listBailianModels(config.baseURL, config.apiKey, query ? { search: query } : {}), useModel: async nextModel => { const models = await listBailianModels(config.baseURL, config.apiKey); if (!models.some(entry => entry.id === nextModel)) throw new Error('模型不在当前目录中'); const store = new ConfigStore(startup.configPath ?? defaultConfigPath()); const loaded = await store.load(); const name = startup.profileName ?? (loaded.status === 'ready' ? loaded.config.defaultProfile : undefined); if (loaded.status !== 'ready' || !name || loaded.config.profiles[name]?.provider !== 'bailian') throw new Error('Bailian Profile 不可用'); await store.save({ ...loaded.config, profiles: { ...loaded.config.profiles, [name]: { ...loaded.config.profiles[name]!, model: nextModel } } }, loaded.revision); } } : config.provider === 'deepseek' ? { listModels: query => listDeepSeekModels(config.apiKey).then(models => query ? models.filter(entry => entry.id.toLowerCase().includes(query.toLowerCase())) : models), useModel: async nextModel => { const models = await listDeepSeekModels(config.apiKey); if (!models.some(entry => entry.id === nextModel)) throw new Error('模型不在当前目录中'); const store = new ConfigStore(startup.configPath ?? defaultConfigPath()); const loaded = await store.load(); const name = startup.profileName ?? (loaded.status === 'ready' ? loaded.config.defaultProfile : undefined); if (loaded.status !== 'ready' || !name || loaded.config.profiles[name]?.provider !== 'deepseek') throw new Error('DeepSeek Profile 不可用'); await store.save({ ...loaded.config, profiles: { ...loaded.config.profiles, [name]: { ...loaded.config.profiles[name]!, model: nextModel } } }, loaded.revision); } } : {}),
       });
+      await closeBrowserConsole(consoleWorkspace);
       application.close();
       process.exit(0);
     } else await runCliAdapter({
@@ -466,7 +470,7 @@ if (isCliEntry(import.meta.url, process.argv[1])) {
       contextReserveTokens: config.contextReserveTokens,
       diagnostics: event => application.diagnostics.emit(event),
     });
-    } finally { application.close(); }
+    } finally { await closeBrowserConsole(consoleWorkspace); application.close(); }
   } catch (error) {
     process.stderr.write(
       `Error: ${error instanceof Error ? error.message : 'Unknown error'}\n`,

@@ -28,6 +28,13 @@ describe("CliUserQuestionService", () => {
     expect(output.read()).toContain("1. Safe — Careful");
   });
 
+  it("maps an exact option label without treating it as custom text", async () => {
+    const input = interactiveInput();
+    const pending = new CliUserQuestionService(input, capturedOutput().stream).ask({ questions: [{ id: "mode", question: "Choose?", options: [{ label: "manual_input" }, { label: "user_control" }, { label: "other" }] }] });
+    input.write("OTHER\r");
+    await expect(pending).resolves.toEqual({ answers: [{ id: "mode", selected: ["other"] }] });
+  });
+
   it("settles an active question when the turn is cancelled", async () => {
     const input = interactiveInput();
     const controller = new AbortController();

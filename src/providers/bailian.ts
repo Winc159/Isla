@@ -20,7 +20,7 @@ class BailianProvider implements ModelProvider {
   constructor(config: BailianConfig) {
     this.model = config.model;
     this.streamingEnabled = config.streaming === true;
-    this.capabilities = bailianCapabilities(this.model, this.streamingEnabled);
+    this.capabilities = bailianCapabilities(this.model, this.streamingEnabled, config.toolCalling);
     this.client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL, timeout: config.timeoutMs, maxRetries: 0 });
   }
 

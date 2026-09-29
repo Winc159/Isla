@@ -331,6 +331,34 @@ describe("session", () => {
     expect(mainRequest.messages).toContainEqual({ role: "user", content: "u3" });
   });
 
+  it("forces compaction when the final token estimate exceeds the input budget", async () => {
+    const summary = [
+      "## 当前目标\n继续",
+      "## 已完成事项\n旧内容",
+      "## 已确认决策与约束\n保留当前请求",
+      "## 待处理事项\n回答",
+      "## 可验证证据\n响应",
+      "## 话题关系\n同一任务",
+      "## 不确定或缺失信息\n无",
+    ].join("\n");
+    class TokenCompactingProvider extends FakeProvider {
+      override async generate(request: ModelRequest): Promise<ModelResponse> {
+        this.requests.push(request);
+        if (request.messages[0]?.content.includes("会话压缩器")) return { text: summary };
+        return { text: "done" };
+      }
+    }
+    const provider = new TokenCompactingProvider([]);
+    const session = new ChatSession(provider, { maxContextTokens: 1_000, maxContextTurns: 20, maxContextChars: 60_000 });
+    await session.send(`first-${"旧内容".repeat(150)}`);
+    await session.send(`second-${"更多内容".repeat(150)}`);
+
+    expect(provider.requests.some(request => request.messages[0]?.content.includes("会话压缩器"))).toBe(true);
+    const mainRequest = provider.requests.at(-1)!;
+    expect(mainRequest.messages.some(message => message.content.includes("以下是较早会话的历史压缩检查点"))).toBe(true);
+    expect(mainRequest.messages).toContainEqual({ role: "user", content: `second-${"更多内容".repeat(150)}` });
+  });
+
   it("cancels the active turn, preserves the user, and reaches idle without an assistant", async () => {
     let started!: () => void;
     const providerStarted = new Promise<void>(resolve => { started = resolve; });
