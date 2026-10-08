@@ -23,6 +23,7 @@ import { BrowserRuntime as BrowserRuntimeImpl } from './browser/runtime.js';
 import { PlaywrightBrowserAdapter } from './browser/playwright-adapter.js';
 import { BrowserConsoleServer } from './browser/console-server.js';
 import { CredentialVault } from './browser/vault.js';
+import { CapabilityCatalog, createCapabilityProvider } from './capability-catalog.js';
 
 export interface SessionFactoryOptions {
   readonly runtime: IslaRuntime;
@@ -97,6 +98,7 @@ export function projectStoredSession(storedSession: StoredSession): {
   readonly journal?: import('./core/journal.js').SessionJournal;
   readonly task?: TaskBrief | TaskStateV1;
   readonly skillCatalog?: StoredSkillCatalogV1;
+  readonly capabilityActivation?: import('./capability-routing.js').CapabilityActivationStateV1;
 } {
   return {
     messages: storedSession.messages,
@@ -104,6 +106,7 @@ export function projectStoredSession(storedSession: StoredSession): {
     ...('journal' in storedSession && storedSession.journal ? { journal: storedSession.journal } : {}),
     ...('task' in storedSession && storedSession.task ? { task: storedSession.task } : {}),
     ...('skillCatalog' in storedSession && storedSession.skillCatalog ? { skillCatalog: storedSession.skillCatalog } : {}),
+    ...('capabilityActivation' in storedSession && storedSession.capabilityActivation ? { capabilityActivation: storedSession.capabilityActivation } : {}),
   };
 }
 
@@ -119,8 +122,17 @@ export function createSessionFactory(options: SessionFactoryOptions) {
     const capabilities = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => 'inventory', skillCatalog, ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime)] : []), ...(config.mcpHost?.capabilities() ?? [])];
     return composeCapabilitySnapshot(capabilities, skillCatalog.listSync().entries, config.capabilityPolicy);
   };
+  const capabilityCatalog = (): CapabilityCatalog => {
+    const catalog = new CapabilityCatalog();
+    const capabilities = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => 'inventory', skillCatalog, ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime)] : []), ...(config.mcpHost?.capabilities() ?? [])];
+    for (const capability of capabilities) {
+      catalog.register(createCapabilityProvider(capability, { ...(config.capabilityPolicy ? { policy: config.capabilityPolicy } : {}), keywords: [capability.id, ...capability.tools.map(tool => tool.definition.name)] }));
+    }
+    return catalog;
+  };
   return {
     capabilitySnapshot,
+    capabilityCatalog,
     create(entry: SessionEntryOptions) {
       let current = entry.stored;
         const composed = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, contextMessages: () => current.messages, skillCatalog, ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime, entry.userQuestionService, browserConsoleUrl, browserConsoleToken, browserVault)] : []), ...(config.mcpHost?.capabilities() ?? [])];
@@ -139,6 +151,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         modelRetries: config.modelRetries,
         enableTools: true,
         skillCatalog: ('skillCatalog' in current && current.skillCatalog) ? current.skillCatalog : { version: 1, entries: skillCatalog.listSync().entries },
+        ...('capabilityActivation' in current && current.capabilityActivation ? { capabilityActivation: current.capabilityActivation } : {}),
         agentLoop: true,
         agentLoopTimeoutMs: config.timeoutMs ?? 600_000,
         capabilities: filtered,

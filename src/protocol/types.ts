@@ -55,7 +55,7 @@ export type ProtocolEvent =
   | { readonly type: "sessions_result"; readonly id: string; readonly sessions: readonly SessionSearchHit[]; readonly truncated: boolean }
   | { readonly type: "skills_result"; readonly id: string; readonly skills: readonly { readonly name: string; readonly description: string; readonly modelInvocable: boolean; readonly userInvocable: boolean }[] }
   | { readonly type: "mcp_result"; readonly id: string; readonly servers: readonly McpStatus[] }
-  | { readonly type: "capabilities_result"; readonly id: string; readonly version: 1; readonly hash: string; readonly entries: readonly import('../capabilities.js').CapabilityInventoryEntry[] };
+  | { readonly type: "capabilities_result"; readonly id: string; readonly version: 1; readonly hash: string; readonly entries: readonly import('../capabilities.js').CapabilityInventoryEntry[]; readonly catalog?: readonly { readonly id: string; readonly description: string; readonly state: string; readonly risk: string }[] };
 
 export interface ProtocolTaskStateEvent {
   readonly type: "task_state";

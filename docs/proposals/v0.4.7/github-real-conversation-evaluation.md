@@ -155,13 +155,13 @@ toolCalling=true
 
 评估脚本已改为保存脱敏后的完整事件流，而不是只输出最终总结。记录包含 `ready`、每次 `model_step_start/end`、每个 `tool_start/end`、`question_request`、`approval_request`、`response_end` 和 `bye`；密码、API token、question custom 等字段统一替换为 `[REDACTED]`。
 
-本次 transcript：[`github-2026-09-24T08-53-37-962Z.json`](D:\Private\Isla\docs\proposals\v0.4.7\real-conversation-transcripts\github-2026-09-24T08-53-37-962Z.json)
+本次 transcript 保存在本地忽略目录 `.isla-local/evaluations/v0.4.7/real-conversation-transcripts/`，不进入 Git。
 
 本次真实对话显示：模型确认 `toolCalling=true`，连续多次重试 `browser_open`，中途调用了 `search_session_history`，最终在 12 步预算内返回 `工具调用达到本轮上限`。由于本次运行浏览器启动仍返回 `EXECUTION_FAILED`，没有进入密码或人工接管分支。这条记录也暴露出一个真实能力问题：浏览器失败时模型没有尽早收束，反而重复重试并消耗预算；后续应增加 Browser 启动失败的稳定错误分类与 loop stop 证据。
 
 ## 2026-09-24 熔断与人工接管复验
 
-完整脱敏 transcript：[`github-2026-09-24T09-37-23-153Z.json`](D:\Private\Isla\docs\proposals\v0.4.7\real-conversation-transcripts\github-2026-09-24T09-37-23-153Z.json)
+完整脱敏 transcript 保存在本地忽略目录 `.isla-local/evaluations/v0.4.7/real-conversation-transcripts/`，不进入 Git。
 
 同一次真实模型/Runtime 运行包含两轮：
 

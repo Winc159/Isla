@@ -408,6 +408,7 @@ if (isCliEntry(import.meta.url, process.argv[1])) {
         capabilities: { toolCalling: runtime.getProviderCapabilities(config.provider)?.toolCalling === true, cancellation: true, streaming: runtime.getProviderCapabilities(config.provider)?.nativeStreaming === true, streamingToolCalls: runtime.getProviderCapabilities(config.provider)?.streamingToolCalls === true, webFetch: config.webFetch?.enabled === true, webSearch: config.webSearch?.enabled === true, userQuestions: true, mcp: Boolean(mcpHost) },
         ...(mcpHost ? { mcpHost } : {}),
         capabilitySnapshot: sessionFactory.capabilitySnapshot,
+        capabilityCatalog: sessionFactory.capabilityCatalog,
         invokeSkill: async (name, text) => {
           const definition = protocolSkillCatalog.loadSync(name);
           if (!definition || !definition.userInvocable) throw new Error('Skill 不存在或不可由用户调用');

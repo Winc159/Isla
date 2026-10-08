@@ -14,6 +14,10 @@ export class ToolRegistry {
     for (const tool of capability.tools) this.register(tool);
   }
 
+  registerCapabilityIfAbsent(capability: ToolCapability): void {
+    for (const tool of capability.tools) if (!this.toolsByName.has(tool.definition.name)) this.toolsByName.set(tool.definition.name, tool);
+  }
+
   get(name: string): Tool | undefined { return this.toolsByName.get(name); }
 
   definitions(): readonly ToolDefinition[] {

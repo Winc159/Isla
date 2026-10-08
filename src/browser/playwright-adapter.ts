@@ -1,17 +1,31 @@
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import type { BrowserAdapter, BrowserLaunchOptions, BrowserSessionHandle, BrowserElementRef } from './types.js';
 
 export class PlaywrightBrowserAdapter implements BrowserAdapter {
   async launch(options: BrowserLaunchOptions): Promise<BrowserSessionHandle> {
+    const executablePath = options.executablePath ?? resolveInstalledBrowser();
     const context = await chromium.launchPersistentContext(options.userDataDirectory, {
       headless: options.headless ?? true,
       acceptDownloads: options.downloadsEnabled === true,
-      ...(options.executablePath ? { executablePath: options.executablePath } : {}),
+      ...(executablePath ? { executablePath } : {}),
     });
     const page = context.pages()[0] ?? await context.newPage();
     return createHandle(context, page, options.userDataDirectory.split(/[\\/]/).filter(Boolean).at(-1) ?? options.userDataDirectory);
   }
+}
+
+export function resolveInstalledBrowser(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string | undefined {
+  const configured = env.ISLA_BROWSER_EXECUTABLE?.trim();
+  if (configured) return configured;
+  if (platform !== 'win32') return undefined;
+  const candidates = [
+    `${env.PROGRAMFILES ?? 'C:\\Program Files'}\\Google\\Chrome\\Application\\chrome.exe`,
+    `${env['PROGRAMFILES(X86)'] ?? 'C:\\Program Files (x86)'}\\Microsoft\\Edge\\Application\\msedge.exe`,
+    `${env.PROGRAMFILES ?? 'C:\\Program Files'}\\Microsoft\\Edge\\Application\\msedge.exe`,
+  ];
+  return candidates.find(candidate => existsSync(candidate));
 }
 
 function createHandle(context: BrowserContext, page: Page, id: string): BrowserSessionHandle {

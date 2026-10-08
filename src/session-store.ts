@@ -9,6 +9,7 @@ import { validateSessionJournal, type SessionJournal } from "./core/journal.js";
 import type { TaskBrief } from "./core/agent-loop.js";
 import { migrateTaskBrief, type TaskStateV1 } from "./core/task-state.js";
 import type { SkillCatalogEntry } from "./skills/types.js";
+import type { CapabilityActivationStateV1 } from './capability-routing.js';
 
 export type { ContextCheckpoint, SessionContext } from "./core/context.js";
 
@@ -70,6 +71,7 @@ export interface StoredSkillCatalogV1 {
 export interface StoredSessionV5 extends Omit<StoredSessionV4, "version"> {
   readonly version: 5;
   readonly skillCatalog: StoredSkillCatalogV1;
+  readonly capabilityActivation?: CapabilityActivationStateV1;
 }
 
 export type StoredSession = StoredSessionV1 | StoredSessionV2 | StoredSessionV3 | StoredSessionV4 | StoredSessionV5;
@@ -80,6 +82,7 @@ export interface SessionState {
   readonly journal?: SessionJournal;
   readonly task?: TaskBrief | TaskStateV1;
   readonly skillCatalog?: StoredSkillCatalogV1;
+  readonly capabilityActivation?: CapabilityActivationStateV1;
 }
 
 export interface SessionStore {
@@ -173,6 +176,7 @@ export class JsonSessionStore implements SessionStore {
       ...(state.task ? { task: isTaskState(state.task) ? state.task : migrateTaskBrief(state.task, state.messages) } : {}),
       journal: state.journal ?? ('journal' in session ? session.journal : emptyJournal()),
       ...((session.version === 5 || state.skillCatalog !== undefined) ? { skillCatalog: state.skillCatalog ?? (session.version === 5 ? session.skillCatalog : { version: 1, entries: [] }) } : {}),
+      ...(state.capabilityActivation ? { capabilityActivation: state.capabilityActivation } : (session.version === 5 && session.capabilityActivation ? { capabilityActivation: session.capabilityActivation } : {})),
     } as StoredSessionV4 | StoredSessionV5;
     return this.write(next, session.updatedAt);
   }
@@ -325,6 +329,7 @@ export function parseStoredSession(source: string): StoredSession {
     ...(value.task ? { task: value.task } : {}),
     journal,
     skillCatalog: value.skillCatalog,
+    ...(value.capabilityActivation ? { capabilityActivation: value.capabilityActivation } : {}),
   };
   return {
     version: 3,
@@ -356,6 +361,7 @@ function isStoredSession(value: unknown): value is StoredSession {
     && (session.version !== 3 || session.task === undefined || isTaskBrief(session.task))
     && (session.version !== 4 && session.version !== 5 || (typeof session.workspaceKey === "string" && (session.task === undefined || isTaskState(session.task))))
     && (session.version !== 5 || isSkillCatalog(session.skillCatalog))
+    && (session.version !== 5 || session.capabilityActivation === undefined || isCapabilityActivation(session.capabilityActivation))
     && (session.version !== 3 && session.version !== 4 || isSessionJournal(session.journal));
 }
 
@@ -384,6 +390,17 @@ function isSkillCatalog(value: unknown): value is StoredSkillCatalogV1 {
     if (!entry || typeof entry !== "object") return false;
     const item = entry as Record<string, unknown>;
     return typeof item.name === "string" && typeof item.description === "string" && typeof item.modelInvocable === "boolean" && typeof item.userInvocable === "boolean";
+  });
+}
+
+function isCapabilityActivation(value: unknown): value is CapabilityActivationStateV1 {
+  if (!value || typeof value !== 'object') return false;
+  const state = value as Record<string, unknown>;
+  return state.version === 1 && Array.isArray(state.task) && state.task.every(item => {
+    if (!item || typeof item !== 'object') return false;
+    const entry = item as Record<string, unknown>;
+    return typeof entry.id === 'string' && Number.isInteger(entry.activatedAtTurn) && Number.isInteger(entry.lastUsedAtTurn)
+      && (entry.reason === 'runtime' || entry.reason === 'model' || entry.reason === 'user');
   });
 }
 

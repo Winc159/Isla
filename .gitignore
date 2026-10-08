@@ -12,4 +12,9 @@ data/*.sqlite3
 .mcp-eval/
 .npmrc
 
-scripts/real-bailian-eval.mjs
+# Local real-provider evaluation artifacts must not enter Git, even if a script
+# is accidentally pointed at the documentation tree.
+docs/proposals/**/real-cloud-*.json
+docs/proposals/**/real-cloud-*.md
+docs/proposals/**/real-cloud-*.log
+docs/proposals/**/real-conversation-transcripts/

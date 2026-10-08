@@ -51,8 +51,9 @@ export interface ChatSessionOptions {
   readonly journal?: SessionJournal;
   readonly task?: TaskBrief | TaskStateV1;
   readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1;
+  readonly capabilityActivation?: import("../capability-routing.js").CapabilityActivationStateV1;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
-  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief | TaskStateV1; readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1 }) => Promise<void>;
+  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief | TaskStateV1; readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1; readonly capabilityActivation?: import("../capability-routing.js").CapabilityActivationStateV1 }) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
   readonly onModelStepEvent?: (event: ModelStepEvent) => void;
   readonly projectRoot?: string;
@@ -68,6 +69,7 @@ export interface ChatSessionOptions {
   readonly onTurnCommitted?: (messages: readonly Message[]) => Promise<void>;
   readonly onContextCompacted?: (checkpoint: ContextCheckpoint) => Promise<void>;
   readonly capabilities?: readonly ToolCapability[];
+  readonly resolveCapabilities?: (input: string, step: number, signal: AbortSignal) => Promise<readonly ToolCapability[]>;
   readonly onDiagnostic?: (event: { readonly code: string; readonly component: string; readonly severity: 'warning' | 'error' | 'debug'; readonly detail?: string }) => void;
   readonly userQuestionService?: UserQuestionService;
   readonly agentLoopTimeoutMs?: number;
@@ -106,6 +108,7 @@ export class ChatSession {
     this.context = options.context;
     this.task = options.task;
     this.skillCatalog = options.skillCatalog;
+    this.capabilityActivation = options.capabilityActivation;
     this.journal = options.journal ?? { version: 1, turns: [] };
     this.onMessagesChanged = options.onMessagesChanged;
     this.onSessionStateChanged = options.onSessionStateChanged;
@@ -121,6 +124,7 @@ export class ChatSession {
     this.onTurnCommitted = options.onTurnCommitted;
     this.onContextCompacted = options.onContextCompacted;
     this.onDiagnostic = options.onDiagnostic;
+    this.resolveCapabilities = options.resolveCapabilities;
     this.userQuestionService = options.userQuestionService;
     this.agentLoopTimeoutMs = options.agentLoopTimeoutMs ?? 600_000;
     // Explicit capabilities are the application path; retain the projectRoot fallback for direct legacy ChatSession callers.
@@ -138,7 +142,8 @@ export class ChatSession {
   }
   private readonly onMessagesChanged: ((messages: readonly Message[]) => Promise<void>) | undefined;
   private readonly skillCatalog: import("../session-store.js").StoredSkillCatalogV1 | undefined;
-  private readonly onSessionStateChanged: ((state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief | TaskStateV1; readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1 }) => Promise<void>) | undefined;
+  private readonly capabilityActivation: import("../capability-routing.js").CapabilityActivationStateV1 | undefined;
+  private readonly onSessionStateChanged: ((state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief | TaskStateV1; readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1; readonly capabilityActivation?: import("../capability-routing.js").CapabilityActivationStateV1 }) => Promise<void>) | undefined;
   private readonly journal: SessionJournal;
   private readonly onSessionEvent: ((event: SessionEvent) => Promise<void>) | undefined;
   private readonly onModelStepEvent: ((event: ModelStepEvent) => void) | undefined;
@@ -153,6 +158,7 @@ export class ChatSession {
   private readonly onContextCompacted: ((checkpoint: ContextCheckpoint) => Promise<void>) | undefined;
   private readonly onDiagnostic: ((event: { readonly code: string; readonly component: string; readonly severity: 'warning' | 'error' | 'debug'; readonly detail?: string }) => void) | undefined;
   private readonly capabilities: readonly ToolCapability[];
+  private readonly resolveCapabilities: ((input: string, step: number, signal: AbortSignal) => Promise<readonly ToolCapability[]>) | undefined;
   private readonly requestContextBuilder: RequestContextBuilder;
   private readonly toolRegistry: ToolRegistry;
   private readonly toolRuntime: ToolRuntime;
@@ -216,21 +222,42 @@ export class ChatSession {
     const failures = new Map<string, number>();
     const completionRejections: CompletionRejectionReason[] = [];
     const successfulWrites = new Set<string>();
-    const tools: readonly ToolDefinition[] = this.selectToolDefinitions(current.map(message => message.content).join("\n"));
+    let tools: readonly ToolDefinition[] = this.selectToolDefinitions(current.map(message => message.content).join("\n"));
     const loopBudget = new LoopBudgetState();
     const loopStartedAt = Date.now();
     let wrapUpSent = false;
+    const latestUserInput = [...request.messages].reverse().find(message => message.role === "user")?.content ?? "";
+    const externalResearchRequired = /(?:查找|搜索|查询|参考|核实).{0,12}(?:网上|网络|公开资料|公开来源)|(?:网上|网络|公开资料|公开来源).{0,12}(?:查找|搜索|查询|参考|核实)|\b(?:search|research|look up|verify)\b.{0,24}\b(?:web|online|public sources?)\b/iu.test(latestUserInput);
     for (let round = 0; round < loopBudget.currentBudget; round += 1) {
       if (Date.now() - loopStartedAt >= this.agentLoopTimeoutMs) {
         const turn = this.journal.turns.at(-1);
         if (turn) (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: round, event: "stop", budget: loopBudget.currentBudget, reason: "wall_clock_timeout" });
         return { text: "Agent Loop 达到时间上限，已暂停执行。", outcome: "blocked", model: provider.model };
       }
+      if (this.resolveCapabilities) {
+        const dynamicCapabilities = await this.resolveCapabilities(current.map(message => message.content).join("\n"), round, signal);
+        for (const capability of dynamicCapabilities) this.toolRegistry.registerCapabilityIfAbsent(capability);
+        tools = this.selectToolDefinitions(current.map(message => message.content).join("\n"));
+        const turn = this.journal.turns.at(-1);
+        if (turn) {
+          const capabilityIds = dynamicCapabilities.map(capability => capability.id).sort();
+          const schemaBytes = tools.reduce((total, tool) => total + Buffer.byteLength(JSON.stringify(tool.parameters), 'utf8'), 0);
+          const hash = capabilityIds.join('|') + ':' + tools.map(tool => tool.name).join('|');
+          (turn.actions as TurnActionRecord[]).push({ type: 'capability_snapshot', step: round, capabilityIds, toolCount: tools.length, schemaBytes, hash });
+        }
+      }
       const mustSearch = requiredTool === "web_search" && !evidence.some(item => item.startsWith("web_search:"));
       const mustFetch = requiredTool === "web_search" && !mustSearch && !evidence.some(item => item.startsWith("web_fetch:")) && tools.some(tool => tool.name === "web_fetch");
       const requiredToolChoice = mustSearch ? requiredTool : mustFetch ? "web_fetch" : undefined;
       const response = await this.generateModel({ messages: current, tools, ...(requiredToolChoice ? { toolChoice: { name: requiredToolChoice } } : {}) }, true, signal, "agent_step");
       if (!response.toolCalls?.length && !mustSearch && !mustFetch) {
+        const hasExternalEvidence = evidence.some(item => /^(?:web_search|web_fetch|browser_read|browser_links):/u.test(item));
+        if (externalResearchRequired && !hasExternalEvidence) {
+          const canDiscoverSources = tools.some(tool => tool.name === "web_search" || tool.name === "browser_open");
+          if (!canDiscoverSources) return { text: "当前 Profile 没有可用的外部来源发现能力，无法把这项研究描述为已联网核实。", outcome: "blocked", model: response.model ?? provider.model };
+          current = [...current, { role: "system", content: "该请求明确要求查找外部公开资料，但当前尚无成功的外部工具证据。必须先使用可用的 Web Search 或 Browser 查找并读取来源；不能用模型记忆冒充联网结果。" }];
+          continue;
+        }
         const toolCallIds = current.flatMap(message => message.toolCalls?.map(call => call.id) ?? []);
         const toolResultIds = current.filter(message => message.role === "tool" && message.toolCallId).map(message => message.toolCallId!);
         const completion = evaluateCompletionGate({ toolCallIds, toolResultIds, verificationStatus: deriveVerificationStatus(this.journal), priorRejections: completionRejections });
@@ -271,6 +298,8 @@ export class ChatSession {
             for (const source of execution.details.sources) searchResultUrls.add(source.url);
             evidence.push(`web_search:${execution.details.sources.map(source => source.url).join(",") || "no-sources"}`);
           }
+          if (execution.ok && execution.details?.type === "web_fetch" && execution.details.statusCode >= 200 && execution.details.statusCode < 300) evidence.push("web_fetch:source-read");
+          if (execution.ok && (call.name === "browser_read" || call.name === "browser_links")) evidence.push(`${call.name}:source-read`);
           if (execution.ok && execution.details?.type === "web_fetch") {
             evidence.push(`web_fetch:${execution.details.finalUrl}#status=${execution.details.statusCode}${execution.details.truncated ? "#truncated" : ""}`);
           }
@@ -474,8 +503,12 @@ export class ChatSession {
       const currentMessage = [...this.messages].reverse().find(message => message.role === "user");
       if (currentMessage) minimalHistory.push(currentMessage);
       const phase = this.capabilities.length ? "agent_step" as const : "legacy" as const;
-      const minimalRequest = this.requestContextBuilder.build(minimalHistory, phase, undefined, this.agentLoop ? this.task : undefined);
-      prepared = { history: minimalHistory, memoryContext: undefined, request: minimalRequest };
+      const minimalWithMemory = this.requestContextBuilder.build(minimalHistory, phase, prepared.memoryContext, this.agentLoop ? this.task : undefined);
+      const preserveMemory = requestTokenEstimate(minimalWithMemory) <= this.tokenBudget.maxInputTokens;
+      const minimalRequest = preserveMemory
+        ? minimalWithMemory
+        : this.requestContextBuilder.build(minimalHistory, phase, undefined, this.agentLoop ? this.task : undefined);
+      prepared = { history: minimalHistory, memoryContext: preserveMemory ? prepared.memoryContext : undefined, request: minimalRequest };
       this.onDiagnostic?.({ code: "CONTEXT_MINIMAL_FALLBACK", component: "context", severity: "warning", detail: `estimated=${requestTokenEstimate(minimalRequest)};budget=${this.tokenBudget.maxInputTokens}` });
     }
     const { history, memoryContext, request } = prepared;
@@ -571,7 +604,7 @@ export class ChatSession {
   private async persistState(includeMessages = true): Promise<void> {
     const messages = [...this.messages];
     if (this.onSessionStateChanged) {
-      await this.onSessionStateChanged({ messages, ...(this.context ? { context: this.context } : {}), journal: this.journal, ...(this.task ? { task: this.task } : {}), ...(this.skillCatalog ? { skillCatalog: this.skillCatalog } : {}) });
+      await this.onSessionStateChanged({ messages, ...(this.context ? { context: this.context } : {}), journal: this.journal, ...(this.task ? { task: this.task } : {}), ...(this.skillCatalog ? { skillCatalog: this.skillCatalog } : {}), ...(this.capabilityActivation ? { capabilityActivation: this.capabilityActivation } : {}) });
     } else if (includeMessages) {
       await this.onMessagesChanged?.(messages);
     }

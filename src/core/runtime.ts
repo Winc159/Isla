@@ -31,6 +31,7 @@ export interface CreateSessionOptions {
   readonly agentLoop?: boolean;
   readonly agentLoopTimeoutMs?: number;
   readonly capabilities?: readonly import("../tools/types.js").ToolCapability[];
+  readonly resolveCapabilities?: (input: string, step: number, signal: AbortSignal) => Promise<readonly import("../tools/types.js").ToolCapability[]>;
   readonly onDiagnostic?: (event: { readonly code: string; readonly component: string; readonly severity: 'warning' | 'error' | 'debug' }) => void;
   readonly approvalPolicy?: ApprovalPolicy;
   readonly approvalService?: ApprovalService;

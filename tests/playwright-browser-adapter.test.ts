@@ -3,11 +3,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { PlaywrightBrowserAdapter } from '../src/browser/playwright-adapter.js';
+import { PlaywrightBrowserAdapter, resolveInstalledBrowser } from '../src/browser/playwright-adapter.js';
 
 const runRealBrowser = process.env.ISLA_RUN_BROWSER_REAL === '1';
 
 describe('PlaywrightBrowserAdapter', () => {
+  it('prefers an explicitly configured browser executable', () => {
+    expect(resolveInstalledBrowser({ ISLA_BROWSER_EXECUTABLE: 'D:\\Browser\\chrome.exe' }, 'win32')).toBe('D:\\Browser\\chrome.exe');
+  });
   it.skipIf(!runRealBrowser)('launches an isolated persistent session and performs basic actions', async () => {
     const root = await mkdtemp(join(tmpdir(), 'isla-browser-'));
     try {

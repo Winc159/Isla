@@ -30,4 +30,10 @@ describe("web capability", () => {
     });
     expect(both.tools.map(tool => tool.definition.name)).toEqual(["web_fetch", "web_search"]);
   });
+
+  it("forbids fabricated research when source discovery is unavailable", () => {
+    const capability = createWebCapability({ webFetch: { enabled: true, allowedHosts: ["docs.example.com"] } });
+    expect(capability.instructions).toContain("不得用模型记忆冒充联网结果");
+    expect(capability.instructions).toContain("Browser");
+  });
 });

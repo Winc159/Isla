@@ -397,6 +397,12 @@ v0.4.1 不扩展 MCP 协议面，集中补齐个人用户可操作性：通过 `
 
 本版同时增加精确 Origin 绑定的本地加密密码簿。模型只能发现可用凭据并申请使用，用户通过 y/n/other 决定；Runtime 直接将凭据填入浏览器，明文不进入模型、Session、Tool Result、Journal 或普通日志。公网监听、多用户、noVNC、任意 JavaScript、支付自动化和云端密码同步不在范围内。设计、Batch、测试矩阵和验收模板见 [`docs/proposals/v0.4.7/`](proposals/v0.4.7/README.md)。
 
+## v0.4.8：Capability Catalog and Dynamic Tool Routing（已完成当前版本验收）
+
+复用现有 `ToolCapability`、Tool Runtime、Approval 和 Capability Snapshot，增加 Host-owned Capability Catalog、确定性 Resolver、Task 级 Activation State 与逐 Model Step Snapshot。Runtime 先按用户意图和任务状态预选能力；模型可用 `capability_search`、`capability_activate` 和 `capability_status` 补充发现。每次模型请求只注入当前真正相关的 Tool Schema，并记录选择、拒绝、激活、schema bytes/token 与稳定原因码。
+
+首版只支持内置能力和 Profile 已配置的 MCP Server，不做任意代码加载、在线安装、热更新、MCP 子进程按任务懒启动、Embedding 或独立路由模型。设计、执行批次、测试矩阵与验收模板见 [`docs/proposals/v0.4.8/`](proposals/v0.4.8/README.md)。
+
 上述版本严格顺序推进：每版先完成 P0 自动化和真实评估，再解锁下一版；后续版本的设计完成不代表允许并行扩大实现范围。
 
 ## 候选阶段：Tool 插件

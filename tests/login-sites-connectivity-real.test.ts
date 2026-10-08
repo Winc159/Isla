@@ -36,5 +36,6 @@ describe('real login-site connectivity via Isla', () => {
     await writeFile(join(process.cwd(), '.isla-local', 'evaluations', 'login-sites-connectivity-real.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report));
     expect(results).toHaveLength(targets.length);
+    expect(results.find(result => result.name === 'github')).toMatchObject({ ok: true });
   }, 180_000);
 });
