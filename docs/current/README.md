@@ -1,45 +1,29 @@
-# Isla v0.3.x 当前文档入口
+# Isla 当前文档
 
-本目录保留 v0.3.0-v0.3.5 的稳定设计基线；v0.3.6-v0.3.8 的增量设计和评估分别位于 `docs/proposals/`。3.x 收口基线见 [v0.3.9 proposal](../proposals/v0.3.9/README.md)。
+本目录描述 `0.4.9` 的当前有效事实；本版本未改变 v0.4.8 Runtime 行为。历史设计过程保存在 [`../proposals/`](../proposals/)，已被替代但仍有复盘价值的资料保存在 [`../archive/`](../archive/)。
 
-当前历史基线为 v0.3.5：沿用 v0.3.4 的安全命令执行和验证门禁，并加入任务状态、workspace 隔离与恢复。只以本目录中的对应文档为准：
+建议按以下顺序阅读：
 
-- [architecture.md](./architecture.md)：v0.3.0 架构、边界与硬不变量
-- [implementation.md](./implementation.md)：Batch A-D 的实施顺序和停点
-- [testing.md](./testing.md)：离线测试矩阵、真实评估条件与门禁
-- [evaluation.md](./evaluation.md)：当前已验证事实与尚未验证声明
-- [decisions.md](./decisions.md)：已确认取舍与重新评估条件
-- [editing-v0.3.2.md](./editing-v0.3.2.md)：v0.3.2 安全精确编辑的已确认契约与完成信号
-- [bounded-reading-v0.3.2.md](./bounded-reading-v0.3.2.md)：v0.3.2 有界精确读取、分页与大文件流式扫描契约
-- [tool-platform-v0.3.3.md](./tool-platform-v0.3.3.md)：第一梯队工具、静态组合边界与分批验证顺序
-- [command-execution-v0.3.4.md](./command-execution-v0.3.4.md)：一次性前台命令执行 Tool 的契约、平台适配与安全边界
-- [verification-and-bailian-capabilities-v0.3.4.1.md](./verification-and-bailian-capabilities-v0.3.4.1.md)：修改后验证状态与 Bailian Tool Calling 精确白名单收口
-- [verification-completion-gate-v0.3.4.2.md](./verification-completion-gate-v0.3.4.2.md)：验证感知的完成门禁、未验证交付和协议状态投影
-- [task-state-and-recovery-v0.3.5.md](./task-state-and-recovery-v0.3.5.md)：任务状态、Session v4、workspace 隔离、模型契约收口和跨重启恢复的完成记录
+1. [`../../README.md`](../../README.md)：产品定位、安装、运行和用户入口。
+2. [`architecture.md`](architecture.md)：当前架构、模块边界和完整执行链路。
+3. [`implementation.md`](implementation.md)：源码导航与扩展入口。
+4. [`testing.md`](testing.md)：测试分层、真实评估边界和发布门禁。
+5. [`decisions.md`](decisions.md)：已经稳定形成的架构决策。
+6. [`../roadmap.md`](../roadmap.md)：版本历史与后续方向。
 
-v0.3.3 已新增集中 Capability 组合、`glob_project`、`grep_project` 和 `ask_user_question`。v0.3.4 已接入 `run_command`，支持有界前台执行、Approval、取消和跨平台 Shell 适配。
+v0.4.8 的设计、实施和脱敏验收记录见 [`../proposals/v0.4.8/`](../proposals/v0.4.8/README.md)。v0.4.9 的文档审计与收口记录见 [`../proposals/v0.4.9/`](../proposals/v0.4.9/README.md)。这些 proposal 记录为什么这样设计，但不能替代本目录对当前代码的描述。
 
-状态：v0.3.9 已完成 3.x 核心收口；package 版本已更新为 v0.3.9，可通过 `npm pack` 生成私有分发的 `.tgz`，尚未发布到 npm Registry。Windows 验证已完成，Linux x64 与 macOS ARM64 仍需在对应目标系统验收。
+## 文档事实优先级
 
-当前版本进展：v0.3.6 的 Batch A-E 已实现，已完成 workspace 内 Session 发现、TTY/NDJSON 搜索选择和两个只读模型 Tool；隔离 Bailian/Qwen 已稳定完成 `search_session_history → read_session_context → response_end`。设计、实施步骤、测试矩阵和评估记录见 [`docs/proposals/v0.3.6/`](../proposals/v0.3.6/README.md)。
+当描述不一致时，按以下顺序处理：
 
-配置说明：正常启动使用 Config/Profile；`.env` 仅用于显式开发、CI 或迁移兼容入口，不是默认配置事实源。切换 Provider、模型或 Base URL 时优先检查当前 Profile。
+1. 当前源码、测试和 `package.json`；
+2. 本目录；
+3. 已完成版本的 proposal 与脱敏评估；
+4. archive 中的历史资料。
 
-v0.3.0 已按以下顺序完成：
+发现源码与本文档不一致时，应先记录差异。若修正文档即可反映既有行为，更新文档；若需要改变核心契约或 Runtime 行为，必须先提出设计问题。
 
-1. Batch A：`bailian` 平台文本接入与配置事实源收敛；
-2. Batch B：官方模型目录发现；
-3. Batch C：首个经验证的 Qwen one-shot Tool Calling；
-4. Batch D：普通文本 native streaming 已实现；带工具请求因 `streamingToolCalls=false` 保持 one-shot 回退。
+## 隐私边界
 
-当前还包括：
-
-- TTY `/models` 查询、搜索和显式模型保存；
-- `--models` 无 TTY 查询；
-- NDJSON `models_list`、`models_use` 与 `model_changed`；
-- 成功目录缓存以及网络失败时的 stale cache 回退；
-- Bailian one-shot Tool Loop。
-
-已知边界：Provider 和模型在一次运行中保持固定，模型保存只对下次启动生效；跨 Provider 切换、DeepSeek/OpenAI 统一模型目录、持久化 Memory 真实端到端验证、Context Budget/Compaction 和 streaming Tool Calls 尚未实现。
-
-本版不为每个模型新增 Provider。Provider 表示平台与协议适配，模型 ID 和模型族兼容差异分别属于启动配置与窄模型策略。
+原始 Provider 对话、JSON/NDJSON transcript、Profile、凭据和私人会话不得进入文档或 Git。允许公开的评估材料只能保存脱敏后的场景、判定与必要证据。原始本地评估资料统一放在被忽略的 `.isla-local/evaluations/`。

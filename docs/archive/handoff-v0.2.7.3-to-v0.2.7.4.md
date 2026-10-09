@@ -4,7 +4,7 @@
 
 ## 当前目标
 
-在 `D:\Private\Isla` 继续开发 Isla。用户已确认进入 v0.2.7.4：取消前置 `answer | clarify | execute` Decision Gate，改为类似 DSH/OpenHands 的 Agent Loop。每个模型 Step 从一开始就看到全部可用 Tool；控制流只有两类结果：Capability Calls（执行后继续 Step）与 Yield To User（无 Tool Call，结束 Turn）。
+在 Isla 仓库根目录继续开发。用户已确认进入 v0.2.7.4：取消前置 `answer | clarify | execute` Decision Gate，改为类似 DSH/OpenHands 的 Agent Loop。每个模型 Step 从一开始就看到全部可用 Tool；控制流只有两类结果：Capability Calls（执行后继续 Step）与 Yield To User（无 Tool Call，结束 Turn）。
 
 必须先阅读：
 

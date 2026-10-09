@@ -1,8 +1,19 @@
 # Isla
 
-Isla 是一个使用 TypeScript 开发的个人 Agent Runtime。目前通过 CLI 提供进程内连续对话，支持 OpenAI、DeepSeek、阿里云百炼和兼容 OpenAI 接口的本地模型服务。当前工作区版本为 `0.4.8`。
+Isla 是一个使用 TypeScript 开发的个人 Agent Runtime。目前通过 CLI 提供进程内连续对话，支持 OpenAI、DeepSeek、阿里云百炼和兼容 OpenAI 接口的本地模型服务。当前工作区版本为 `0.4.9`。
 
 v0.4.8 增加 Host-owned Capability Catalog、确定性能力预选、Task 级激活状态和逐 Model Step Tool Snapshot。模型可通过能力搜索与激活补充 Runtime 预选；每次请求只暴露当前任务相关的 Tool Schema，且不会绕过 Profile、Sandbox 或 Approval。设计与验收见 [`docs/proposals/v0.4.8/`](docs/proposals/v0.4.8/README.md)。
+
+## 文档导航
+
+- [当前架构](docs/current/architecture.md)：Runtime 分层、完整请求链路和安全边界；
+- [实现导航](docs/current/implementation.md)：从改动意图定位源码与测试；
+- [测试与发布验证](docs/current/testing.md)：离线、真实环境和发布门禁；
+- [架构决策](docs/current/decisions.md)：稳定取舍及重新评估条件；
+- [Roadmap](docs/roadmap.md)：版本历史和后续方向；
+- [历史提案](docs/proposals/)与[归档索引](docs/archive/index.md)：设计过程、评估和被替代资料。
+
+`docs/current/` 是当前事实入口；proposal 和 archive 用于解释历史，不覆盖当前源码事实。
 
 ## 安装
 
@@ -14,17 +25,17 @@ npm run build
 npm pack
 ```
 
-以上命令会在项目根目录生成 `winc159-isla-0.4.8.tgz`。将该文件复制到目标主机后全局安装：
+以上命令会在项目根目录生成 `winc159-isla-0.4.9.tgz`。将该文件复制到目标主机后全局安装：
 
 ```bash
-npm install --global ./winc159-isla-0.4.8.tgz
+npm install --global ./winc159-isla-0.4.9.tgz
 isla
 ```
 
 也可以不全局安装，直接执行：
 
 ```bash
-npx --package ./winc159-isla-0.4.8.tgz isla
+npx --package ./winc159-isla-0.4.9.tgz isla
 ```
 
 安装包不包含 API Key、Profile、Session、Memory、测试文件或本地评估资料。首次运行会在当前用户目录创建 `~/.isla/`。不要把 Windows 上的 `~/.isla/` 私人配置和会话打入安装包后传到其他主机。
@@ -115,7 +126,7 @@ Linux x64 和 macOS ARM64 的完成验收必须在对应目标系统上执行，
 
 ```bash
 node --version
-npm install --global ./winc159-isla-0.4.8.tgz
+npm install --global ./winc159-isla-0.4.9.tgz
 isla
 printf '{"type":"exit"}\n' | isla --protocol ndjson
 ```

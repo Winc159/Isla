@@ -1,276 +1,75 @@
-# Isla v0.3.0 测试计划：Bailian Provider and Model Discovery
-
-> v0.3.2 新增门禁：覆盖 `edit_text_file` 单次/全部替换、未读取、陈旧版本、零/多匹配、沙箱、审批、取消、临时文件清理，以及 Tool Result 驱动下一 Model Step。完整契约见 [editing-v0.3.2.md](./editing-v0.3.2.md)。
-
-> v0.3.2 有界读取门禁：覆盖默认/指定窗口、行号、总行数、continuation footer、单行与总字节截断、空文件、CRLF、超范围、大文件流式扫描，以及窗口读取后的编辑新鲜度。完整契约见 [bounded-reading-v0.3.2.md](./bounded-reading-v0.3.2.md)。
-
-> v0.3.4 测试矩阵见 [command-execution-v0.3.4.md](./command-execution-v0.3.4.md)。runner、Capability、Approval、取消/截断专项测试和真实“修改后执行检查”闭环均已完成。
-
-> v0.3.4.1 测试见 [verification-and-bailian-capabilities-v0.3.4.1.md](./verification-and-bailian-capabilities-v0.3.4.1.md)：验证状态推导、Session/`/trace` 投影、`run_command` purpose 和 Bailian 精确模型白名单已通过专项测试。
-
-状态：离线矩阵已执行；授权真实 Bailian/Qwen 文本与 v0.3.4 Tool Loop 闭环已验证
-
-默认全部离线。真实百炼测试仍必须同时具备显式开关、有效本地 Profile 和用户授权；已完成的真实验证不改变这一默认门禁。
-
-## 1. Batch A：配置
-
-### CONFIG-BAILIAN-001 Profile 解析
-
-接受 `provider=bailian`、非空 model/API Key 和合法 Base URL，生成不可变启动快照。
-
-### CONFIG-BAILIAN-002 必填字段
-
-缺少 model、API Key、Base URL 或 URL 非法时，在创建 Runtime 和网络请求前失败。
-
-### CONFIG-BAILIAN-003 地域中立
-
-北京、新加坡及其他合法专属/共享地址均可配置；实现不替换 host、不补 Workspace ID、不跨地域回退。
-
-### CONFIG-BAILIAN-004 配置事实源
-
-正常 Profile 启动不从 env 隐式覆盖字段；只有显式 `--env` 才使用开发兼容配置。
-
-### CONFIG-BAILIAN-005 兼容
-
-OpenAI、DeepSeek、Local Profile 和现有 `--env` smoke 编排无回归。
-
-### CONFIG-BAILIAN-006 脱敏
-
-配置摘要、错误、debug、CLI、NDJSON 和测试快照不包含 API Key 或 Authorization。
-
-## 2. Batch A：普通文本 Provider
-
-### BAILIAN-TEXT-001 请求形状
-
-断言 POST `${baseURL}/chat/completions`，model、有序 messages 和 `stream:false` 正确；不包含 tools、Responses 参数或平台内置能力。
-
-### BAILIAN-TEXT-002 响应映射
-
-文本、model、prompt/completion/total usage 映射到现有 `ModelResponse`。
-
-### BAILIAN-TEXT-003 多轮重建
-
-第二 Turn 请求可完全从 `StoredSession.messages` 和当前启动配置重建，不依赖 Provider 隐藏会话。
-
-### BAILIAN-TEXT-004 空响应
-
-空 choices、缺少 message、空文本且无 Tool Call 均为稳定 Provider 错误，不保存 assistant。
-
-### BAILIAN-TEXT-005 错误与取消
-
-覆盖 400、401、403、429、5xx、网络失败、timeout 和 AbortSignal；取消终态唯一，失败保留 user message。
-
-### BAILIAN-TEXT-006 能力
-
-最终实现报告 `toolCalling=true`、`nativeStreaming=config.streaming===true`、`streamingToolCalls=false`；one-shot 不产生 `model_delta`，普通文本 streaming 才产生 provisional `model_delta`。
-
-## 3. Batch B：模型目录客户端
-
-### CATALOG-001 地址派生
-
-从合法 Bailian Profile 的 host 构造 `/api/v1/models`，不得生成 `/compatible-mode/v1/api/v1/models`。
-
-### CATALOG-002 分页
-
-按 `page_no` 获取直到 total，保持确定性顺序，拒绝无限分页和超过本地上限的响应。
-
-### CATALOG-003 搜索与过滤
-
-覆盖 name、model、providers、capabilities、features 等实际纳入的官方参数；Query String 重复参数编码正确。
-
-### CATALOG-004 投影
-
-只保留 model、name、provider、inference provider、capabilities、features、上下文和 token 上限等已定义字段；忽略未知附加字段。
-
-### CATALOG-005 不完整响应
-
-缺少 output/models、分页字段非法、模型缺少 ID 时稳定失败；不得把协议错误伪装为空列表。
-
-### CATALOG-006 错误、超时与取消
-
-覆盖认证、限流、服务错误、网络中断、timeout 和 AbortSignal。
-
-### CATALOG-007 隐私
-
-不得保存 Authorization、完整响应、账号信息或 Workspace ID；fixture 使用虚构 host 和测试密钥。
-
-## 4. Batch B：入口与缓存
-
-### CATALOG-CLI-001 TTY
-
-`/models`、搜索和 refresh 输出稳定、分页或截断明确，不输出密钥和完整价格对象。
-
-### CATALOG-AUTO-001 无 TTY
-
-单 Agent 可通过命令或 NDJSON 完成 refresh、search、读取结果与错误判断，不依赖交互菜单。
-
-### CATALOG-CACHE-001 成功缓存
-
-只有完整成功响应原子替换缓存，缓存包含更新时间和地域/endpoint 的安全身份。
-
-### CATALOG-CACHE-002 失败保留
-
-刷新失败不破坏已有缓存；可以明确展示 stale 状态。
-
-### CATALOG-CACHE-003 启动独立
-
-目录服务不可用、缓存损坏或无缓存时，已配置模型的普通启动仍可继续。
-
-### CATALOG-CONFIG-001 显式选择
-
-查看和搜索不修改 Profile；保存模型是独立显式动作，只影响下次启动，不切换当前 Session。
-
-## 5. Batch C：Tool Calling
-
-### BAILIAN-TOOL-001 Tool schema
-
-ToolDefinition 映射为标准 function tool，name、description 和 parameters 不被丢失。
-
-### BAILIAN-TOOL-002 Tool choice
-
-覆盖 `auto`、`required` 和指定函数；未验证模型不发送 Tool 参数。
-
-### BAILIAN-TOOL-003 单 Tool Call
-
-完整保留 call ID、name 和原始 arguments 字符串；参数只在完整响应后交给 Tool Runtime 校验。
-
-### BAILIAN-TOOL-004 多 Tool Call
-
-多个调用顺序稳定，继续使用现有串行 Tool Runtime，不提前增加并行执行。
-
-### BAILIAN-TOOL-005 Tool Result 后续请求
-
-第二次请求包含原 user、assistant tool_calls、匹配的 tool_call_id 与 Tool Result；请求可从 Session 重建。
-
-### BAILIAN-TOOL-006 无效调用
-
-缺少 ID、name、arguments、重复 ID 或配对缺失时稳定失败，不请求 Approval、不执行 Tool。
-
-### BAILIAN-TOOL-007 Agent Loop
-
-覆盖 Read Tool → Observation → 下一 Step → Yield、Approval 拒绝、Tool 失败、Completion Gate rejection、Step 上限和取消。
-
-### BAILIAN-TOOL-008 能力隔离
-
-只有已验证模型/策略声明 `toolCalling=true`；未知模型仍为 false。一个模型成功不得自动扩大整个 Bailian Provider 的能力。
-
-## 6. 回归矩阵
-
-每批至少覆盖：
-
-- OpenAI 原生 streaming 保持现状；
-- DeepSeek 默认 one-shot Tool Loop 保持现状；
-- Local 默认 one-shot 保持现状；
-- Session v1/v2/v3 恢复；
-- Memory、Project Search、Web、Approval、Sandbox；
-- Model Step、retry、取消和唯一终态；
-- CLI/NDJSON 输出与能力报告；
-- 配置向导、Profile 管理和竞争保护。
-
-## 7. 真实百炼评估
-
-默认 skip。建议使用独立开关：
-
-```text
-ISLA_RUN_REAL_BAILIAN_SMOKE=1
+# Isla 当前测试与发布验证
+
+测试目标是验证 Runtime 契约，同时避免默认产生网络请求、费用或私人日志。
+
+## 测试分层
+
+| 层级 | 入口与范围 | 默认/CI |
+|---|---|---|
+| 单元测试 | `tests/core/`、`tests/tools/`、`tests/memory/` 等，验证纯状态、解析、策略和适配器 | 是 |
+| Runtime 集成测试 | `tests/application.test.ts`、`tests/core/runtime.test.ts`、Session/Tool/Capability 测试 | 是 |
+| Protocol 测试 | `tests/protocol*.test.ts`、`tests/protocol-*.e2e.test.ts` | 是 |
+| MCP smoke | `tests/smoke/mcp-interoperability.test.ts`；`npm run test:smoke:mcp` 使用本地 fixture/进程 | 测试文件默认可运行；专项命令按需 |
+| Browser/PTY | Browser mock/适配器测试默认运行；真实 PTY 用 `npm run test:pty`，依赖可选 `node-pty` 和本机工具链 | Browser 离线测试是；真实 PTY 否 |
+| 真实 Provider | `test:smoke:real`、`test:smoke:real:ndjson`，需要显式开关、网络、Profile/环境和费用授权 | 否 |
+| 本地真实评估 | `.isla-local/evaluation-scripts/` 与 `.isla-local/evaluations/` | 否，且不得入 Git |
+| 发布前检查 | `verify`、`pack:check`、Markdown/安全/版本检查 | 是或发布前手工执行 |
+
+## 标准命令
+
+```bash
+npm run verify
+npm run check
+npm run pack:check
+git diff --check
 ```
 
-真实凭据只从用户已创建的本地 Profile 读取，不要求用户在对话中提供。
+- `npm run verify`：依次执行 TypeScript 类型检查、完整 Vitest 离线套件和构建。
+- `npm run check`：执行 `typecheck` 和 `test`，不单独构建。
+- `npm run pack:check`：执行 `npm pack --dry-run`，核对发布白名单；当前包只应包含 `dist`、`README.md`、`LICENSE` 和 npm 元数据。
+- `git diff --check`：检查空白错误，不改变 Git 状态。
 
-### REAL-BAILIAN-CATALOG
+CI 在 Node.js 24 上对 Ubuntu、Windows 和 macOS 执行 `npm ci`、`npm run check`、`npm run build` 和 `npm run pack:check`。
 
--模型目录至少返回一个条目；
--精确搜索命中当前配置 model；
--记录条目数、分页数和耗时，不保存完整目录。
+## 真实网络与本机依赖
 
-### REAL-BAILIAN-TEXT
+真实 Provider 测试必须由 `ISLA_RUN_REAL_SMOKE=1` 等显式开关启用，并使用隔离配置。MCP 第三方 Server、Playwright 浏览器安装、真实 PTY、Linux systemd/macOS launchd 和跨机部署都依赖本机环境，不能用 Windows 离线测试代替。
 
--两个独立普通提示；
--一轮多轮上下文；
--非空回答和唯一终态；
--仅在 Profile 显式启用且实际收到原生 delta 时声称 streaming。
+未设置开关而被跳过的真实测试只能记录为“未执行”或“跳过”，不能写成通过。真实网络结果也不能替代确定性的 fixture 与单元测试。
 
-### REAL-BAILIAN-TOOL
+## 评估与日志边界
 
--目标 Qwen 模型产生一个结构化只读 Tool Call；
--Tool Result 驱动下一 Step；
--最终只保存完整 assistant；
--不依赖文本正则或平台私有展示格式。
+- 原始 Provider 响应、聊天 transcript、JSON/NDJSON、账号信息和凭据只能写入 `.isla-local/evaluations/`。
+- 版本专项脚本放入 `.isla-local/evaluation-scripts/`，不进入正式 `scripts/`。
+- 仓库只保留脱敏后的场景、命令、判定、统计和必要的失败原因。
+- HTTP 非 2xx、空 Provider 内容或仅有搜索摘要不能冒充成功的外部读取证据。
+- 文档测试不得在默认测试期间改写正式验收记录。
 
-### REAL-BAILIAN-CANCEL
+## 文档与安全验证
 
--请求期间取消；
--唯一 cancelled 终态；
--无最终 assistant 和后台事件。
+文档版本至少检查：
 
-真实日志仅保留测试名称、通过状态、稳定错误码、step/tool 数量、usage 与耗时。
+1. Markdown 相对链接和引用的源码路径存在；
+2. 文档提到的 npm script 可在 `package.json` 找到；
+3. README、package 和 proposal 的版本一致；
+4. 不再引用已删除的版本专项脚本；
+5. Markdown 链接不含本机绝对路径；
+6. `docs/` 不含原始云端 JSON/NDJSON 或未脱敏 transcript；
+7. 不含 API Key、Token、密码和真实凭据。
 
-## 8. Batch D streaming 前置测试
+安全扫描中的示例变量名、占位符和设计说明不是凭据；发现疑似秘密时必须人工核对，不能把扫描无命中当作绝对证明。
 
-在设计确认前只记录候选，不实现：
+## v0.4.8 关键回归面
 
--官方 SSE 文本 fixture；
--Tool arguments delta 与唯一 finish；
--usage、错误、incomplete 和取消；
--与 `ModelStreamAssembler` 的一致性；
--真实文本流与真实 Tool stream 分别授权验证。
+- Catalog manifest 校验、稳定 ID、检索、availability 和 policy；
+- Task 激活持久化、重复激活与新任务重置；
+- 每步 Snapshot 的工具集合、hash、预算和下一步生效语义；
+- Prompt Injection 不激活非只读能力；
+- MCP allow/deny、工具名映射、崩溃撤下与关闭；
+- Browser URL Policy、人工接管和凭据不泄漏；
+- 外部研究完成门禁与 HTTP 非 2xx 证据拒绝；
+- Session、Context、Journal、Memory、NDJSON 和取消回归。
 
-## 9. 完整门禁
+## 发布门禁
 
-- TypeScript typecheck；
--全量离线测试；
-- build；
-- pack check；
-- `git diff --check`；
-- CLI 与 NDJSON subprocess e2e；
--配置、缓存、日志和构建产物隐私扫描；
--未授权时所有真实 smoke 保持 skip；
--文档状态与实际 Batch 一致。
-
-## 10. 2026-09-15 基线结果
-
-- TypeScript typecheck：通过；
-- 全量离线测试：71 个测试文件通过，4 个真实 smoke 文件跳过；312 passed，6 skipped；
-- build：通过；
-- 真实 Bailian 普通请求、one-shot Tool Calling、模型目录和 NDJSON 多轮会话：此前已在用户授权和本地 Profile 下通过；
-- 本次收口未重新发起任何真实 Provider 请求；
-- `pack:check`：通过；发布包为 `@winc159/isla@0.2.9`，共 179 个文件；
-
-v0.3.4 历史覆盖缺口：TTY `/models` 的输出和 stale cache 组合主要由组件测试与真实操作覆盖，尚无完整 CLI subprocess 专项测试；该阶段的 Bailian Tool 能力收窄已在后续版本补齐。
-
-## 13. 2026-09-18 v0.3.5 任务状态收口
-
-- 全量离线测试：83 个测试文件通过，4 个真实 smoke 文件跳过；371 passed，6 skipped；
-- typecheck、build、pack dry-run、`npm audit` 和 `git diff --check`：通过；
-- 确定性测试覆盖模型侧无 revision、顶层完整 JSON Schema、重复快照幂等和同一 Turn 不重复注入 TaskState；
-- 真实 Bailian `qwen3.7-plus`：隔离 Config/Profile、workspace、Session 目录和 memory 配置，完成 `update_task_state` → `glob_project` → `read_text_file` → `update_task_state`；两次状态更新成功，最终 `completed`、revision=2、4/4 步完成；
-- 真实评估仅保留模型 ID、Tool 名、状态枚举、步骤计数和稳定错误码；临时配置、fixture、命令输出和会话正文均已清理。
-
-## 11. 2026-09-16 第一梯队工具验证
-
-- TypeScript typecheck：通过；
-- 全量离线测试：77 个测试文件通过，4 个真实 smoke 文件跳过；341 passed，6 skipped；
-- build：通过；
-- pnpm `pack --dry-run`：通过；
-- `git diff --check`：通过（仅现有 Windows 行尾提示）；
-- 真实 qwen-plus：`glob_project`、`grep_project` 均完成，Tool Result 驱动后续模型 Step；
-- 真实 qwen-plus NDJSON：发出 `question_request`，收到 `question_response` 后 `ask_user_question` 完成并进入后续模型 Step；
-- 真实评估只记录事件类型和布尔断言，临时工作区与会话目录在结束后清理。
-
-## 12. 2026-09-17 v0.3.4 命令执行收口
-
-- 全量离线测试：79 个测试文件通过，4 个真实 smoke 文件跳过；352 passed，6 skipped；
-- typecheck、build、pack dry-run、`npm audit --omit=dev` 和 `git diff --check`：通过；
-- 真实 Qwen `qwen3.7-plus`：在临时 fixture 中完成 `read_text_file` → `edit_text_file` → `run_command`，两次 Approval 均通过，检查命令 exit code 为 0，最终响应非空；
-- 临时 fixture、评估脚本、完整命令输出和会话正文已清理；
-- 真实 DeepSeek smoke 曾返回 HTTP 402 `Insufficient Balance`，未重试或切换 Provider。
-
-## 14. 2026-09-18 v0.3.6 Session Discovery 收口
-
-- 全量离线测试：85 个测试文件通过，5 个真实 smoke 文件跳过；378 passed、7 skipped；
-- 针对性协议、Session Query、Tool 和 Agent Loop 回归：54 passed；
-- typecheck、build、`git diff --check` 和 `npm audit --omit=dev`：通过，audit 为 0 vulnerabilities；
-- 隔离 Bailian/Qwen 真实评估：NDJSON Session 搜索通过；Qwen 完成 `search_session_history` → `read_session_context` → `response_end`；
-- 首次真实长链路失败定位为模型 Tool schema 的 camelCase 与 Qwen snake_case 参数不一致，修正为 `session_id` / `anchor_message_index` 后通过；
-- 临时 Config、workspace、Session、memory 和评估正文均已清理；
-- `pack:check` 曾受本机 npm cache 临时目录 EPERM 影响，发布前需重跑。
+发布前应完成离线验证、文档/安全检查和目标平台安装验收；只有相应能力确实执行过才记录“通过”。最终调整版本号后，应重新运行版本一致性、构建和 `pack:check`。

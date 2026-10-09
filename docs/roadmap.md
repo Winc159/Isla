@@ -385,13 +385,13 @@ v0.4.1 不扩展 MCP 协议面，集中补齐个人用户可操作性：通过 `
 
 本版不开放公网、多用户、Web UI、Webhook、Job 队列或云服务。设计、Batch、测试矩阵和验收模板见 [`docs/proposals/v0.4.5/`](proposals/v0.4.5/README.md)。
 
-## v0.4.6：Model Limits and Token-aware Context Guardrails（设计完成）
+## v0.4.6：Model Limits and Token-aware Context Guardrails（已实现）
 
 在 v0.4.3 字符/轮次预算和 checkpoint 压缩之上，使用模型目录中的上下文、输入和输出限制建立请求前 Token 防线。模型硬限制、Profile 工作预算与输出预留取更严格值；超限时先压缩已闭合旧轮次，当前单轮仍无法容纳则明确拒绝，不等待 Provider 400，也不静默截断用户输入。
 
 本版复用百炼现有 `GET /api/v1/models` 和缓存，普通启动不新增联网依赖；首版使用保守确定的 Token 估算，不引入模型专属 tokenizer、自动选模或自动路由。设计、Batch、测试矩阵和验收模板见 [`docs/proposals/v0.4.6/`](proposals/v0.4.6/README.md)。
 
-## v0.4.7：Headless Browser and Human Control Surface（设计完成，Batch A 已实施）
+## v0.4.7：Headless Browser and Human Control Surface（核心实现已落地）
 
 面向 Linux 无头常驻主机增加隔离 Chromium、受控 Browser Tool 和只监听 loopback 的 Browser Console。用户通过 SSH 本地端口转发查看页面、人工接管登录和处理验证码；Agent 恢复前必须重新观察页面。
 
@@ -402,6 +402,12 @@ v0.4.1 不扩展 MCP 协议面，集中补齐个人用户可操作性：通过 `
 复用现有 `ToolCapability`、Tool Runtime、Approval 和 Capability Snapshot，增加 Host-owned Capability Catalog、确定性 Resolver、Task 级 Activation State 与逐 Model Step Snapshot。Runtime 先按用户意图和任务状态预选能力；模型可用 `capability_search`、`capability_activate` 和 `capability_status` 补充发现。每次模型请求只注入当前真正相关的 Tool Schema，并记录选择、拒绝、激活、schema bytes/token 与稳定原因码。
 
 首版只支持内置能力和 Profile 已配置的 MCP Server，不做任意代码加载、在线安装、热更新、MCP 子进程按任务懒启动、Embedding 或独立路由模型。设计、执行批次、测试矩阵与验收模板见 [`docs/proposals/v0.4.8/`](proposals/v0.4.8/README.md)。
+
+## v0.4.9：Documentation and Architecture Closeout（已完成）
+
+以 v0.4.8 实际代码为事实源，重建 `docs/current/` 的架构、实现、测试和决策入口；把 v0.3.x 的 current 专题移入 archive，明确 current、proposal、archive、evaluation 与 `.isla-local` 的边界。本版只做文档审计、重组、导航、明显错误和版本元数据修正，不修改 Runtime 行为。
+
+审计、执行步骤和验收记录见 [`docs/proposals/v0.4.9/`](proposals/v0.4.9/README.md)。
 
 上述版本严格顺序推进：每版先完成 P0 自动化和真实评估，再解锁下一版；后续版本的设计完成不代表允许并行扩大实现范围。
 

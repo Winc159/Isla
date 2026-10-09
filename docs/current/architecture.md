@@ -1,217 +1,158 @@
-# Isla v0.3.0 架构：Bailian Provider and Model Discovery
+# Isla 当前架构
 
-状态：已实现并完成基线收口
+本文以 `0.4.8` 源码为事实源，描述 CLI Agent Runtime 的稳定边界。
 
-前置基线：v0.2.9 Runtime Consolidation
+## 产品定位与原则
 
-日期：2026-09-15
+Isla 是面向个人使用的 TypeScript/Node.js Agent Runtime。当前主要入口是 CLI，同时提供 NDJSON 协议和只监听 loopback 的 Resident Host。它不是通用 Agent 平台：能力只在现实需求出现后扩展，Provider、模型和部署方式不会渗透进 Runtime Core。
 
-## 1. 现实问题
+核心原则：
 
-Isla 当前直接支持 OpenAI、DeepSeek 与 Local Provider。阿里云百炼同时托管 Qwen、DeepSeek、GLM、Kimi、MiniMax 等模型，如果按模型家族建立 Provider，会把平台认证、地域地址、协议和模型差异重复实现，也无法合理承载百炼动态增长的模型目录。
+- Config/Profile 是正常运行的配置事实源；`.env` 只用于显式开发、CI 或迁移兼容。
+- Provider 表示协议适配，模型、Base URL 与凭据属于 Profile 连接配置。
+- 用户消息在调用模型前写入会话；只有有效模型回答进入 assistant 历史。
+- 原始 Session 是事实，Context 压缩只改变模型输入投影。
+- Capability 激活只决定工具可见性，不代表批准执行，也不能绕过 Policy、Sandbox 或 Approval。
+- CLI、NDJSON 和 Host 复用同一个 Application、SessionFactory 与 Runtime。
 
-当前 Profile config 与完整 env 配置又形成两套并列入口。继续为新 Provider 扩展两套字段会增加日常维护、文档和测试负担。
+## Runtime 分层
 
-v0.3.0 因此解决三个已经出现的需求：
-
-1. 以百炼平台而不是 Qwen 模型命名 Provider；
-2. 以本地 Profile config 作为日常启动配置的唯一事实源；
-3. 通过百炼官方模型 API 发现当前账号和地域可用模型，而不是在代码中维护静态列表。
-
-## 2. 官方接口事实
-
-百炼提供 OpenAI-compatible Chat Completions、OpenAI-compatible Responses、Anthropic-compatible Messages 与 DashScope 原生接口。v0.3.0 首条生产路径选择 Chat Completions，因为它与 Isla 当前完整消息历史、Tool Call/Result 配对和请求可重建契约直接匹配。
-
-百炼官方提供 `GET /api/v1/models`，支持分页并返回模型 ID、模型作者、推理服务商、capabilities、features、上下文窗口与价格。地域、API Key、模型可用范围和 Base URL 相互关联，不能由 Runtime 猜测。
-
-官方参考：
-
-- https://help.aliyun.com/zh/model-studio/what-is-model-studio/
-- https://help.aliyun.com/zh/model-studio/base-url
-- https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions
-- https://help.aliyun.com/zh/model-studio/list-models
-- https://help.aliyun.com/zh/model-studio/qwen-function-calling
-
-## 3. 身份与职责
-
-三层身份必须分离：
-
-```text
-Provider platform: bailian
-Protocol path: OpenAI-compatible Chat Completions
-Model: qwen / deepseek / glm / kimi / minimax / other model ID
+```mermaid
+flowchart TD
+  E["入口层: CLI / NDJSON / Resident Host"] --> A["Application 与 SessionFactory"]
+  A --> S["ChatSession / Agent Loop"]
+  S --> P["Provider 协议适配"]
+  S --> C["Capability Catalog 与逐 Step Snapshot"]
+  C --> T["Tool Runtime"]
+  T --> G["Policy / Sandbox / Approval"]
+  T --> X["内建 Tool / MCP / Browser / Memory"]
+  S --> D["Session Store / Context / Journal / Task State"]
 ```
 
-`BailianProvider` 负责：
+依赖方向由入口向核心和端口适配器流动。`src/core/` 不拥有 CLI、HTTP、Playwright 或具体 Provider 的生命周期；装配集中在 `src/main.ts`、`src/application.ts` 和 `src/session-factory.ts`。
 
-- API Key 与 Base URL；
-- Chat Completions 请求和响应转换；
-- timeout、AbortSignal、usage 与错误归一化；
-- Provider capability snapshot。
+## 核心模块职责
 
-模型 ID 负责选择一次运行使用的模型。模型族差异只有在官方规则或真实请求证明存在时，才进入窄兼容策略；不得为每个模型创建 Provider，也不得预建完整模型策略框架。
+| 模块 | 职责 |
+|---|---|
+| `src/main.ts` | 解析启动参数，优先加载 Config/Profile，创建 Provider 与 MCP Host 并注册到 Runtime。 |
+| `src/cli.ts` | TTY 文本循环、命令分发、取消、显示和 NDJSON 启动装配。 |
+| `src/application.ts` | 聚合 Runtime、Session Store、Memory、诊断与关闭生命周期。 |
+| `src/session-factory.ts` | 按 workspace 和当前会话组装 Session、能力目录、Browser、MCP、Memory 与持久化回调。 |
+| `src/core/session.ts` | 会话事实、Agent Loop、请求投影、工具轮次、完成门禁、压缩、终态与持久化。 |
+| `src/core/model-step.ts` | 单次 Provider 调用、流式/非流式选择、重试事件与候选结果。 |
+| `src/capability-catalog.ts` | Host-owned manifest、可用性、检索与能力 Provider。 |
+| `src/capability-routing.ts` | 确定性预选、Task 激活状态、逐 Model Step Tool Snapshot 和能力元工具。 |
+| `src/tools/` | Tool 契约、组合、执行、权限分类及内建能力。 |
+| `src/mcp/` | Profile 配置的 stdio MCP Server 生命周期、目录映射、调用与诊断。 |
+| `src/browser/` | Playwright 会话、URL 策略、人工接管 Console 与凭据批准。 |
+| `src/memory/` | SQLite 长期记忆、Core Memory、检索、可选 Embedding 与检查点候选。 |
+| `src/session-store.ts` | JSON Session schema、兼容迁移与原子持久化。 |
+| `src/protocol/` | stdin/stdout NDJSON 请求、事件、Approval 与用户问题。 |
+| `src/sandbox/`、`src/approval/` | workspace 路径边界、敏感文件拒绝、操作权限和用户批准。 |
 
-## 4. 配置事实源
+## 用户请求完整链路
 
-`~/.isla/config.json` 的 Profile 是正常用户启动的唯一配置事实源。Profile 保存完整启动快照，包括 provider、model、API Key、Base URL、workspace、runtime、memory、tools 与 appearance。
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant E as CLI or Protocol
+  participant S as ChatSession
+  participant C as Capability Router
+  participant M as Provider
+  participant T as Tool Runtime
+  participant P as Policy and Approval
 
-环境变量只用于：
-
-- `--env` 显式开发/CI兼容入口；
-- 真实 smoke 的显式开关；
-- 测试配置路径与临时目录。
-
-正常 Profile 启动不得隐式字段级合并 env；缺少必填字段必须在网络请求前失败。v0.3.0 不立即删除已有 `--env`，先把它降级为开发兼容入口，避免破坏现有脚本。
-
-建议的 Bailian Profile：
-
-```json
-{
-  "provider": "bailian",
-  "model": "qwen3.8-max",
-  "apiKey": "<local-secret>",
-  "baseURL": "https://<workspace-id>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
-}
+  U->>E: prompt
+  E->>S: send(text)
+  S->>S: append user message and persist
+  S->>C: resolve intent and active task capabilities
+  C-->>S: immutable tool snapshot for step N
+  S->>M: reconstructed messages plus current tool schemas
+  alt model requests tools
+    M-->>S: tool calls
+    S->>T: execute calls
+    T->>P: permission, sandbox and approval checks
+    P-->>T: allow or reject
+    T-->>S: bounded tool results
+    S->>S: append results, journal and persist
+    S->>C: build a fresh snapshot for step N plus 1
+  else model yields answer
+    M-->>S: candidate answer
+    S->>S: completion gate and verification checks
+    S->>S: append valid assistant message and persist
+    S-->>E: one terminal outcome
+    E-->>U: response or explicit failure/cancel state
+  end
 ```
 
-Base URL 必须显式配置；Isla 不硬编码北京地域、不推断 Workspace ID，也不在失败时切换共享域名、地域或 Provider。
+用户输入先成为 Session 事实，因此实际发给模型的消息可以从会话重建。Provider 错误、取消、空回答或被完成门禁拒绝的候选不会伪装成成功的 assistant 消息。
 
-## 5. Batch A：平台文本路径
+## Capability 与 Tool
 
-Batch A 只增加 Bailian Chat Completions 普通文本回答：
+SessionFactory 将内建 `ToolCapability`、Profile 已配置的 MCP 能力和 Browser 能力注册到 `CapabilityCatalog`。Manifest 提供稳定 ID、摘要、关键词、风险、生命周期和需求；Catalog 负责可发现性，不执行工具。
 
-```text
-RequestContextBuilder
-→ ModelStepRunner
-→ BailianProvider.generate()
-→ POST {baseURL}/chat/completions
-→ 完整 ModelResponse
-→ 现有 Agent Loop / Completion Gate / Session commit
+每个任务保存 `CapabilityActivationStateV1`。Runtime 根据用户输入、已有激活状态和必须包含的元能力做确定性预选；页面内容等不可信指令不能触发非只读能力。模型也可调用：
+
+- `capability_search`：只搜索摘要；
+- `capability_activate`：激活已知且可用的能力，从下一 Model Step 生效；
+- `capability_status`：查看可用、拒绝和激活状态。
+
+每个 Model Step 都重新生成不可变 Snapshot。只有 Snapshot 中能力的 Tool Definition 会发给模型。激活后实际调用仍经过 Tool Runtime 的工具查找、权限分类、Sandbox、Approval、取消和结果规范化。
+
+## Session、Context、Journal 与 Memory
+
+```mermaid
+flowchart LR
+  H["Session messages: 原始对话事实"] --> R["Request projection"]
+  C["Context checkpoint"] --> R
+  T["Task state and capability activation"] --> R
+  R --> M["Model request"]
+  H --> J["Turn journal: 状态与动作摘要"]
+  C --> L["Long-term memory candidate"]
+  L --> DB["SQLite memory store"]
 ```
 
-初始能力声明：
+- Session Store 保存消息、Context、Journal、Task State、Skill Catalog 与 Capability Activation；workspace key 隔离发现和恢复。
+- Context 在预算压力下裁剪可重新获取的旧 Tool 结果，并为闭合旧轮次生成 checkpoint；不删除原始 Session 消息。
+- Journal 保存回合、模型尝试、工具动作、检查点和终态的结构化摘要，不以私人正文替代 Session。
+- Memory 是独立持久层；检索失败可降级，不得让记忆不可用破坏基本对话闭环。
 
-```ts
-{
-  toolCalling: false,
-  nativeStreaming: false,
-  streamingToolCalls: false
-}
-```
+## Provider 边界
 
-Batch A 不发送 Tools，不产生假 delta，不接入 Responses API，也不改变 Session、Journal、NDJSON 终态和 Runtime 核心契约。
+`IslaRuntime` 注册 OpenAI、DeepSeek、Bailian 和 OpenAI-compatible local Provider。Provider 接收统一 ModelRequest，声明 tool calling、native streaming 与 streaming tool calls 等能力，并把平台响应映射为统一结果。一次进程启动后 Provider 和模型保持固定；模型切换写入 Profile 后下次启动生效。
 
-## 6. Batch B：模型目录
+## MCP 与 Browser 边界
 
-模型发现是应用层只读服务，不属于 `ModelProvider.generate()`，也不进入模型可见历史。
+MCP Host 只消费 Profile 显式配置的本地 stdio Server。外部 description、schema、instructions 和结果都视为不可信；稳定限定名、目录预算、Profile allow/deny 和 Tool Runtime 继续生效。当前不支持远程 transport、OAuth、resources、prompts、热重载或在线安装。
 
-```ts
-interface ModelCatalogEntry {
-  readonly id: string;
-  readonly name: string;
-  readonly provider?: string;
-  readonly inferenceProvider?: string;
-  readonly capabilities: readonly string[];
-  readonly features: readonly string[];
-  readonly contextWindow?: number;
-  readonly maxInputTokens?: number;
-  readonly maxOutputTokens?: number;
-}
-```
+Browser 使用隔离的 Playwright 上下文和 URL Policy。Browser Console 仅监听 loopback，用于人工接管；凭据使用需要独立批准，明文不进入模型、Session、Tool Result 或普通日志。Browser 能力不等于任意网络或任意 JavaScript 权限。
 
-模型目录要求：
+## 安全与审批
 
-- 调用地域对应的 `/api/v1/models`；
-- 支持分页、名称搜索和确定性排序；
-- 提供 TTY 与无 TTY 等价路径；
-- 可保存不含凭据的最近成功缓存；
-- 查询失败不阻断已配置模型启动；
-- 不自动修改 Profile，不在会话中动态切换模型；
-- 不把 price 或模型描述解释成固定免费额度；
-- 不把目录中的 capability/feature 直接等同于已经真实验证的 Runtime Tool/streaming 能力。
+安全控制是串联关系而不是互相替代：
 
-普通启动不强制刷新目录。刷新必须由用户命令、首次模型选择或显式自动化请求触发。
+1. Profile 决定能力和 MCP 的配置边界；
+2. Capability Policy 决定可发现和可暴露的范围；
+3. Tool Runtime 根据 permission 执行或发起 Approval；
+4. Sandbox 将文件读写限制在 workspace，并拒绝敏感路径；
+5. 外部研究完成门禁要求真实成功的 Web Search、Web Fetch 或 Browser 读取证据，HTTP 非 2xx 不计为证据；
+6. Journal 和诊断只记录安全摘要，秘密与原始私人内容不得进入日志。
 
-## 7. Batch C：首个 Qwen Tool Calling
+## 部署边界
 
-Batch C 选择一个官方明确支持标准 Function Calling、且用户配置中可用的 Qwen 模型，增加 one-shot Tool Loop：
+原生 Node.js、容器、systemd 或 launchd 只负责进程托管。Runtime Core 不感知部署环境。Resident Host 仅绑定 loopback、使用 Bearer token、限制并发回合并在关闭时取消和收敛活动会话；它不是公网或多用户服务。
 
-```text
-messages + tools + tool_choice
-→ 完整 Chat Completion
-→ structured tool_calls
-→ 现有 Tool Runtime / Approval
-→ assistant tool-call + tool result
-→ 下一 Model Step
-```
+## 当前明确不支持
 
-通过离线 fixture 与真实 smoke 后，该已验证路由才声明：
+- Web UI、公网 Host、多用户和 Job 队列；
+- 运行期间动态切换 Provider/Model；
+- 在线插件安装、任意代码动态加载和热更新；
+- MCP 远程 transport、OAuth、resources、prompts 和 tasks；
+- Embedding 或独立模型驱动的能力路由；
+- 并行 Tool、Subagent 和通用 Workflow 框架；
+- 自动修改、部署或演化自身。
 
-```ts
-{
-  toolCalling: true,
-  nativeStreaming: false,
-  streamingToolCalls: false
-}
-```
+## 架构修改约束
 
-未知模型、存在额外请求字段要求的模型族或未通过验证的路径保持保守能力。GLM、Kimi 等真实差异出现时增加窄策略，不修改 Provider 身份。
-
-## 8. Batch D：候选 streaming
-
-Streaming 不属于 v0.3.0 前三批完成条件。只有同时满足以下条件才开始：
-
-1. 官方协议给出目标模型的 SSE 事件形状；
-2. 文本、Tool Call、usage、终态和取消具有离线 fixture；
-3. 真实文本流通过；
-4. Tool streaming 真实通过后才声明 `streamingToolCalls=true`；
-5. 继续复用现有 `ModelStreamAssembler`，不复制 OpenAI Provider 后改名。
-
-## 9. 共享协议代码边界
-
-只有 DeepSeek 与 Bailian 实际共同使用且语义相同的纯转换才允许抽取，例如 Chat messages、Tool schema、tool choice、usage 与结构化 Tool Call 转换。Provider 特有的 endpoint、thinking、DSML、模型策略和错误上下文留在各自 Adapter。
-
-不引入 Provider 基类、服务定位器、协议注册中心或多层继承。
-
-## 10. 安全与隐私
-
-- API Key 只存在于本地私有配置和内存中的已解析启动快照；
-- 不输出 Authorization、完整 Provider payload、私人消息或完整模型目录响应；
-- 模型目录缓存不保存凭据、请求 header 或账号标识；
-- 真实请求必须同时具备显式开关、有效本地配置和用户授权；
-- 需要用户配置时提供可复制模板，但不得要求用户把 API Key 粘贴到对话中；
-- 用户只需在本地完成配置并告知“已配置”。
-
-## 11. 非目标
-
-- 不为每个模型创建 Provider；
-- 不实现会话内动态模型路由；
-- 不启用百炼智能模型路由；
-- 不接入 Responses 内置 Web、MCP、Code Interpreter；
-- 不接入 DashScope 原生生成协议；
-- 不实现多模态、Embedding、Rerank、图像、音视频；
-- 不新增并行 Tool、子 Agent、后台任务或通用 capability registry；
-- 不把模型目录变成启动硬依赖；
-- 不自动消费所谓免费额度，也不根据价格自动轮换模型。
-
-## 12. 完成信号
-
-v0.3.0 前三批完成需要：
-
-1. Bailian 普通文本请求离线与授权真实 smoke 通过；
-2. Profile 为文档和正常 CLI 的唯一日常配置入口；
-3. 官方模型目录可由 TTY 与无 TTY 路径查询；
-4. 目录失败不影响已配置模型启动；
-5. 一个 Qwen 模型的 one-shot Tool Loop 通过离线与授权真实验证；
-6. 能力声明与实际验证路径一致；
-7. OpenAI、DeepSeek、Local、Session、Tool、取消、CLI 和 NDJSON 无回归；
-8. typecheck、全量离线测试、build、pack、diff check 与隐私扫描通过；
-9. 文档和实际 Batch 状态一致。
-
-## 13. 实际落地说明
-
-v0.3.0 最终落地包含 Bailian Chat Completions、one-shot Tool Loop、可选普通文本 streaming、官方模型目录、非敏感缓存、TTY/无 TTY/NDJSON 模型入口，以及只对下次启动生效的 Profile 模型保存。
-
-与最初设计相比，当前实现存在一项已知偏差：`toolCalling` 目前按 Bailian Provider 声明为 `true`，尚未实现第 7 节设想的按模型 ID 和验证记录收窄能力。真实 Qwen 路径已经验证，但这不能证明 Bailian 目录中的所有模型都支持同一 Tool 协议。后续统一 Provider Model Catalog 或模型能力策略设计必须重新处理这一点；本次收口不扩大或重写现有契约。
-
-普通文本 streaming 只有在 Profile `streaming=true` 时启用。由于 `streamingToolCalls=false`，带工具的请求由 `ModelStepRunner` 自动回退到稳定的 one-shot 路径，流中即使存在 Tool Call delta 解析能力也不会被当前 Agent Tool Loop 使用。
+新增抽象必须由现实需求驱动；入口应复用 Application、SessionFactory 和核心契约；新能力必须声明配置、风险、权限、取消、持久化、协议和测试边界。若修改模型输入、Session 事实、终态、Approval 或 Sandbox 契约，必须先更新设计决策并取得确认。
