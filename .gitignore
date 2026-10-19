@@ -9,6 +9,7 @@ data/*.db
 data/*.sqlite
 data/*.sqlite3
 .isla-local/
+.runtime/
 .mcp-eval/
 .npmrc
 

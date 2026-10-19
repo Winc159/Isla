@@ -409,6 +409,16 @@ v0.4.1 不扩展 MCP 协议面，集中补齐个人用户可操作性：通过 `
 
 审计、执行步骤和验收记录见 [`docs/proposals/v0.4.9/`](proposals/v0.4.9/README.md)。
 
+## v0.5.0：Personal Agent Workspace and Resource Toolbox（设计已冻结，待实施）
+
+v0.5.0 不再继续扩展 CLI 表面，而是交付单用户、私有局域网内使用的桌面 Web UI：左侧会话记录、中间主对话、右侧工具箱与任务队列。Isla Host 和 Resource Service 保持两个独立进程，长时间下载、识别和解压不得阻塞主对话。
+
+Resource 是首个有独立边界的工具箱应用：用户可粘贴百度网盘分享信息、选择受管理的输出位置，并取得完整解压内容；也可配置 managed roots，自动发现稳定的新文件并周期整理。首版必须支持多个下载任务并发，并覆盖普通密码归档、多个密码候选、重命名归档、MP4 尾部 RAR、分卷和 RAR5。只实现百度网盘的具体 runner，其他平台仅保留产品占位，不预建通用下载器接口。
+
+Profile/Config 增加可更改的 Worker 模型角色。Resource 通过 Isla 的窄结构化推理 API 使用 Worker；Worker 不拥有 Tool、Session 或 Memory。Resource 首版可以使用独立复制粘贴窗口，主 Agent 调用 Resource 的 Tool 可在核心路径稳定后再接入。
+
+Windows 必须可开发和验收，最终发布门禁在 N100 Linux 上完成真实部署、双任务并发、managed-root 自动处理及“粘贴输入到完整解压目录”的端到端验证。冻结的 proposal、API Schema、状态机、实施批次和测试矩阵见 [`docs/proposals/v0.5.0/`](proposals/v0.5.0/README.md)。
+
 上述版本严格顺序推进：每版先完成 P0 自动化和真实评估，再解锁下一版；后续版本的设计完成不代表允许并行扩大实现范围。
 
 ## 候选阶段：Tool 插件

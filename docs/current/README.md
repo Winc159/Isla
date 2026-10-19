@@ -1,6 +1,6 @@
 # Isla 当前文档
 
-本目录描述 `0.4.9` 的当前有效事实；本版本未改变 v0.4.8 Runtime 行为。历史设计过程保存在 [`../proposals/`](../proposals/)，已被替代但仍有复盘价值的资料保存在 [`../archive/`](../archive/)。
+本目录描述 v0 Runtime 的当前有效事实；v0.5.0 在原有 CLI Runtime 之外增加独立 Resource Web 工具台，具体边界和验收记录见 [`../proposals/v0.5.0/`](../proposals/v0.5.0/README.md)。历史设计过程保存在 [`../proposals/`](../proposals/)，已被替代但仍有复盘价值的资料保存在 [`../archive/`](../archive/)。
 
 建议按以下顺序阅读：
 
@@ -11,7 +11,7 @@
 5. [`decisions.md`](decisions.md)：已经稳定形成的架构决策。
 6. [`../roadmap.md`](../roadmap.md)：版本历史与后续方向。
 
-v0.4.8 的设计、实施和脱敏验收记录见 [`../proposals/v0.4.8/`](../proposals/v0.4.8/README.md)。v0.4.9 的文档审计与收口记录见 [`../proposals/v0.4.9/`](../proposals/v0.4.9/README.md)。这些 proposal 记录为什么这样设计，但不能替代本目录对当前代码的描述。
+v0.4.8 的设计、实施和脱敏验收记录见 [`../proposals/v0.4.8/`](../proposals/v0.4.8/README.md)，v0.4.9 的文档审计见 [`../proposals/v0.4.9/`](../proposals/v0.4.9/README.md)，v0.5.0 Resource 设计与验收见 [`../proposals/v0.5.0/`](../proposals/v0.5.0/README.md)。这些 proposal 记录为什么这样设计，但不能替代本目录对当前代码的描述。
 
 ## 文档事实优先级
 

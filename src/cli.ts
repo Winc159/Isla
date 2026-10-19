@@ -28,6 +28,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { McpHost } from './mcp/host.js';
 import type { CapabilityPolicy } from './capabilities.js';
+import { spawn } from 'node:child_process';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export interface CliInterruptController {
   start(): void;
@@ -372,7 +375,11 @@ function createPersistentSession(
   const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, maxContextTokens, maxOutputTokens, contextReserveTokens, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}) });
   return factory.create({ stored: storedSession, input, output, interactive, ...(interactive ? { approvalService: new CliApprovalService(input, output, onInteractionStart, onInteractionEnd), userQuestionService: new CliUserQuestionService(input, output, onInteractionStart, onInteractionEnd) } : {}), ...(onModelStepEvent ? { onModelStepEvent } : {}) });
 }
-if (isCliEntry(import.meta.url, process.argv[1])) {
+if (isCliEntry(import.meta.url, process.argv[1]) && process.argv[2] === 'install') {
+  const script = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'install-all.mjs');
+  const child = spawn(process.execPath, [script, ...process.argv.slice(3)], { cwd: process.cwd(), stdio: 'inherit', shell: false });
+  await new Promise<void>(resolve => { child.once('error', error => { process.stderr.write(`安装失败：${error.message}\n`); resolve(); }); child.once('close', code => { process.exitCode = code ?? 1; resolve(); }); });
+} else if (isCliEntry(import.meta.url, process.argv[1])) {
   try {
     const startupArgs = parseCliStartupArgs(process.argv.slice(2));
     if (!startupArgs.useEnv && !startupArgs.profileName && process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') {

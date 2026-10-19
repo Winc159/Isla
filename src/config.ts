@@ -214,6 +214,7 @@ export type StartupProfileV1 =
 export interface IslaConfigFileV1 {
   readonly version: 1;
   readonly defaultProfile?: string;
+  readonly workerProfile?: string;
   readonly profiles: Readonly<Record<string, StartupProfileV1>>;
 }
 
@@ -224,7 +225,7 @@ export function parseConfigFile(source: string, options: ConfigParseOptions = {}
   let value: unknown;
   try { value = JSON.parse(source); } catch { throw new Error('Invalid Isla config JSON'); }
   if (!isRecord(value) || value.version !== 1) throw new Error('Isla config version must be 1');
-  warnUnknown(value, ['version', 'defaultProfile', 'profiles'], 'config', options.onWarning);
+  warnUnknown(value, ['version', 'defaultProfile', 'workerProfile', 'profiles'], 'config', options.onWarning);
   if (!isRecord(value.profiles)) throw new Error('Isla config profiles must be an object');
   const profiles: Record<string, StartupProfileV1> = Object.create(null) as Record<string, StartupProfileV1>;
   for (const [name, raw] of Object.entries(value.profiles)) {
@@ -235,7 +236,9 @@ export function parseConfigFile(source: string, options: ConfigParseOptions = {}
   if (defaultProfile !== undefined) {
     if (typeof defaultProfile !== 'string' || !profiles[defaultProfile]) throw new Error('Isla config defaultProfile does not exist');
   }
-  return Object.freeze({ version: 1 as const, ...(defaultProfile !== undefined ? { defaultProfile } : {}), profiles: Object.freeze(profiles) });
+  const workerProfile = value.workerProfile;
+  if (workerProfile !== undefined && (typeof workerProfile !== 'string' || !profiles[workerProfile])) throw new Error('Isla config workerProfile does not exist');
+  return Object.freeze({ version: 1 as const, ...(defaultProfile !== undefined ? { defaultProfile } : {}), ...(workerProfile !== undefined ? { workerProfile } : {}), profiles: Object.freeze(profiles) });
 }
 
 export function resolveProfile(file: IslaConfigFileV1, name?: string): { readonly name: string; readonly profile: StartupProfileV1 } {
@@ -356,6 +359,10 @@ function parseWebFetch(name: string, value: unknown, onWarning?: (message: strin
 
 function normalizeWebFetchConfig(value: ProfileWebFetchSettingsV1): WebFetchConfig {
   return Object.freeze({ enabled: value.enabled ?? true, allowedHosts: Object.freeze([...(value.allowedHosts ?? ['*'])]), allowSearchResultUrls: value.allowSearchResultUrls ?? false, timeoutMs: value.timeoutMs ?? DEFAULT_WEB_FETCH.timeoutMs, maxResponseBytes: value.maxResponseBytes ?? DEFAULT_WEB_FETCH.maxResponseBytes, maxBodyChars: value.maxBodyChars ?? DEFAULT_WEB_FETCH.maxBodyChars, maxOutputChars: value.maxOutputChars ?? DEFAULT_WEB_FETCH.maxOutputChars, maxRedirects: value.maxRedirects ?? DEFAULT_WEB_FETCH.maxRedirects });
+}
+
+export function resolveWorkerProfile(file: IslaConfigFileV1): { readonly name: string; readonly profile: StartupProfileV1 } | undefined {
+  return file.workerProfile ? { name: file.workerProfile, profile: file.profiles[file.workerProfile]! } : undefined;
 }
 
 function parseMcp(name: string, value: unknown): ProfileMcpSettingsV1 {

@@ -5,6 +5,7 @@ import { open, unlink } from 'node:fs/promises';
 import type { ChatSession } from './core/session.js';
 import type { SessionStore, StoredSession } from './session-store.js';
 import type { CapabilitySnapshot } from './capabilities.js';
+import type { StructuredInferenceRequestV1, StructuredInferenceSuccessV1 } from './resource/contracts.js';
 
 export interface ResidentHostOptions {
   readonly host?: string;
@@ -17,6 +18,7 @@ export interface ResidentHostOptions {
   readonly capabilitySnapshot?: () => CapabilitySnapshot;
   readonly maxActiveTurns?: number;
   readonly lockPath?: string;
+  readonly structuredInference?: (request: StructuredInferenceRequestV1, signal: AbortSignal) => Promise<StructuredInferenceSuccessV1<unknown>>;
 }
 
 export class ResidentHost {
@@ -66,6 +68,7 @@ export class ResidentHost {
     if (!this.authorized(request)) { this.send(response, 401, { error: 'UNAUTHORIZED' }); return; }
     try {
       const url = new URL(request.url ?? '/', `http://${this.host}`);
+      if (request.method === 'POST' && url.pathname === '/api/v1/inference/structured') { await this.structuredInference(request, response); return; }
       if (request.method === 'GET' && url.pathname === '/capabilities') { this.send(response, 200, this.options.capabilitySnapshot?.() ?? { version: 1, hash: '', entries: [] }); return; }
       if (request.method === 'GET' && url.pathname === '/sessions') { this.send(response, 200, { sessions: await this.list() }); return; }
       if (request.method === 'POST' && url.pathname === '/sessions') { const body = await readJson(request); const session = await this.options.sessionStore.create(this.options.provider, this.options.model, typeof body.prompt === 'string' ? [{ role: 'user', content: body.prompt }] : []); this.send(response, 201, { sessionId: session.id }); return; }
@@ -90,6 +93,20 @@ export class ResidentHost {
     finally { this.active.delete(stored.id); }
   }
 
+  private async structuredInference(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (!this.options.structuredInference) { this.send(response, 503, { error: { code: 'ROLE_NOT_CONFIGURED', message: 'resource-worker 未配置。', retryable: false } }); return; }
+    const controller = new AbortController();
+    request.on('aborted', () => controller.abort());
+    try {
+      const result = await this.options.structuredInference(await readJson(request) as unknown as StructuredInferenceRequestV1, controller.signal);
+      this.send(response, 200, result);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : 'MODEL_RESPONSE_INVALID';
+      const retryable = code === 'MODEL_UNAVAILABLE' || code === 'INFERENCE_BUSY' || code === 'INFERENCE_TIMEOUT' || code === 'MODEL_RESPONSE_INVALID';
+      this.send(response, retryable ? 503 : 400, { error: { code, message: safeInferenceMessage(code), retryable } });
+    }
+  }
+
   private async list(): Promise<readonly object[]> { const sessions = this.options.sessionStore.listAll ? await this.options.sessionStore.listAll() : await this.options.sessionStore.list(this.options.provider, this.options.model); return sessions.filter(item => item.provider === this.options.provider && item.model === this.options.model).map(safeSession); }
   private async find(id: string): Promise<StoredSession | undefined> { const sessions = this.options.sessionStore.listAll ? await this.options.sessionStore.listAll() : await this.options.sessionStore.list(this.options.provider, this.options.model); return sessions.find(item => item.id === id && item.provider === this.options.provider && item.model === this.options.model); }
   private authorized(request: IncomingMessage): boolean { const value = request.headers.authorization; if (!value?.startsWith('Bearer ')) return false; const provided = Buffer.from(value.slice(7)); const expected = Buffer.from(this.token); return provided.length === expected.length && timingSafeEqual(provided, expected); }
@@ -99,3 +116,4 @@ export class ResidentHost {
 function isLoopback(host: string): boolean { return host === '127.0.0.1' || host === '::1' || host === 'localhost'; }
 function safeSession(session: StoredSession): { readonly sessionId: string; readonly provider: string; readonly model: string; readonly updatedAt: string } { return { sessionId: session.id, provider: session.provider, model: session.model, updatedAt: session.updatedAt }; }
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> { let text = ''; for await (const chunk of request) text += chunk.toString(); const value = JSON.parse(text || '{}'); if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('INVALID_JSON'); return value as Record<string, unknown>; }
+function safeInferenceMessage(code: string): string { return code === 'ROLE_NOT_CONFIGURED' ? 'resource-worker 未配置。' : code === 'MODEL_RESPONSE_INVALID' ? 'Worker 返回内容不符合结构化契约。' : '结构化 Worker 请求失败。'; }

@@ -1,6 +1,6 @@
 # Isla
 
-Isla 是一个使用 TypeScript 开发的个人 Agent Runtime。目前通过 CLI 提供进程内连续对话，支持 OpenAI、DeepSeek、阿里云百炼和兼容 OpenAI 接口的本地模型服务。当前工作区版本为 `0.4.9`。
+Isla 是一个使用 TypeScript 开发的个人 Agent Runtime。目前通过 CLI 提供进程内连续对话，并在 v0.5.0 增加独立 Resource Web 工具台；支持 OpenAI、DeepSeek、阿里云百炼和兼容 OpenAI 接口的本地模型服务。当前工作区版本为 `0.5.0`。
 
 v0.4.8 增加 Host-owned Capability Catalog、确定性能力预选、Task 级激活状态和逐 Model Step Tool Snapshot。模型可通过能力搜索与激活补充 Runtime 预选；每次请求只暴露当前任务相关的 Tool Schema，且不会绕过 Profile、Sandbox 或 Approval。设计与验收见 [`docs/proposals/v0.4.8/`](docs/proposals/v0.4.8/README.md)。
 
@@ -25,17 +25,79 @@ npm run build
 npm pack
 ```
 
-以上命令会在项目根目录生成 `winc159-isla-0.4.9.tgz`。将该文件复制到目标主机后全局安装：
+以上命令会在项目根目录生成 `winc159-isla-0.5.0.tgz`。将该文件复制到目标主机后全局安装：
 
 ```bash
-npm install --global ./winc159-isla-0.4.9.tgz
+npm install --global ./winc159-isla-0.5.0.tgz
 isla
 ```
+
+### Resource 归档工具
+
+v0.5 Resource 工具箱拆成两个可独立维护、可单独运行的工具：
+
+- `百度下载`：一次粘贴一段或多段分享信息，或浏览已登录账号的 `/apps/bdpan` 目录并多选文件；每个资源会成为独立 Job 并自动进入并发下载，只有无效或歧义输入才等待人工修正；
+- `文件解压/整理`：选择需要长期整理的受管文件夹和输出目录，立即扫描并周期发现新增归档；识别改后缀/分卷归档，解压后按确定性规则命名和发布。
+
+两者都不依赖 AI 才能运行。默认先用正则、文件头、文件名和归档结构完成处理；`resource-worker` 只在规则无法确定时提供解析或命名建议。Worker 未配置或不可用时，任务继续走规则路径，必要时请求用户确认，最后才使用 `resource-<完成时间>` 兜底命名。
+
+安装 Isla 时一并执行归档工具安装：
+
+```bash
+npm run install:all
+# 或完整安装：
+npm run setup
+```
+
+Windows x64 会下载并校验官方 7-Zip，缓存到 `"%LOCALAPPDATA%\\Isla\\tools\\7zip\\<version>\\"`；Linux/macOS 由 `install:all` 探测 `7zz`/`7z`，不会擅自修改系统包管理器，N100 Linux 首次部署需先用发行版包管理器安装 `7zip`。工具不打进 npm 包，也不会每次启动重复下载。Windows 外部工具升级必须由用户显式执行 `npm run install:all -- --force`；`npm run install:deps` 仅用于依赖探测。
+
+Resource 解压只在隔离 staging 目录进行，完成校验后再发布到受管目录。不要把 `~/.isla/`、bdpan 配置、Token、分享密码或真实下载内容提交到仓库。百度网盘授权仍由 bdpan 自己完成；Isla 只调用其 `whoami`、`ls` 和 `download` 能力。使用非默认授权文件时通过 `BDPAN_CONFIG_PATH` 显式指定，Isla 不读取或回显其中的 Token。
+
+构建后可启动独立的 Resource Web 工作台。先在 `~/.isla/resource.json` 创建本机配置（路径必须是绝对路径）：
+
+```json
+{
+  "version": 1,
+  "listen": { "host": "127.0.0.1", "port": 43120, "allowedOrigins": ["http://127.0.0.1:43120"] },
+  "isla": { "endpoint": "http://127.0.0.1:43110", "token": "仅供本机进程间调用的值" },
+  "databasePath": "D:/IslaData/resource.sqlite",
+  "stagingPath": "D:/IslaData/staging",
+  "managedRoots": [
+    { "id": "library", "label": "资源库", "path": "D:/Media", "scanEnabled": true, "outputEnabled": true }
+  ],
+  "defaultDestinationRootId": "library"
+}
+```
+
+```bash
+npm run build
+npm run resource:start
+# 或指定另一份配置
+npm run resource:start -- D:/path/to/resource.json
+```
+
+浏览器打开终端显示的 `/resource` 地址。本地目录选择使用“受管目录 + 相对路径”，页面可浏览受管根内的子文件夹，但不能提交任意系统路径；Windows 和 Linux/N100 使用同一套边界。百度网盘区可从根目录进入 `/apps/bdpan`，查看文件名、大小和更新时间，返回上一级、多选文件或确认下载整个目录。Windows 若 bdpan 或 7-Zip 不在 Isla 默认安装位置，可设置 `ISLA_BDPAN_PATH`、`ISLA_7Z_PATH`；bdpan 使用非默认授权配置时设置 `BDPAN_CONFIG_PATH`。这些变量和配置文件都属于本地私人配置，不应提交。页面通过仅限 Resource API 的 HttpOnly 同源会话工作，CLI/API 自动化仍可显式设置 `ISLA_RESOURCE_TOKEN` 后使用 Bearer Token。
+
+终态任务可在页面中重新下载或清除记录。清除只删除 Resource 的任务与事件记录，不删除已下载、已解压或已整理的文件；运行中任务必须先取消，不能直接清除。
+
+文件夹 watch 保存在 Resource SQLite 中，页面关闭或服务重启后仍然存在。周期扫描先观察文件稳定性，再自动建立解压 Job；手工点击扫描会立即处理当前稳定文件。账本以受管根、相对路径、大小和修改时间去重。解压完成后会删除空目录；若目录中只有一个与归档同名或明显无意义的包装目录（如“未命名文件夹”“内容”“files”），会把内容提升一层，包括“有意义名称/未命名文件夹/视频”这种嵌套。`第一季` 等有意义的系列目录和包含多个同级目录的结构会保留。
+
+加密归档会先尝试当前任务明确提供的密码、分享文本中识别的密码，再尝试本机成功密码库中按成功次数和最近成功时间排序的候选；单个任务最多尝试 20 个。全部失败后任务进入人工处理，WebUI 提供不回显的密码输入框，并从同一个 Job 的解压测试阶段继续，不重新下载。只有成功解锁过归档的密码才会进入频率库。密码以本地明文保存在 Resource SQLite 的受限表中，以便后续实际尝试；不会进入普通 Job 快照、事件、Web 回显或日志。因此 `resource.sqlite` 与 Isla 配置一样属于私人敏感文件，不应同步或提交。
+
+其他可恢复情况也会优先等待人工介入：分享码错误可重新输入，登录失效/验证码/风控可处理后继续，缺少分卷可补齐文件后继续，无效或同账号自分享可替换原分享文本。无法确认可恢复方式的损坏归档仍保持稳定失败，避免无限重试。
+
+本地归档测试样本可生成到 `.runtime/archive-fixtures/`：
+
+```bash
+npm run test:archive:fixtures
+```
+
+该目录只用于测试，包含普通 ZIP、改后缀归档、中文后缀、分卷命名、伪 MP4 尾部归档和多重归档样本。
 
 也可以不全局安装，直接执行：
 
 ```bash
-npx --package ./winc159-isla-0.4.9.tgz isla
+npx --package ./winc159-isla-0.5.0.tgz isla
 ```
 
 安装包不包含 API Key、Profile、Session、Memory、测试文件或本地评估资料。首次运行会在当前用户目录创建 `~/.isla/`。不要把 Windows 上的 `~/.isla/` 私人配置和会话打入安装包后传到其他主机。
@@ -126,7 +188,7 @@ Linux x64 和 macOS ARM64 的完成验收必须在对应目标系统上执行，
 
 ```bash
 node --version
-npm install --global ./winc159-isla-0.4.9.tgz
+npm install --global ./winc159-isla-0.5.0.tgz
 isla
 printf '{"type":"exit"}\n' | isla --protocol ndjson
 ```

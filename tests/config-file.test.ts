@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { parseConfigFile, profileToAppConfig, resolveProfile } from '../src/config.js';
+import { parseConfigFile, profileToAppConfig, resolveProfile, resolveWorkerProfile } from '../src/config.js';
 
 const deepseek = (extra: Record<string, unknown> = {}) => JSON.stringify({ version: 1, profiles: { main: { provider: 'deepseek', model: 'deepseek-chat', apiKey: 'test-only-key', ...extra } } });
 
 describe('config file v1', () => {
+  it('selects an explicit worker profile without changing the primary profile', () => {
+    const file = parseConfigFile(JSON.stringify({ version: 1, defaultProfile: 'main', workerProfile: 'worker', profiles: { main: { provider: 'deepseek', model: 'main-model', apiKey: 'primary-test-key' }, worker: { provider: 'bailian', model: 'qwen-plus-2025-07-28', apiKey: 'worker-test-key', baseURL: 'https://example.test/v1' } } }));
+    expect(resolveProfile(file).name).toBe('main');
+    expect(resolveWorkerProfile(file)).toMatchObject({ name: 'worker', profile: { provider: 'bailian', model: 'qwen-plus-2025-07-28' } });
+  });
+
+  it('rejects an unknown worker profile', () => expect(() => parseConfigFile(JSON.stringify({ version: 1, workerProfile: 'missing', profiles: { main: { provider: 'deepseek', model: 'm', apiKey: 'test-only-key' } } }))).toThrow('workerProfile'));
   it('parses a minimal profile and applies app defaults', () => {
     const file = parseConfigFile(deepseek());
     expect(resolveProfile(file)).toEqual({ name: 'main', profile: expect.objectContaining({ provider: 'deepseek', model: 'deepseek-chat' }) });
