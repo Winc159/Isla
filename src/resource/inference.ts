@@ -1,5 +1,5 @@
 import type { ModelProvider, ModelRequest } from "../core/types.js";
-import { parseResourceParseResultV1, parseStructuredInferenceRequestV1, type ResourceModelSnapshotV1, type StructuredInferenceRequestV1, type StructuredInferenceSuccessV1 } from "./contracts.js";
+import { parseResourceContentResultV1, parseResourceParseResultV1, parseResourceTitleResultV1, parseStructuredInferenceRequestV1, type ResourceModelSnapshotV1, type StructuredInferenceRequestV1, type StructuredInferenceSuccessV1 } from "./contracts.js";
 
 export interface ResourceWorkerBinding {
   readonly provider: ModelProvider;
@@ -17,12 +17,14 @@ export class ResourceStructuredInferenceService {
         { role: "user", content: JSON.stringify({ task: request.task, schema: request.schema, input: request.input }) },
       ],
       responseFormat: { type: "json_object" },
-      maxCompletionTokens: 2_048,
+      maxCompletionTokens: 4_096,
     };
     const response = await this.binding.provider.generate(modelRequest, signal ? { signal } : undefined);
     let output: unknown;
     try { output = JSON.parse(response.text); } catch { throw new Error("MODEL_RESPONSE_INVALID"); }
     if (request.schema === "resource.parse-result.v1") parseResourceParseResultV1(output);
+    else if (request.schema === "resource.content-result.v1") parseResourceContentResultV1(output);
+    else parseResourceTitleResultV1(output);
     return { requestId: request.requestId, status: "succeeded", output, model: this.binding.model, ...(response.usage ? { usage: response.usage } : {}) };
   }
 }

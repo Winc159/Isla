@@ -6,8 +6,9 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import type { ResourceConfigV1 } from "./config.js";
 import { migrateResourceDatabase } from "./database-schema.js";
 import { parseConfirmResourceJobRequestV1, parseCreateResourceJobRequestV1, type ResourceJobSnapshotV1 } from "./contracts.js";
-import { parseResourceShareText, splitResourceShareText } from "./parser.js";
+import { parseResourceShareText, parseShareTextNeedsWorker, splitResourceShareText } from "./parser.js";
 import { chooseResourceName } from "./naming.js";
+import { chooseResourceNameWithWorker } from "./title-worker.js";
 import { ResourceScheduler } from "./scheduler.js";
 import type { ArchiveOrganizeRequest, ArchiveOrganizeResult } from "./archive-organizer.js";
 import type { BaiduDownloadRequest, BaiduDownloadResult } from "./baidu-download-runner.js";
@@ -15,6 +16,7 @@ import type { BdpanContext } from "./bdpan-runner.js";
 import { RESOURCE_TOOLBOX } from "./toolbox.js";
 import { RESOURCE_WEB_UI } from "./web-ui.js";
 import { inspectArchive } from "./archive.js";
+import type { ResourceInferenceClient } from "./inference-client.js";
 
 export interface ResourceServiceOptions {
   readonly config: ResourceConfigV1;
@@ -22,6 +24,7 @@ export interface ResourceServiceOptions {
   readonly archiveOrganizer?: { organize(request: ArchiveOrganizeRequest, signal?: AbortSignal): Promise<ArchiveOrganizeResult> };
   readonly baiduDownloader?: { download(request: BaiduDownloadRequest, context: BdpanContext, signal?: AbortSignal): Promise<BaiduDownloadResult> };
   readonly baiduBrowser?: { list(path: string, context: BdpanContext, signal?: AbortSignal): Promise<{ code: number; stdout: string; stderr: string }> };
+  readonly inferenceClient?: ResourceInferenceClient;
 }
 
 export interface ResourceServiceAddress {
@@ -141,18 +144,34 @@ export class ResourceService {
     const input = parseCreateResourceJobRequestV1(value);
     const destination = this.options.config.managedRoots.find(root => root.id === input.destinationRootId && root.outputEnabled);
     if (!destination) throw new Error("DESTINATION_ROOT_INVALID");
-    const ruleResult = input.tool === "baidu-download" && input.input.kind === "share-text" ? parseResourceShareText(input.input.text) : { shareUrls: [], shareCodeCandidates: [], archivePasswordCandidates: [], titleCandidates: input.tool === "baidu-download" && input.input.kind === "baidu-path" ? [basename(input.input.path)] : [], warnings: [] };
+    const ruleResult = input.tool === "baidu-download" && input.input.kind === "share-text" ? parseResourceShareText(input.input.text) : { shareUrls: [], shareCodeCandidates: [], archivePasswordCandidates: [], titleCandidates: [], warnings: [] };
     const now = new Date().toISOString();
     const id = randomUUID();
     const missingShare = input.tool === "baidu-download" && input.input.kind === "share-text" && ruleResult.shareUrls.length === 0;
     const record: ResourceJobSnapshotV1 = { version: 1, id, revision: 1, source: input.tool === "baidu-download" ? "baidu" : "managed-folder", status: "waiting_user", stage: "preview", destinationRootId: input.destinationRootId, createdAt: now, updatedAt: now, progress: {}, pendingDecision: { id: randomUUID(), type: missingShare ? "correct_share_input" : "confirm_parse_result", resumeStage: missingShare ? "parsing_rules" : input.tool === "baidu-download" ? "queued_download" : "inspecting", message: missingShare ? "没有识别到有效分享链接，请修改原始输入后继续。" : input.tool === "baidu-download" && input.input.kind === "baidu-path" ? `将从我的网盘下载：${input.input.path}` : input.tool === "baidu-download" ? "请确认分享链接和解析结果。" : "请确认待解压目录和输出位置。", actions: missingShare ? ["replace_input", "reject"] : ["approve", "reject", "provide_values", "choose_destination"] } };
     this.db.prepare("INSERT INTO resource_jobs (id, version, revision, source, status, stage, destination_root_id, input_json, parse_result_json, progress_json, pending_decision_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, 1, 1, record.source, record.status, record.stage, record.destinationRootId, JSON.stringify(input), JSON.stringify(ruleResult), JSON.stringify(record.progress), JSON.stringify(record.pendingDecision), now, now);
     this.db.prepare("INSERT INTO resource_events (id, job_id, sequence, type, data_json, occurred_at) VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)").run(randomUUID(), id, 1, "job.created", JSON.stringify({ stage: "parsing_rules" }), now, randomUUID(), id, 2, "job.waiting_user", JSON.stringify({ stage: "preview", warningCount: ruleResult.warnings.length }), now);
+    if (input.tool === "baidu-download" && input.input.kind === "share-text" && this.options.inferenceClient && parseShareTextNeedsWorker(ruleResult)) void this.enrichShareParse(id, input.input.text, ruleResult);
     if (input.tool === "baidu-download" && input.input.kind === "baidu-path" && input.startMode === "automatic" && this.options.baiduDownloader) {
       this.startBaiduJob(id, JSON.stringify(input), JSON.stringify(ruleResult));
       return this.getJob(id)!;
     }
     return record;
+  }
+
+  private async enrichShareParse(id: string, rawText: string, ruleResult: ReturnType<typeof parseResourceShareText>): Promise<void> {
+    try {
+      const result = await this.options.inferenceClient!.run({ requestId: randomUUID(), role: "resource-worker", task: "resource.parse-share-text", schema: "resource.parse-result.v1", input: { rawText, ruleResult } });
+      const output = result.output as ReturnType<typeof parseResourceShareText>;
+      const merged = { shareUrls: [...new Set([...ruleResult.shareUrls, ...output.shareUrls])], shareCodeCandidates: [...new Set([...ruleResult.shareCodeCandidates, ...output.shareCodeCandidates])], archivePasswordCandidates: [...new Set([...ruleResult.archivePasswordCandidates, ...output.archivePasswordCandidates])], titleCandidates: [...new Set([...ruleResult.titleCandidates, ...output.titleCandidates])], warnings: [...new Set([...ruleResult.warnings, ...output.warnings])] };
+      const row = this.db.prepare("SELECT input_json FROM resource_jobs WHERE id = ?").get(id) as { input_json?: string } | undefined;
+      const input = row?.input_json ? parseCreateResourceJobRequestV1(JSON.parse(row.input_json)) : undefined;
+      const hasShare = merged.shareUrls.length > 0;
+      const pending = hasShare ? { id: randomUUID(), type: "confirm_parse_result" as const, resumeStage: "queued_download" as const, message: "已通过 Worker 补充分享链接，请确认解析结果。", actions: ["approve", "reject", "provide_values", "choose_destination"] as const } : undefined;
+      const now = new Date().toISOString();
+      this.db.prepare("UPDATE resource_jobs SET parse_result_json = ?, pending_decision_json = ?, revision = revision + 1, updated_at = ? WHERE id = ?").run(JSON.stringify(merged), pending ? JSON.stringify(pending) : null, now, id);
+      if (hasShare && input?.startMode === "automatic" && merged.shareUrls.length === 1 && this.options.baiduDownloader && row?.input_json) this.startBaiduJob(id, row.input_json, JSON.stringify(merged));
+    } catch { /* Worker 不可用时保留规则解析结果，交给现有人工路径 */ }
   }
   private scanFolder(value: unknown, force: boolean): { readonly watchId: string; readonly jobs: readonly ResourceJobSnapshotV1[] } {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("SCAN_REQUEST_INVALID");
@@ -268,17 +287,17 @@ export class ResourceService {
     void download.promise.then(result => {
       if (result.code !== 0) throw new Error(classifyBaiduDownloadFailure(result));
       if (!this.options.archiveOrganizer) { this.setStage(id, "completed", "completed"); return; }
-      this.startBaiduExtraction(id, inputJson, parseResultJson);
+      void this.startBaiduExtraction(id, inputJson, parseResultJson);
     }).catch(error => this.handleJobError(id, error, "queued_download"));
   }
-  private startBaiduExtraction(id: string, inputJson: string, parseResultJson: string | null): void {
+  private async startBaiduExtraction(id: string, inputJson: string, parseResultJson: string | null): Promise<void> {
     if (!this.options.archiveOrganizer) throw new Error("ARCHIVE_ORGANIZER_NOT_CONFIGURED");
     const input = parseCreateResourceJobRequestV1(JSON.parse(inputJson) as unknown); if (input.tool !== "baidu-download") throw new Error("BAIDU_INPUT_INVALID");
     const parsed = parseResultJson ? JSON.parse(parseResultJson) as { archivePasswordCandidates?: string[]; titleCandidates?: string[] } : {};
     const destinationRoot = this.options.config.managedRoots.find(root => root.id === input.destinationRootId && root.outputEnabled); if (!destinationRoot) throw new Error("DESTINATION_ROOT_INVALID");
     const downloadDirectory = join(this.options.config.stagingPath, id, "download"); const assumedDownloadPath = join(downloadDirectory, "downloaded.bin");
     this.setStage(id, "inspecting", "queued"); const discovered = this.findArchives(downloadDirectory); const downloadPath = discovered[0] ?? assumedDownloadPath;
-    const name = chooseResourceName({ ...(parsed.titleCandidates ? { titleCandidates: parsed.titleCandidates } : {}), downloadedNames: [basename(downloadPath)], completedAt: new Date() }); const outputPath = availableOutputPath(destinationRoot.path, name.name); const stagingPath = join(this.options.config.stagingPath, id, "extracted");
+    const name = await chooseResourceNameWithWorker(this.options.inferenceClient, { ...(parsed.titleCandidates ? { titleCandidates: parsed.titleCandidates } : {}), downloadedNames: [basename(downloadPath)], completedAt: new Date() }); const outputPath = availableOutputPath(destinationRoot.path, name.name); const stagingPath = join(this.options.config.stagingPath, id, "extracted");
     const passwordCandidates = this.passwordCandidates(id, parsed.archivePasswordCandidates ?? []);
     const extraction = this.scheduler.enqueue(id, "extraction", signal => { this.setStage(id, "extracting", "running"); return this.options.archiveOrganizer!.organize({ archivePath: downloadPath, stagingPath, outputPath, passwordCandidates }, signal); });
     void extraction.promise.then(extracted => { if (extracted.successfulPasswordIndex !== undefined) this.recordSuccessfulPassword(passwordCandidates[extracted.successfulPasswordIndex]); this.completeJob(id, extracted.totalBytes); }).catch(error => this.handleJobError(id, error, "inspecting"));

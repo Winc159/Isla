@@ -44,4 +44,8 @@ export function splitResourceShareText(text: string): readonly string[] {
   return batches;
 }
 
+export function parseShareTextNeedsWorker(result: ResourceRuleParseResultV1): boolean {
+  return result.shareUrls.length === 0 || result.shareCodeCandidates.length === 0;
+}
+
 function unique(values: readonly string[]): string[] { return [...new Set(values.map(value => value.trim()).filter(Boolean))]; }

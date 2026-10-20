@@ -6,6 +6,7 @@ import { BaiduDownloadRunner } from "./resource/baidu-download-runner.js";
 import { BdpanRunner } from "./resource/bdpan-runner.js";
 import { parseResourceConfig } from "./resource/config.js";
 import { ResourceService } from "./resource/service.js";
+import { ResourceInferenceClient } from "./resource/inference-client.js";
 
 const configPath = resolve(process.argv[2] ?? process.env.ISLA_RESOURCE_CONFIG ?? join(homedir(), ".isla", "resource.json"));
 if (!existsSync(configPath)) {
@@ -15,6 +16,7 @@ if (!existsSync(configPath)) {
 }
 
 const config = parseResourceConfig(readFileSync(configPath, "utf8"));
+const inferenceClient = new ResourceInferenceClient({ endpoint: config.isla.endpoint, token: config.isla.token });
 const sevenZip = resolveSevenZip();
 const bdpan = resolveBdpan();
 const service = new ResourceService({
@@ -22,6 +24,7 @@ const service = new ResourceService({
   archiveOrganizer: new ArchiveOrganizer(new SevenZipTool(sevenZip), config.limits),
   baiduDownloader: new BaiduDownloadRunner(new BdpanRunner(bdpan, process.env.BDPAN_CONFIG_PATH)),
   baiduBrowser: new BdpanRunner(bdpan, process.env.BDPAN_CONFIG_PATH),
+  inferenceClient,
   ...(process.env.ISLA_RESOURCE_TOKEN ? { token: process.env.ISLA_RESOURCE_TOKEN } : {}),
 });
 const address = await service.start();

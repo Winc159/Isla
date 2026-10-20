@@ -56,6 +56,21 @@ export interface ResourceParseInputV1 {
   };
 }
 
+export interface ResourceContentInputV1 {
+  readonly entries: readonly {
+    readonly relativePath: string;
+    readonly kind: "file" | "directory";
+    readonly sizeBytes?: number;
+    readonly extension?: string;
+  }[];
+  readonly ruleHints: {
+    readonly archiveType?: string;
+    readonly mediaExtensions: readonly string[];
+    readonly meaningfulDirectories: readonly string[];
+    readonly wrapperCandidates: readonly string[];
+  };
+}
+
 export interface ResourceParseResultV1 {
   readonly source: "baidu";
   readonly shareUrl: string;
@@ -65,6 +80,31 @@ export interface ResourceParseResultV1 {
   readonly category: "video" | "audio" | "book" | "software" | "archive" | "unknown";
   readonly year?: number;
   readonly season?: number;
+  readonly confidence: number;
+  readonly needsReview: boolean;
+  readonly reviewReasons: readonly string[];
+}
+
+export interface ResourceContentResultV1 {
+  readonly category: "video" | "audio" | "book" | "software" | "archive" | "mixed" | "unknown";
+  readonly structure: "single" | "series" | "season" | "collection" | "unknown";
+  readonly meaningfulDirectories: readonly string[];
+  readonly wrapperDirectories: readonly string[];
+  readonly confidence: number;
+  readonly needsReview: boolean;
+  readonly reviewReasons: readonly string[];
+}
+
+export interface ResourceTitleInputV1 {
+  readonly explicitTitle?: string;
+  readonly ruleTitleCandidates: readonly string[];
+  readonly downloadedNames: readonly string[];
+  readonly contentSummary?: ResourceContentResultV1;
+}
+
+export interface ResourceTitleResultV1 {
+  readonly title?: string;
+  readonly alternatives: readonly string[];
   readonly confidence: number;
   readonly needsReview: boolean;
   readonly reviewReasons: readonly string[];
@@ -142,7 +182,9 @@ export function parseStructuredInferenceRequestV1(value: unknown): StructuredInf
   const schema = enumValue(item.schema, ["resource.parse-result.v1", "resource.content-result.v1", "resource.title-result.v1"] as const, "schema");
   const expectedSchema = { "resource.parse-share-text": "resource.parse-result.v1", "resource.identify-content": "resource.content-result.v1", "resource.suggest-title": "resource.title-result.v1" }[task];
   if (schema !== expectedSchema) throw new Error("TASK_SCHEMA_MISMATCH");
-  record(item.input, "input");
+  if (task === "resource.parse-share-text") parseResourceParseInputV1(item.input);
+  else if (task === "resource.identify-content") parseResourceContentInputV1(item.input);
+  else parseResourceTitleInputV1(item.input);
   if (item.timeoutMs !== undefined) integer(item.timeoutMs, "timeoutMs", 1, 120_000);
   return item as unknown as StructuredInferenceRequestV1;
 }
@@ -184,6 +226,72 @@ export function parseResourceParseResultV1(value: unknown): ResourceParseResultV
   stringArray(item.reviewReasons, "reviewReasons", 32, 256);
   return item as unknown as ResourceParseResultV1;
 }
+
+export function parseResourceParseInputV1(value: unknown): ResourceParseInputV1 {
+  const item = record(value, "parse input");
+  nonEmptyString(item.rawText, "rawText", 20_000);
+  const ruleResult = record(item.ruleResult, "ruleResult");
+  stringArray(ruleResult.shareUrls, "ruleResult.shareUrls", 32, 2_048);
+  stringArray(ruleResult.shareCodeCandidates, "ruleResult.shareCodeCandidates", 32, 128);
+  stringArray(ruleResult.archivePasswordCandidates, "ruleResult.archivePasswordCandidates", 32, 256);
+  stringArray(ruleResult.titleCandidates, "ruleResult.titleCandidates", 32, 256);
+  return item as unknown as ResourceParseInputV1;
+}
+
+export function parseResourceContentInputV1(value: unknown): ResourceContentInputV1 {
+  const item = record(value, "content input");
+  if (!Array.isArray(item.entries) || item.entries.length > 20_000) throw new Error("entries must be a bounded array");
+  for (const [index, value] of item.entries.entries()) {
+    const entry = record(value, `entries[${index}]`);
+    const path = nonEmptyString(entry.relativePath, `entries[${index}].relativePath`, 4_096);
+    if (path.includes("..") || /^[\\/]/u.test(path)) throw new Error(`entries[${index}].relativePath must be relative`);
+    enumValue(entry.kind, ["file", "directory"] as const, `entries[${index}].kind`);
+    if (entry.sizeBytes !== undefined) integer(entry.sizeBytes, `entries[${index}].sizeBytes`, 0, Number.MAX_SAFE_INTEGER);
+    if (entry.extension !== undefined) nonEmptyString(entry.extension, `entries[${index}].extension`, 64);
+  }
+  const hints = record(item.ruleHints, "ruleHints");
+  if (hints.archiveType !== undefined) nonEmptyString(hints.archiveType, "ruleHints.archiveType", 64);
+  stringArray(hints.mediaExtensions, "ruleHints.mediaExtensions", 128, 64);
+  stringArray(hints.meaningfulDirectories, "ruleHints.meaningfulDirectories", 256, 4_096);
+  stringArray(hints.wrapperCandidates, "ruleHints.wrapperCandidates", 256, 4_096);
+  return item as unknown as ResourceContentInputV1;
+}
+
+export function parseResourceContentResultV1(value: unknown): ResourceContentResultV1 {
+  const item = record(value, "content result");
+  enumValue(item.category, ["video", "audio", "book", "software", "archive", "mixed", "unknown"] as const, "category");
+  enumValue(item.structure, ["single", "series", "season", "collection", "unknown"] as const, "structure");
+  stringArray(item.meaningfulDirectories, "meaningfulDirectories", 256, 4_096);
+  stringArray(item.wrapperDirectories, "wrapperDirectories", 256, 4_096);
+  confidence(item.confidence);
+  boolean(item.needsReview, "needsReview");
+  stringArray(item.reviewReasons, "reviewReasons", 32, 256);
+  return item as unknown as ResourceContentResultV1;
+}
+
+export function parseResourceTitleInputV1(value: unknown): ResourceTitleInputV1 {
+  const item = record(value, "title input");
+  if (item.explicitTitle !== undefined) nonEmptyString(item.explicitTitle, "explicitTitle", 256);
+  stringArray(item.ruleTitleCandidates, "ruleTitleCandidates", 32, 256);
+  stringArray(item.downloadedNames, "downloadedNames", 256, 4_096);
+  for (const [index, name] of (item.downloadedNames as readonly unknown[]).entries()) validateRelativePath(name, `downloadedNames[${index}]`);
+  if (item.contentSummary !== undefined) parseResourceContentResultV1(item.contentSummary);
+  return item as unknown as ResourceTitleInputV1;
+}
+
+export function parseResourceTitleResultV1(value: unknown): ResourceTitleResultV1 {
+  const item = record(value, "title result");
+  if (item.title !== undefined) nonEmptyString(item.title, "title", 256);
+  stringArray(item.alternatives, "alternatives", 8, 256);
+  confidence(item.confidence);
+  boolean(item.needsReview, "needsReview");
+  stringArray(item.reviewReasons, "reviewReasons", 32, 256);
+  return item as unknown as ResourceTitleResultV1;
+}
+
+function confidence(value: unknown): void { if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) throw new Error("confidence must be between 0 and 1"); }
+function validateRelativePath(value: unknown, name: string): void { const path = nonEmptyString(value, name, 4_096); if (path.includes("..") || /^[\\/]/u.test(path) || /^[A-Za-z]:[\\/]/u.test(path)) throw new Error(`${name} must be relative`); }
+function boolean(value: unknown, name: string): void { if (typeof value !== "boolean") throw new Error(`${name} must be boolean`); }
 
 function record(value: unknown, name: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${name} must be an object`);

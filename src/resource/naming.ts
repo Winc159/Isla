@@ -19,5 +19,5 @@ export function cleanName(value?: string): string | undefined {
   const cleaned = value?.normalize("NFKC").replace(/[\u0000-\u001f<>:"/\\|?*]+/gu, " ").replace(/\s+/gu, " ").trim().replace(/[. ]+$/u, "");
   return cleaned && cleaned.length <= 160 ? cleaned : cleaned?.slice(0, 160).trim();
 }
-function isUsefulName(value?: string): value is string { return Boolean(value && value.length >= 2 && !/^(?:\d{8,}|[a-f0-9]{16,}|resource[-_ ]?\d*)$/iu.test(value) && /\p{Script=Han}|[A-Za-z]{2,}/u.test(value)); }
+function isUsefulName(value?: string): value is string { return Boolean(value && value.length >= 2 && !/^(?:\d{8,}|[a-f0-9]{16,}|resource[-_ ]?\d*|download(?:ed)?|archive|file|unknown|unnamed|未命名(?:文件夹)?|内容|files?)$/iu.test(value) && /\p{Script=Han}|[A-Za-z]{2,}/u.test(value)); }
 function formatTime(value: Date): string { return value.toISOString().replace(/[-:]/gu, "").replace(/\.\d{3}Z$/u, "Z").replace("T", "-"); }

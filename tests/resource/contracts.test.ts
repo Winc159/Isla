@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseConfirmResourceJobRequestV1, parseCreateResourceJobRequestV1, parseResourceParseResultV1, parseStructuredInferenceRequestV1, RESOURCE_API_PREFIX, STRUCTURED_INFERENCE_ERROR_CODES } from "../../src/resource/contracts.js";
+import { parseConfirmResourceJobRequestV1, parseCreateResourceJobRequestV1, parseResourceContentInputV1, parseResourceContentResultV1, parseResourceParseResultV1, parseResourceTitleInputV1, parseResourceTitleResultV1, parseStructuredInferenceRequestV1, RESOURCE_API_PREFIX, STRUCTURED_INFERENCE_ERROR_CODES } from "../../src/resource/contracts.js";
 import { parseResourceConfig } from "../../src/resource/config.js";
 import { RESOURCE_CASE_FIXTURES } from "../fixtures/resource-cases.js";
 
@@ -21,7 +21,7 @@ describe("Resource v1 contracts", () => {
   });
 
   it("validates structured task and schema pairs", () => {
-    expect(parseStructuredInferenceRequestV1({ requestId: "req-1", role: "resource-worker", task: "resource.parse-share-text", schema: "resource.parse-result.v1", input: {} }).requestId).toBe("req-1");
+    expect(parseStructuredInferenceRequestV1({ requestId: "req-1", role: "resource-worker", task: "resource.parse-share-text", schema: "resource.parse-result.v1", input: { rawText: "fixture", ruleResult: { shareUrls: [], shareCodeCandidates: [], archivePasswordCandidates: [], titleCandidates: [] } } }).requestId).toBe("req-1");
     expect(() => parseStructuredInferenceRequestV1({ requestId: "req-1", role: "resource-worker", task: "resource.parse-share-text", schema: "resource.title-result.v1", input: {} })).toThrow("TASK_SCHEMA_MISMATCH");
   });
 
@@ -37,6 +37,22 @@ describe("Resource v1 contracts", () => {
   it("validates bounded parse results", () => {
     expect(parseResourceParseResultV1({ source: "baidu", shareUrl: "https://pan.baidu.com/s/fixture", archivePasswords: ["one", "two"], category: "archive", confidence: 0.8, needsReview: true, reviewReasons: ["multiple-passwords"] }).archivePasswords).toHaveLength(2);
     expect(() => parseResourceParseResultV1({ source: "baidu", shareUrl: "http://pan.baidu.com/s/fixture", archivePasswords: [], category: "unknown", confidence: 2, needsReview: false, reviewReasons: [] })).toThrow();
+  });
+
+  it("validates bounded content inputs and results", () => {
+    const input = { entries: [{ relativePath: "第一季/EP01.mkv", kind: "file", sizeBytes: 10, extension: ".mkv" }], ruleHints: { mediaExtensions: [".mkv"], meaningfulDirectories: ["第一季"], wrapperCandidates: [] } };
+    expect(parseResourceContentInputV1(input).entries).toHaveLength(1);
+    expect(parseResourceContentResultV1({ category: "video", structure: "season", meaningfulDirectories: ["第一季"], wrapperDirectories: [], confidence: 0.8, needsReview: false, reviewReasons: [] }).structure).toBe("season");
+    expect(() => parseResourceContentInputV1({ ...input, entries: [{ relativePath: "../escape", kind: "directory" }] })).toThrow("relative");
+    expect(() => parseResourceContentResultV1({ category: "video", structure: "season", meaningfulDirectories: ["missing"], wrapperDirectories: [], confidence: 2, needsReview: false, reviewReasons: [] })).toThrow("confidence");
+  });
+
+  it("validates bounded title inputs and results", () => {
+    const input = { ruleTitleCandidates: ["课程"], downloadedNames: ["episode-01.mkv"] };
+    expect(parseResourceTitleInputV1(input).ruleTitleCandidates).toEqual(["课程"]);
+    expect(parseResourceTitleResultV1({ title: "课程", alternatives: [], confidence: 0.7, needsReview: true, reviewReasons: ["low-confidence"] }).title).toBe("课程");
+    expect(() => parseResourceTitleInputV1({ ...input, downloadedNames: ["C:\\private\\episode.mkv"] })).toThrow("relative");
+    expect(() => parseResourceTitleResultV1({ title: "", alternatives: [], confidence: 0.7, needsReview: false, reviewReasons: [] })).toThrow("title");
   });
 });
 

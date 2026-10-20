@@ -24,6 +24,16 @@ describe('startup config selection', () => {
     expect(result.config.timeoutMs).toBe(600000);
   });
 
+  it('assembles the configured worker profile separately from the primary profile', async () => {
+    await writeFile(configPath, JSON.stringify({ version: 1, defaultProfile: 'main', workerProfile: 'worker', profiles: {
+      main: { provider: 'local', model: 'primary-model', baseURL: 'http://localhost:11434/v1' },
+      worker: { provider: 'local', model: 'worker-model', baseURL: 'http://localhost:11435/v1' },
+    } }), 'utf8');
+    const result = await loadRuntime(['--config', configPath, '--profile', 'main'], {});
+    expect(result.worker).toMatchObject({ profileName: 'worker', model: { role: 'resource-worker', model: 'worker-model' } });
+    expect(result.worker?.provider).toBeDefined();
+  });
+
   it('uses explicit env mode and does not read a config file', async () => {
     const result = await loadRuntime(['--env'], { ISLA_PROVIDER: 'local', ISLA_MODEL: 'env-model', ISLA_BASE_URL: 'http://localhost:1234/v1' });
     expect(result.config).toMatchObject({ provider: 'local', model: 'env-model' });

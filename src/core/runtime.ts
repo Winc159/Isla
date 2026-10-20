@@ -59,4 +59,8 @@ export class IslaRuntime {
   getProviderCapabilities(providerId: string): import("./types.js").ProviderCapabilities | undefined {
     return this.providers.get(providerId)?.capabilities;
   }
+
+  getProvider(providerId: string): ModelProvider | undefined {
+    return this.providers.get(providerId);
+  }
 }
