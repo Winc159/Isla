@@ -409,15 +409,21 @@ v0.4.1 不扩展 MCP 协议面，集中补齐个人用户可操作性：通过 `
 
 审计、执行步骤和验收记录见 [`docs/proposals/v0.4.9/`](proposals/v0.4.9/README.md)。
 
-## v0.5.0：Personal Agent Workspace and Resource Toolbox（设计已冻结，待实施）
+## v0.5.0：Personal Agent Workspace and Resource Toolbox（Resource 基础能力已完成）
 
-v0.5.0 不再继续扩展 CLI 表面，而是交付单用户、私有局域网内使用的桌面 Web UI：左侧会话记录、中间主对话、右侧工具箱与任务队列。Isla Host 和 Resource Service 保持两个独立进程，长时间下载、识别和解压不得阻塞主对话。
+v0.5.0 不再继续扩展 CLI 表面，而是先交付单用户、私有环境使用的独立 Resource Web 工具台。原设计中的左侧会话、中间主对话和右侧工具箱没有进入当前实现；Isla Host 和 Resource Service 保持两个独立进程，长时间下载、识别和解压不进入主对话回合。
 
 Resource 是首个有独立边界的工具箱应用：用户可粘贴百度网盘分享信息、选择受管理的输出位置，并取得完整解压内容；也可配置 managed roots，自动发现稳定的新文件并周期整理。首版必须支持多个下载任务并发，并覆盖普通密码归档、多个密码候选、重命名归档、MP4 尾部 RAR、分卷和 RAR5。只实现百度网盘的具体 runner，其他平台仅保留产品占位，不预建通用下载器接口。
 
 Profile/Config 增加可更改的 Worker 模型角色。Resource 通过 Isla 的窄结构化推理 API 使用 Worker；Worker 不拥有 Tool、Session 或 Memory。Resource 首版可以使用独立复制粘贴窗口，主 Agent 调用 Resource 的 Tool 可在核心路径稳定后再接入。
 
-Windows 必须可开发和验收，最终发布门禁在 N100 Linux 上完成真实部署、双任务并发、managed-root 自动处理及“粘贴输入到完整解压目录”的端到端验证。冻结的 proposal、API Schema、状态机、实施批次和测试矩阵见 [`docs/proposals/v0.5.0/`](proposals/v0.5.0/README.md)。
+当前已落地独立 Resource Service、SQLite Job、分池 Scheduler、百度网盘 runner、受管目录、归档识别/解压/整理和专用 Resource Web 工具台。主 Agent Web UI、主 Agent 调用 Resource 的 Tool 与公网入口未纳入本版。冻结的 proposal、API Schema、状态机、实施批次和测试矩阵见 [`docs/proposals/v0.5.0/`](proposals/v0.5.0/README.md)。
+
+## v0.5.1：Resource Worker 生产闭环（已完成本地真实验收）
+
+在 v0.5.0 的确定性 Resource 链路上，增加 Config 管理的独立 `workerProfile`、Resident Host 窄结构化推理接口和 Resource HTTP 客户端。Worker 只处理分享文本消歧、目录语义判断和标题建议；所有结果经过 schema、事实一致性和命名安全校验，下载、解压、移动、发布及日期兜底仍由 Resource 脚本执行。
+
+本版没有引入副 Agent 框架。Worker 不拥有 Session、Memory、Tool、Capability、文件系统权限或多轮 Agent Loop；Worker 失败不会占用 primary 模型，并继续规则、人工或日期兜底。Windows 本地真实链路已完成百度网盘测试归档下载、Worker 命名判断、日期兜底、解压和 SHA256 一致性校验。设计、实施顺序和验收门禁见 [`docs/proposals/v0.5.1/`](proposals/v0.5.1/design.md)。
 
 上述版本严格顺序推进：每版先完成 P0 自动化和真实评估，再解锁下一版；后续版本的设计完成不代表允许并行扩大实现范围。
 

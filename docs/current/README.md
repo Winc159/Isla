@@ -1,6 +1,6 @@
 # Isla 当前文档
 
-本目录描述 v0 Runtime 的当前有效事实；v0.5.0 在原有 CLI Runtime 之外增加独立 Resource Web 工具台，具体边界和验收记录见 [`../proposals/v0.5.0/`](../proposals/v0.5.0/README.md)。历史设计过程保存在 [`../proposals/`](../proposals/)，已被替代但仍有复盘价值的资料保存在 [`../archive/`](../archive/)。
+本目录描述 v0.5.1 的当前有效事实：主 Agent 继续使用 CLI、NDJSON 和 Resident Host；独立 Resource 子系统提供下载、解压、整理、SQLite Job 和专用 Web 工具台；可选 `resource-worker` 通过 Host 的窄结构化推理接口增强规则不足的步骤。历史设计过程保存在 [`../proposals/`](../proposals/)，已被替代但仍有复盘价值的资料保存在 [`../archive/`](../archive/)。
 
 建议按以下顺序阅读：
 
@@ -11,7 +11,9 @@
 5. [`decisions.md`](decisions.md)：已经稳定形成的架构决策。
 6. [`../roadmap.md`](../roadmap.md)：版本历史与后续方向。
 
-v0.4.8 的设计、实施和脱敏验收记录见 [`../proposals/v0.4.8/`](../proposals/v0.4.8/README.md)，v0.4.9 的文档审计见 [`../proposals/v0.4.9/`](../proposals/v0.4.9/README.md)，v0.5.0 Resource 设计与验收见 [`../proposals/v0.5.0/`](../proposals/v0.5.0/README.md)。这些 proposal 记录为什么这样设计，但不能替代本目录对当前代码的描述。
+v0.4.8 的设计、实施和脱敏验收记录见 [`../proposals/v0.4.8/`](../proposals/v0.4.8/README.md)，v0.4.9 的文档审计见 [`../proposals/v0.4.9/`](../proposals/v0.4.9/README.md)，v0.5.0 Resource 基础能力见 [`../proposals/v0.5.0/`](../proposals/v0.5.0/README.md)，v0.5.1 Worker 生产闭环见 [`../proposals/v0.5.1/`](../proposals/v0.5.1/design.md)。这些 proposal 记录为什么这样设计，但不能替代本目录对当前代码的描述。
+
+当前必须保持三条边界：Resource 是独立工具子系统，不是第二套主 Agent Runtime；Worker 是无 Tool、无 Session、无 Memory、无文件权限的窄增强层；`src/web/` 的联网访问能力与 `src/resource/web-ui.ts` 的 Resource 操作页面不是同一个 Web 产品面。
 
 ## 文档事实优先级
 

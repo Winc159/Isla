@@ -1,9 +1,10 @@
-import { DEFAULT_MAX_CONTEXT_TURNS } from './core/session.js';
-import { DEFAULT_CONTEXT_RETAIN_TURNS, DEFAULT_MAX_CONTEXT_CHARS } from './core/context.js';
-import { DEFAULT_PERSONALITY_PROMPT } from './prompts/base.js';
 import { isIP } from 'node:net';
 import type { McpServerConfig } from './mcp/types.js';
 import type { CapabilityPolicy } from './capabilities.js';
+import { DEFAULT_WEB_FETCH } from './profile-app-config.js';
+import { parseMcpProfileSettings } from './mcp/profile-schema.js';
+import { parseCapabilityProfileSettings } from './capability-profile-schema.js';
+import { parseAppearance as parseProfileAppearance, parseMemory as parseProfileMemory, parseRuntime as parseProfileRuntime } from './profile-settings-schema.js';
 
 export interface WebFetchConfig {
   readonly enabled: boolean;
@@ -25,7 +26,6 @@ export interface WebSearchConfig {
   readonly maxOutputChars: number;
 }
 
-const DEFAULT_WEB_FETCH = { timeoutMs: 30_000, maxResponseBytes: 1_000_000, maxBodyChars: 60_000, maxOutputChars: 80_000, maxRedirects: 3 } as const;
 export const DEFAULT_BAILIAN_MODEL = 'qwen-plus';
 
 export type OpenAIConfig = {
@@ -241,55 +241,9 @@ export function parseConfigFile(source: string, options: ConfigParseOptions = {}
   return Object.freeze({ version: 1 as const, ...(defaultProfile !== undefined ? { defaultProfile } : {}), ...(workerProfile !== undefined ? { workerProfile } : {}), profiles: Object.freeze(profiles) });
 }
 
-export function resolveProfile(file: IslaConfigFileV1, name?: string): { readonly name: string; readonly profile: StartupProfileV1 } {
-  const selected = name ?? file.defaultProfile ?? (Object.keys(file.profiles).length === 1 ? Object.keys(file.profiles)[0] : undefined);
-  if (!selected) throw new Error('Isla config requires an explicit profile');
-  const profile = file.profiles[selected];
-  if (!profile) throw new Error(`Isla profile not found: ${selected}`);
-  return { name: selected, profile };
-}
-
-export function profileToAppConfig(profile: StartupProfileV1): AppConfig {
-  const runtime = profile.runtime ?? {};
-  const memory = profile.memory ?? {};
-  const appearance = profile.appearance ?? {};
-  const personality = appearance.personality ?? 'default';
-  const common = {
-    provider: profile.provider,
-    model: profile.model,
-    ...(profile.sessionDirectory ? { sessionDirectory: profile.sessionDirectory } : {}),
-    ...(profile.workspace ? { workspaceRoot: profile.workspace } : {}),
-    timeoutMs: runtime.timeoutMs ?? 600000,
-    debug: (appearance.logLevel ?? 'normal') === 'debug',
-    logLevel: appearance.logLevel ?? 'normal',
-    personality,
-    systemPrompt: personality === 'minimal' ? '你是 Isla，简洁、准确、可靠地协助用户完成当前任务。' : DEFAULT_PERSONALITY_PROMPT,
-    maxContextTurns: runtime.maxContextTurns ?? DEFAULT_MAX_CONTEXT_TURNS,
-    maxContextChars: runtime.maxContextChars ?? DEFAULT_MAX_CONTEXT_CHARS,
-    contextRetainTurns: runtime.contextRetainTurns ?? DEFAULT_CONTEXT_RETAIN_TURNS,
-    maxContextTokens: runtime.maxContextTokens ?? 16000,
-    maxOutputTokens: runtime.maxOutputTokens ?? 2048,
-    contextReserveTokens: runtime.contextReserveTokens ?? 512,
-    modelRetries: runtime.modelRetries ?? 1,
-    memoryEnabled: memory.enabled ?? true,
-    ...(memory.database ? { memoryDatabase: memory.database } : {}),
-    ...(memory.embeddingProvider ? {
-      embeddingProvider: memory.embeddingProvider,
-      ...(memory.embeddingModel ? { embeddingModel: memory.embeddingModel } : {}),
-      ...(memory.embeddingBaseURL ? { embeddingBaseURL: memory.embeddingBaseURL } : {}),
-      ...(memory.embeddingApiKey ? { embeddingApiKey: memory.embeddingApiKey } : {}),
-    } : {}),
-    // Web Fetch is a built-in read-only capability. Keep its security limits
-    // internal so a normal user does not need to maintain a host allowlist.
-    ...(profile.tools?.webFetch ? { webFetch: normalizeWebFetchConfig(profile.tools.webFetch) } : { webFetch: normalizeWebFetchConfig({ enabled: true, allowedHosts: ['*'] }) }),
-    ...(profile.tools?.webSearch?.enabled && profile.provider === 'deepseek' ? { webSearch: normalizeWebSearchConfig(profile.tools.webSearch, profile.apiKey, profile.model) } : {}),
-    ...(profile.mcp?.servers?.length ? { mcpServers: profile.mcp.servers } : {}),
-    ...(profile.capabilities ? { capabilityPolicy: profile.capabilities } : {}),
-  };
-  if (profile.provider === 'local') return { ...common, provider: 'local', baseURL: profile.baseURL, ...(profile.apiKey ? { apiKey: profile.apiKey } : {}) };
-  if (profile.provider === 'bailian') return { ...common, provider: 'bailian', baseURL: profile.baseURL, apiKey: profile.apiKey, ...(profile.streaming === undefined ? {} : { streaming: profile.streaming }) };
-  return { ...common, provider: profile.provider, apiKey: profile.apiKey };
-}
+export { resolveProfile, resolveWorkerProfile } from './profile-selection.js';
+export { readConfig, type ConfigEnvironment } from './config-env-compat.js';
+export { profileToAppConfig } from './profile-app-config.js';
 
 function isRecord(value: unknown): value is UnknownRecord { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
 
@@ -303,12 +257,12 @@ function parseProfile(name: string, value: unknown, onWarning?: (message: string
     model,
     ...(value.sessionDirectory ? { sessionDirectory: nonEmptyString(value.sessionDirectory, `Isla profile ${name}.sessionDirectory`) } : {}),
     ...(workspace ? { workspace } : {}),
-    ...(value.runtime !== undefined ? { runtime: parseRuntime(name, value.runtime, onWarning) } : {}),
-    ...(value.memory !== undefined ? { memory: parseMemory(name, value.memory, onWarning) } : {}),
-    ...(value.appearance !== undefined ? { appearance: parseAppearance(name, value.appearance, onWarning) } : {}),
+    ...(value.runtime !== undefined ? { runtime: parseProfileRuntime(name, value.runtime, warnUnknown, onWarning) } : {}),
+    ...(value.memory !== undefined ? { memory: parseProfileMemory(name, value.memory, warnUnknown, onWarning) } : {}),
+    ...(value.appearance !== undefined ? { appearance: parseProfileAppearance(name, value.appearance, warnUnknown, onWarning) } : {}),
     ...(value.tools !== undefined ? { tools: parseTools(name, value.tools, onWarning) } : {}),
-    ...(value.mcp !== undefined ? { mcp: parseMcp(name, value.mcp) } : {}),
-    ...(value.capabilities !== undefined ? { capabilities: parseCapabilities(name, value.capabilities) } : {}),
+    ...(value.mcp !== undefined ? { mcp: parseMcpProfileSettings(name, value.mcp) } : {}),
+    ...(value.capabilities !== undefined ? { capabilities: parseCapabilityProfileSettings(name, value.capabilities, warnUnknown) } : {}),
   };
   if (provider === 'deepseek' || provider === 'openai') return { ...base, provider, apiKey: nonEmptyString(value.apiKey, `Isla profile ${name}.apiKey`) };
   if (provider === 'bailian') return { ...base, provider, baseURL: validURL(value.baseURL, `Isla profile ${name}.baseURL`), apiKey: nonEmptyString(value.apiKey, `Isla profile ${name}.apiKey`), ...(value.streaming === undefined ? {} : { streaming: booleanValue(value.streaming, `Isla profile ${name}.streaming`) }) };
@@ -357,63 +311,7 @@ function parseWebFetch(name: string, value: unknown, onWarning?: (message: strin
   return Object.freeze({ enabled, allowedHosts: Object.freeze(effectiveHosts), allowSearchResultUrls: booleanValue(value.allowSearchResultUrls ?? false, `Isla profile ${name}.tools.webFetch.allowSearchResultUrls`), ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(maxResponseBytes === undefined ? {} : { maxResponseBytes }), ...(maxBodyChars === undefined ? {} : { maxBodyChars }), ...(maxOutputChars === undefined ? {} : { maxOutputChars }), ...(maxRedirects === undefined ? {} : { maxRedirects }) });
 }
 
-function normalizeWebFetchConfig(value: ProfileWebFetchSettingsV1): WebFetchConfig {
-  return Object.freeze({ enabled: value.enabled ?? true, allowedHosts: Object.freeze([...(value.allowedHosts ?? ['*'])]), allowSearchResultUrls: value.allowSearchResultUrls ?? false, timeoutMs: value.timeoutMs ?? DEFAULT_WEB_FETCH.timeoutMs, maxResponseBytes: value.maxResponseBytes ?? DEFAULT_WEB_FETCH.maxResponseBytes, maxBodyChars: value.maxBodyChars ?? DEFAULT_WEB_FETCH.maxBodyChars, maxOutputChars: value.maxOutputChars ?? DEFAULT_WEB_FETCH.maxOutputChars, maxRedirects: value.maxRedirects ?? DEFAULT_WEB_FETCH.maxRedirects });
-}
-
-export function resolveWorkerProfile(file: IslaConfigFileV1): { readonly name: string; readonly profile: StartupProfileV1 } | undefined {
-  return file.workerProfile ? { name: file.workerProfile, profile: file.profiles[file.workerProfile]! } : undefined;
-}
-
-function parseMcp(name: string, value: unknown): ProfileMcpSettingsV1 {
-  if (!isRecord(value)) throw new Error(`Isla profile ${name}.mcp must be an object`);
-  const rawServers = value.servers === undefined ? [] : value.servers;
-  if (!Array.isArray(rawServers)) throw new Error(`Isla profile ${name}.mcp.servers must be an array`);
-  if (rawServers.length > 8) throw new Error(`Isla profile ${name}.mcp.servers must contain at most 8 servers`);
-  const ids = new Set<string>();
-  const servers = rawServers.map((raw, index) => {
-    if (!isRecord(raw)) throw new Error(`Isla profile ${name}.mcp.servers[${index}] must be an object`);
-    const field = (key: string) => `Isla profile ${name}.mcp.servers[${index}].${key}`;
-    const id = nonEmptyString(raw.id, field('id'));
-    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || ids.has(id)) throw new Error(`${field('id')} is invalid or duplicated`);
-    ids.add(id);
-    const transport = raw.transport === undefined ? 'stdio' : raw.transport;
-    if (transport !== 'stdio') throw new Error(`${field('transport')} must be stdio`);
-    const command = nonEmptyString(raw.command, field('command'));
-    const args = raw.args === undefined ? [] : raw.args;
-    if (!Array.isArray(args) || args.some(item => typeof item !== 'string')) throw new Error(`${field('args')} must be an array of strings`);
-    const cwd = raw.cwd === undefined || raw.cwd === 'workspace' ? raw.cwd : nonEmptyString(raw.cwd, field('cwd'));
-    const envValue = raw.env === undefined ? {} : raw.env;
-    if (!isRecord(envValue) || Object.entries(envValue).some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value !== 'string')) throw new Error(`${field('env')} must be a string map`);
-    const bounded = (key: 'startupTimeoutMs' | 'callTimeoutMs', fallback: number): number => raw[key] === undefined ? fallback : (!Number.isInteger(raw[key]) || (raw[key] as number) < 1 || (raw[key] as number) > 120_000) ? (() => { throw new Error(`${field(key)} is invalid`); })() : raw[key] as number;
-    return Object.freeze({ id, transport: 'stdio' as const, command, args: Object.freeze([...args as string[]]), ...(cwd ? { cwd } : {}), required: raw.required === undefined ? false : booleanValue(raw.required, field('required')), startupTimeoutMs: bounded('startupTimeoutMs', 10_000), callTimeoutMs: bounded('callTimeoutMs', 60_000), env: Object.freeze({ ...(envValue as Record<string, string>) }) });
-  });
-  return Object.freeze({ servers: Object.freeze(servers) });
-}
-
-function parseCapabilities(name: string, value: unknown): ProfileCapabilitiesSettingsV1 {
-  if (!isRecord(value)) throw new Error(`Isla profile ${name}.capabilities must be an object`);
-  const arrays = ['skillAllow', 'skillDeny', 'mcpServerAllow', 'mcpServerDeny', 'mcpToolAllow', 'mcpToolDeny'] as const;
-  const result: Record<string, unknown> = {};
-  warnUnknown(value, [...arrays, 'maxTools', 'maxSchemaBytes', 'maxSkillDescriptionChars', 'maxSkillCatalogChars'], `profile ${name}.capabilities`);
-  for (const key of arrays) {
-    if (value[key] === undefined) continue;
-    if (!Array.isArray(value[key]) || (value[key] as unknown[]).some(item => typeof item !== 'string' || !item.trim())) throw new Error(`Isla profile ${name}.capabilities.${key} must be an array of strings`);
-    result[key] = Object.freeze([...(value[key] as string[])]);
-  }
-  for (const key of ['maxTools', 'maxSchemaBytes', 'maxSkillDescriptionChars', 'maxSkillCatalogChars'] as const) {
-    if (value[key] === undefined) continue;
-    if (!Number.isInteger(value[key]) || (value[key] as number) <= 0) throw new Error(`Isla profile ${name}.capabilities.${key} must be a positive integer`);
-    result[key] = value[key];
-  }
-  return Object.freeze(result as ProfileCapabilitiesSettingsV1);
-}
-
 export type { McpServerConfig } from './mcp/types.js';
-
-function normalizeWebSearchConfig(value: ProfileWebSearchSettingsV1, apiKey: string, model: string): WebSearchConfig {
-  return Object.freeze({ enabled: value.enabled ?? true, provider: 'deepseek-official', apiKey, model, maxResults: value.maxResults ?? 8, timeoutMs: value.timeoutMs ?? 30_000, maxOutputChars: value.maxOutputChars ?? 12_000 });
-}
 
 function normalizeWebHost(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim() || value !== value.trim()) throw new Error(`${field} must be a hostname`);
@@ -423,48 +321,6 @@ function normalizeWebHost(value: unknown, field: string): string {
   try { parsed = new URL(`https://${input}`); } catch { throw new Error(`${field} must be a hostname`); }
   if (parsed.port || parsed.pathname !== '/' || parsed.search || parsed.username || parsed.password || isIP(parsed.hostname) !== 0 || !parsed.hostname.includes('.')) throw new Error(`${field} must be an exact public hostname`);
   return parsed.hostname;
-}
-
-function parseRuntime(name: string, value: unknown, onWarning?: (message: string) => void): ProfileRuntimeSettingsV1 {
-  if (!isRecord(value)) throw new Error(`Isla profile ${name}.runtime must be an object`);
-  warnUnknown(value, ['timeoutMs', 'modelRetries', 'maxContextTurns', 'maxContextChars', 'contextRetainTurns', 'maxContextTokens', 'maxOutputTokens', 'contextReserveTokens'], `profile ${name}.runtime`, onWarning);
-  const positive = (field: string): number | undefined => value[field] === undefined ? undefined : positiveInteger(value[field], `Isla profile ${name}.runtime.${field}`);
-  const timeoutMs = positive('timeoutMs');
-  const maxContextTurns = positive('maxContextTurns');
-  const maxContextChars = positive('maxContextChars');
-  const contextRetainTurns = positive('contextRetainTurns');
-  const maxContextTokens = positive('maxContextTokens');
-  const maxOutputTokens = positive('maxOutputTokens');
-  const contextReserveTokens = positive('contextReserveTokens');
-  const retries = value.modelRetries === undefined ? undefined : value.modelRetries;
-  if (retries !== undefined && (retries !== 0 && retries !== 1)) throw new Error(`Isla profile ${name}.runtime.modelRetries is invalid`);
-  return { ...(timeoutMs !== undefined ? { timeoutMs } : {}), ...(retries !== undefined ? { modelRetries: retries } : {}), ...(maxContextTurns !== undefined ? { maxContextTurns } : {}), ...(maxContextChars !== undefined ? { maxContextChars } : {}), ...(contextRetainTurns !== undefined ? { contextRetainTurns } : {}), ...(maxContextTokens !== undefined ? { maxContextTokens } : {}), ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}), ...(contextReserveTokens !== undefined ? { contextReserveTokens } : {}) };
-}
-
-function parseMemory(name: string, value: unknown, onWarning?: (message: string) => void): ProfileMemorySettingsV1 {
-  if (!isRecord(value)) throw new Error(`Isla profile ${name}.memory must be an object`);
-  warnUnknown(value, ['enabled', 'database', 'embeddingProvider', 'embeddingModel', 'embeddingBaseURL', 'embeddingApiKey'], `profile ${name}.memory`, onWarning);
-  const provider = value.embeddingProvider;
-  if (provider !== undefined && provider !== 'openai' && provider !== 'local') throw new Error(`Isla profile ${name}.memory.embeddingProvider is invalid`);
-  if (provider && value.embeddingModel === undefined) throw new Error(`Isla profile ${name}.memory.embeddingModel is required`);
-  if (provider === 'local' && value.embeddingBaseURL === undefined) throw new Error(`Isla profile ${name}.memory.embeddingBaseURL is required`);
-  return {
-    ...(value.enabled === undefined ? {} : { enabled: booleanValue(value.enabled, `Isla profile ${name}.memory.enabled`) }),
-    ...(value.database === undefined ? {} : { database: nonEmptyString(value.database, `Isla profile ${name}.memory.database`) }),
-    ...(provider ? { embeddingProvider: provider, embeddingModel: nonEmptyString(value.embeddingModel, `Isla profile ${name}.memory.embeddingModel`) } : {}),
-    ...(value.embeddingBaseURL !== undefined ? { embeddingBaseURL: validURL(value.embeddingBaseURL, `Isla profile ${name}.memory.embeddingBaseURL`) } : {}),
-    ...(value.embeddingApiKey !== undefined ? { embeddingApiKey: nonEmptyString(value.embeddingApiKey, `Isla profile ${name}.memory.embeddingApiKey`) } : {}),
-  };
-}
-
-function parseAppearance(name: string, value: unknown, onWarning?: (message: string) => void): ProfileAppearanceSettingsV1 {
-  if (!isRecord(value)) throw new Error(`Isla profile ${name}.appearance must be an object`);
-  warnUnknown(value, ['personality', 'logLevel'], `profile ${name}.appearance`, onWarning);
-  const personality = value.personality ?? 'default';
-  const logLevel = value.logLevel ?? 'normal';
-  if (personality !== 'default' && personality !== 'minimal') throw new Error(`Isla profile ${name}.appearance.personality is invalid`);
-  if (logLevel !== 'quiet' && logLevel !== 'normal' && logLevel !== 'debug') throw new Error(`Isla profile ${name}.appearance.logLevel is invalid`);
-  return { personality, logLevel };
 }
 
 function validateProfileName(name: string): void {
@@ -479,82 +335,3 @@ function nonEmptyString(value: unknown, field: string): string { if (typeof valu
 function positiveInteger(value: unknown, field: string): number { if (!Number.isInteger(value) || (value as number) <= 0) throw new Error(`${field} must be a positive integer`); return value as number; }
 function booleanValue(value: unknown, field: string): boolean { if (typeof value !== 'boolean') throw new Error(`${field} must be boolean`); return value; }
 function validURL(value: unknown, field: string): string { const text = nonEmptyString(value, field); try { new URL(text); return text; } catch { throw new Error(`${field} must be a valid URL`); } }
-
-type Env = Record<string, string | undefined>;
-export function readConfig(env: Env = process.env): AppConfig {
-  const provider = env.ISLA_PROVIDER;
-  const model = env.ISLA_MODEL;
-  if (provider !== 'openai' && provider !== 'deepseek' && provider !== 'bailian' && provider !== 'local')
-    throw new Error('ISLA_PROVIDER must be openai, deepseek, bailian, or local');
-  if (!model?.trim()) throw new Error('ISLA_MODEL is required');
-  const rawTimeout = env.ISLA_TIMEOUT_MS ?? '600000';
-  const timeoutMs = Number(rawTimeout);
-  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0)
-    throw new Error('ISLA_TIMEOUT_MS must be a positive integer');
-  const debug = env.ISLA_DEBUG === '1' || env.ISLA_DEBUG === 'true';
-  const maxContextTurns = Number(env.ISLA_MAX_CONTEXT_TURNS ?? DEFAULT_MAX_CONTEXT_TURNS);
-  if (!Number.isInteger(maxContextTurns) || maxContextTurns <= 0)
-    throw new Error('ISLA_MAX_CONTEXT_TURNS must be a positive integer');
-  const maxContextChars = Number(env.ISLA_MAX_CONTEXT_CHARS ?? DEFAULT_MAX_CONTEXT_CHARS);
-  if (!Number.isInteger(maxContextChars) || maxContextChars <= 0)
-    throw new Error('ISLA_MAX_CONTEXT_CHARS must be a positive integer');
-  const contextRetainTurns = Number(env.ISLA_CONTEXT_RETAIN_TURNS ?? DEFAULT_CONTEXT_RETAIN_TURNS);
-  if (!Number.isInteger(contextRetainTurns) || contextRetainTurns <= 0)
-    throw new Error('ISLA_CONTEXT_RETAIN_TURNS must be a positive integer');
-  const maxContextTokens = Number(env.ISLA_MAX_CONTEXT_TOKENS ?? '16000');
-  const maxOutputTokens = Number(env.ISLA_MAX_OUTPUT_TOKENS ?? '2048');
-  const contextReserveTokens = Number(env.ISLA_CONTEXT_RESERVE_TOKENS ?? '512');
-  if (![maxContextTokens, maxOutputTokens, contextReserveTokens].every(value => Number.isInteger(value) && value > 0)) throw new Error('ISLA token budgets must be positive integers');
-  const modelRetries = Number(env.ISLA_MODEL_RETRIES ?? '1');
-  if (!Number.isInteger(modelRetries) || modelRetries < 0 || modelRetries > 1)
-    throw new Error('ISLA_MODEL_RETRIES must be 0 or 1');
-  const embeddingProvider: 'openai' | 'local' | undefined = env.ISLA_EMBEDDING_PROVIDER as 'openai' | 'local' | undefined;
-  if (embeddingProvider !== undefined && embeddingProvider !== 'openai' && embeddingProvider !== 'local') throw new Error('ISLA_EMBEDDING_PROVIDER must be openai or local');
-  if (embeddingProvider && !env.ISLA_EMBEDDING_MODEL?.trim()) throw new Error('ISLA_EMBEDDING_MODEL is required when embeddings are enabled');
-  if (embeddingProvider === 'local' && !env.ISLA_EMBEDDING_BASE_URL?.trim()) throw new Error('ISLA_EMBEDDING_BASE_URL is required for local embeddings');
-  if (embeddingProvider === 'openai' && !env.ISLA_EMBEDDING_API_KEY && !env.OPENAI_API_KEY) throw new Error('ISLA_EMBEDDING_API_KEY or OPENAI_API_KEY is required for OpenAI embeddings');
-  const common = {
-    provider,
-    model,
-    timeoutMs,
-    debug,
-    maxContextTurns,
-    maxContextChars,
-    contextRetainTurns,
-    maxContextTokens,
-    maxOutputTokens,
-    contextReserveTokens,
-    modelRetries,
-    memoryEnabled: env.ISLA_MEMORY_ENABLED !== '0' && env.ISLA_MEMORY_ENABLED !== 'false',
-    ...(env.ISLA_MEMORY_DB ? { memoryDatabase: env.ISLA_MEMORY_DB } : {}),
-    ...(embeddingProvider ? { embeddingProvider, embeddingModel: env.ISLA_EMBEDDING_MODEL!, ...(env.ISLA_EMBEDDING_BASE_URL ? { embeddingBaseURL: env.ISLA_EMBEDDING_BASE_URL } : {}), ...(env.ISLA_EMBEDDING_API_KEY ? { embeddingApiKey: env.ISLA_EMBEDDING_API_KEY } : env.OPENAI_API_KEY ? { embeddingApiKey: env.OPENAI_API_KEY } : {}) } : {}),
-    ...(env.ISLA_SYSTEM_PROMPT ? { systemPrompt: env.ISLA_SYSTEM_PROMPT } : {}),
-    ...(env.ISLA_SESSION_DIR ? { sessionDirectory: env.ISLA_SESSION_DIR } : {}),
-  };
-  if (provider === 'openai') {
-    if (!env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is required');
-    return { ...common, provider, apiKey: env.OPENAI_API_KEY };
-  }
-  if (provider === 'deepseek') {
-    if (!env.DEEPSEEK_API_KEY) throw new Error('DEEPSEEK_API_KEY is required');
-    return { ...common, provider, apiKey: env.DEEPSEEK_API_KEY };
-  }
-  if (provider === 'bailian') {
-    if (!env.DASHSCOPE_API_KEY) throw new Error('DASHSCOPE_API_KEY is required');
-    if (!env.ISLA_BASE_URL) throw new Error('ISLA_BASE_URL is required');
-    try { new URL(env.ISLA_BASE_URL); } catch { throw new Error('ISLA_BASE_URL must be a valid URL'); }
-    return { ...common, provider, apiKey: env.DASHSCOPE_API_KEY, baseURL: env.ISLA_BASE_URL, ...(env.ISLA_BAILIAN_STREAMING === '1' || env.ISLA_BAILIAN_STREAMING === 'true' ? { streaming: true } : {}) };
-  }
-  if (!env.ISLA_BASE_URL) throw new Error('ISLA_BASE_URL is required');
-  try {
-    new URL(env.ISLA_BASE_URL);
-  } catch {
-    throw new Error('ISLA_BASE_URL must be a valid URL');
-  }
-  return {
-    ...common,
-    provider,
-    baseURL: env.ISLA_BASE_URL,
-    ...(env.ISLA_API_KEY ? { apiKey: env.ISLA_API_KEY } : {}),
-  };
-}

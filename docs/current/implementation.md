@@ -9,15 +9,22 @@
 3. `src/main.ts` 通过 `ConfigStore` 加载 Config/Profile；只有显式 `--env` 才走兼容环境变量配置，并创建 Provider 与 MCP Host。
 4. `src/application.ts` 创建 Session Store、Memory Runtime 和诊断汇聚。
 5. `src/session-factory.ts` 组装 workspace 级依赖并为当前 StoredSession 创建 `ChatSession`。
+6. `src/main.ts` 还会从同一 Config 独立解析可选 `workerProfile`，为 Resident Host 绑定窄结构化推理服务；它不会替换或复用 primary Profile。
+
+Resource 使用另一条启动路径：`src/resource-main.ts` 加载 `resource.json`，装配 `ResourceService`、百度网盘 runner、归档工具和 `ResourceInferenceClient`。Resource 只通过 Resident Host HTTP 契约使用 Worker，不加载 Provider SDK 或主 Agent Session。
 
 ## 关键源码索引
 
 | 改动 | 主要入口 | 重点测试 |
 |---|---|---|
 | CLI 参数或文本交互 | `src/cli.ts`、`src/cli-args.ts`、`src/cli/` | `tests/cli*.test.ts`、`tests/cli/`、`tests/pty/` |
-| Config/Profile | `src/config.ts`、`src/config-store.ts` | `tests/config*.test.ts`、`tests/cli/config-command.test.ts` |
+| Config/Profile | `src/config.ts`、`src/profile-selection.ts`、`src/profile-app-config.ts`、`src/profile-settings-schema.ts`、`src/config-env-compat.ts`、`src/capability-profile-schema.ts`、`src/config-store.ts` | `tests/config*.test.ts`、`tests/profile-selection.test.ts`、`tests/cli/config-command.test.ts` |
 | Session 创建和恢复 | `src/session-factory.ts`、`src/session-store.ts`、`src/session-query.ts` | `tests/session-store*.test.ts`、`tests/session-query.test.ts` |
 | Agent Loop/终态 | `src/core/session.ts`、`src/core/model-step.ts`、`src/core/completion-gate.ts` | `tests/core/agent-loop.test.ts`、`completion-gate.test.ts`、`session.test.ts` |
+| 请求消息投影 | `src/core/request-message-projection.ts`、`src/core/context.ts` | `tests/core/request-message-projection.test.ts`、`context.test.ts`、`session.test.ts` |
+| 回合取消与错误映射 | `src/core/turn-failure.ts`、`src/core/errors.ts` | `tests/core/turn-failure.test.ts`、`errors.test.ts`、`session.test.ts` |
+| Session 持久化快照 | `src/core/session-persistence.ts` | `tests/core/session-persistence.test.ts`、`session.test.ts`、`journal-actions.test.ts` |
+| Tool Result 消息整理 | `src/core/tool-result-message.ts`、`src/core/tool-result-pruner.ts` | `tests/core/tool-result-message.test.ts`、`tool-result-pruner.test.ts`、`session.test.ts` |
 | Context/Token 预算 | `src/core/context.ts`、`token-budget.ts`、`tool-result-pruner.ts` | 对应 `tests/core/*` |
 | Capability 路由 | `src/capability-catalog.ts`、`src/capability-routing.ts`、`src/capabilities.ts` | `tests/capability-*.test.ts` |
 | Tool | `src/tools/types.ts`、`composition.ts`、`runtime.ts`、具体 Tool 文件 | `tests/tools/`、`tests/core/tool-runtime.test.ts` |
@@ -27,6 +34,11 @@
 | Approval/Sandbox | `src/approval/`、`src/sandbox/policy.ts` | `tests/approval/`、`tests/sandbox.test.ts` |
 | NDJSON | `src/protocol/` | `tests/protocol*.test.ts`、`tests/protocol-*.e2e.test.ts` |
 | Resident Host | `src/host.ts`、`src/host-client.ts` | `tests/host.test.ts` |
+| Worker Profile 与结构化推理 | `src/main.ts`、`src/host.ts`、`src/resource/inference.ts`、`src/resource/contracts.ts` | `tests/config-selection.test.ts`、`tests/resource/host-inference.test.ts`、`tests/resource/inference.test.ts` |
+| Resource 启动与配置 | `src/resource-main.ts`、`src/resource/config.ts` | `tests/resource/contracts.test.ts`、`tests/resource/external-tools.test.ts` |
+| Resource API、Job 与 Web 工具台 | `src/resource/service.ts`、`src/resource/database-schema.ts`、`src/resource/web-ui.ts` | `tests/resource/service.test.ts`、`tests/resource/database-schema.test.ts` |
+| Resource 调度、下载与归档 | `src/resource/scheduler.ts`、`baidu-download-runner.ts`、`archive-organizer.ts` | `tests/resource/scheduler.test.ts`、`baidu-download-runner.test.ts`、`archive-organizer.test.ts`、`mock-e2e.test.ts` |
+| Resource Worker 客户端与窄任务 | `src/resource/inference-client.ts`、`title-worker.ts`、`content-worker.ts`、`naming.ts` | `tests/resource/inference-client.test.ts`、`title-worker.test.ts`、`content-worker.test.ts`、`worker-production-gap.test.ts` |
 
 ## 扩展 Provider
 
@@ -40,7 +52,7 @@
 
 ## 增加 MCP 能力
 
-MCP Server 只能来自 Profile 的 `mcp.servers`。配置解析在 `src/config.ts` 和 `src/mcp/profile-config.ts`，进程与协议在 `src/mcp/stdio-client.ts`，目录与 Tool 投影在 `src/mcp/catalog.ts`、`src/mcp/tool.ts`、`src/mcp/host.ts`。新行为必须保留稳定限定名、原子目录、schema/输出预算、取消、子进程关闭和不可信内容边界。
+MCP Server 只能来自 Profile 的 `mcp.servers`。schema 校验在 `src/mcp/profile-schema.ts`，Capability policy schema 在 `src/capability-profile-schema.ts`，配置编辑在 `src/mcp/profile-config.ts`，进程与协议在 `src/mcp/stdio-client.ts`，目录与 Tool 投影在 `src/mcp/catalog.ts`、`src/mcp/tool.ts`、`src/mcp/host.ts`。新行为必须保留稳定限定名、原子目录、schema/输出预算、取消、子进程关闭和不可信内容边界。
 
 ## Session 与协议修改
 
@@ -51,6 +63,14 @@ Session schema 修改从 `src/session-store.ts` 开始，必须提供旧版本�
 - Browser：运行状态在 `src/browser/runtime.ts`，平台适配在 `playwright-adapter.ts`，人工接管在 `console-server.ts`，凭据边界在 `vault.ts` 和 `credential-approval.ts`。
 - Memory：`manager.ts` 负责策略编排，`store.ts` 负责 SQLite，`search.ts` 和 `embeddings.ts` 负责检索；Memory 失败应可降级。
 - Approval：`src/approval/service.ts` 执行策略，`cli-approval.ts` 提供 TTY 交互，`src/protocol/approval.ts` 提供协议桥接；批准 ID、取消和拒绝必须可收敛。
+
+## 修改 Resource 或 Worker
+
+Resource Job、Scheduler、文件处理和 Web 工具台集中在 `src/resource/`，不应移入 `ChatSession` 或主 Agent Loop。新增 Resource 行为先确认其 Job stage、持久化、取消、人工决策、受管目录和真实文件验证边界。
+
+Worker 只允许通过 `src/resource/contracts.ts` 中已定义的结构化任务扩展。修改时必须同时检查 Host 装配、Worker Profile 选择、请求/响应上限、事实一致性校验、规则优先级和失败降级。不得让 Worker 直接读取文件、执行 Tool、持有会话或调用 primary Profile 兜底。
+
+Web 命名需要保持区分：`src/web/` 是主 Agent 的联网访问能力；`src/resource/web-ui.ts` 是 Resource 工具台页面。当前没有可承载主对话的 Web UI，不能把 Resource 页面当作通用前端入口。
 
 ## 常见同步清单
 

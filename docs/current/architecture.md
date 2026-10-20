@@ -1,10 +1,10 @@
 # Isla 当前架构
 
-本文以 `0.4.8` 源码为事实源，描述 CLI Agent Runtime 的稳定边界。
+本文以 `0.5.1` 源码和测试为事实源，描述主 Agent Runtime 与独立 Resource 工具子系统的当前稳定边界。
 
 ## 产品定位与原则
 
-Isla 是面向个人使用的 TypeScript/Node.js Agent Runtime。当前主要入口是 CLI，同时提供 NDJSON 协议和只监听 loopback 的 Resident Host。它不是通用 Agent 平台：能力只在现实需求出现后扩展，Provider、模型和部署方式不会渗透进 Runtime Core。
+Isla 是面向个人使用的 TypeScript/Node.js Agent Runtime。主 Agent 当前主要入口是 CLI，同时提供 NDJSON 协议和只监听 loopback 的 Resident Host；Resource 则以独立进程提供下载、解压、整理和专用 Web 工具台。Isla 不是通用 Agent 平台：能力只在现实需求出现后扩展，Provider、模型和部署方式不会渗透进 Runtime Core。
 
 核心原则：
 
@@ -14,6 +14,7 @@ Isla 是面向个人使用的 TypeScript/Node.js Agent Runtime。当前主要入
 - 原始 Session 是事实，Context 压缩只改变模型输入投影。
 - Capability 激活只决定工具可见性，不代表批准执行，也不能绕过 Policy、Sandbox 或 Approval。
 - CLI、NDJSON 和 Host 复用同一个 Application、SessionFactory 与 Runtime。
+- Resource Service 不复用主 Agent Loop；它通过窄结构化推理 API 请求 Worker 建议，文件操作仍由确定性脚本和 Job 状态机执行。
 
 ## Runtime 分层
 
@@ -30,6 +31,20 @@ flowchart TD
 ```
 
 依赖方向由入口向核心和端口适配器流动。`src/core/` 不拥有 CLI、HTTP、Playwright 或具体 Provider 的生命周期；装配集中在 `src/main.ts`、`src/application.ts` 和 `src/session-factory.ts`。
+
+Resource 位于主 Agent Runtime 之外：
+
+```mermaid
+flowchart LR
+  UI["Resource Web UI"] --> R["Resource Service / SQLite Job / Scheduler"]
+  R --> B["百度网盘 Runner"]
+  R --> F["归档检查、解压与文件整理"]
+  R -->|"Bearer + bounded JSON"| H["Resident Host structured inference"]
+  H --> W["独立 resource-worker Provider"]
+  W --> R
+```
+
+Resource 是独立工具子系统，不是主 Agent Runtime 的第二套实现。它可以在 Worker 不可用时继续走规则或人工路径；Worker 不拥有 Session、Memory、Tool、Capability、文件系统权限或多轮 Agent Loop。
 
 ## 核心模块职责
 
@@ -50,6 +65,12 @@ flowchart TD
 | `src/session-store.ts` | JSON Session schema、兼容迁移与原子持久化。 |
 | `src/protocol/` | stdin/stdout NDJSON 请求、事件、Approval 与用户问题。 |
 | `src/sandbox/`、`src/approval/` | workspace 路径边界、敏感文件拒绝、操作权限和用户批准。 |
+| `src/resource-main.ts` | 加载独立 Resource 配置，装配百度网盘、归档工具、Host 推理客户端并启动 Resource Service。 |
+| `src/resource/service.ts` | Resource HTTP API、SQLite Job、人工决策、下载/解压流程和专用 Web UI 生命周期。 |
+| `src/resource/scheduler.ts` | 下载、检查、解压和推理的独立并发池、租约与取消收敛。 |
+| `src/resource/inference.ts` | Host 侧专用提示、模型调用和三类结构化结果校验。 |
+| `src/resource/inference-client.ts` | Resource 到 Resident Host 的窄 HTTP 客户端；不接触 Provider SDK 或凭据。 |
+| `src/resource/web-ui.ts` | Resource 工具台的内嵌前端，不是主 Agent Web 界面。 |
 
 ## 用户请求完整链路
 
@@ -128,6 +149,20 @@ MCP Host 只消费 Profile 显式配置的本地 stdio Server。外部 descripti
 
 Browser 使用隔离的 Playwright 上下文和 URL Policy。Browser Console 仅监听 loopback，用于人工接管；凭据使用需要独立批准，明文不进入模型、Session、Tool Result 或普通日志。Browser 能力不等于任意网络或任意 JavaScript 权限。
 
+## Resource 与 Worker 边界
+
+Resource Service 使用独立配置、SQLite Job、Scheduler 和受管目录边界。当前支持百度网盘下载、归档识别与解压、目录整理、任务恢复、人工确认和专用 Web 工具台。下载、检查、解压和推理使用分离的并发池，长任务不进入主对话回合。
+
+当确定性规则无法可靠解析分享信息、判断目录语义或生成标题时，Resource 可调用 `POST /api/v1/inference/structured`。Resident Host 从 Config 中独立解析 `workerProfile`，固定 provider、model、profile 和 config revision 快照，并只接受三个任务：
+
+- `resource.parse-share-text`；
+- `resource.identify-content`；
+- `resource.suggest-title`。
+
+所有输入和输出都经过有界 schema 校验。规则事实优先于模型建议；Worker 建议仍需名称清理、路径与事实一致性检查以及必要的人工确认。Worker 未配置、不可用、超时或输出非法时，不回退占用 primary 模型，也不使已有规则路径失效。
+
+`src/web/` 与 Resource Web UI 是两个不同概念：前者是主 Agent 可使用的联网搜索、抓取、传输与网络策略能力；`src/resource/web-ui.ts` 只是 Resource Service 提供的本地操作页面。当前没有主 Agent 聊天 Web UI。
+
 ## 安全与审批
 
 安全控制是串联关系而不是互相替代：
@@ -141,16 +176,17 @@ Browser 使用隔离的 Playwright 上下文和 URL Policy。Browser Console 仅
 
 ## 部署边界
 
-原生 Node.js、容器、systemd 或 launchd 只负责进程托管。Runtime Core 不感知部署环境。Resident Host 仅绑定 loopback、使用 Bearer token、限制并发回合并在关闭时取消和收敛活动会话；它不是公网或多用户服务。
+原生 Node.js、容器、systemd 或 launchd 只负责进程托管。Runtime Core 不感知部署环境。Resident Host 仅绑定 loopback、使用 Bearer token、限制并发回合并在关闭时取消和收敛活动会话；Resource Service 也保持独立进程和本地受控入口。两者都不是公网或多用户服务。
 
 ## 当前明确不支持
 
-- Web UI、公网 Host、多用户和 Job 队列；
+- 主 Agent 聊天 Web UI、公网 Host 和多用户；
 - 运行期间动态切换 Provider/Model；
 - 在线插件安装、任意代码动态加载和热更新；
 - MCP 远程 transport、OAuth、resources、prompts 和 tasks；
 - Embedding 或独立模型驱动的能力路由；
-- 并行 Tool、Subagent 和通用 Workflow 框架；
+- 并行 Tool、通用 Subagent 和 Workflow 框架；
+- Worker Session、Memory、Tool、文件系统权限或开放式 Agent Loop；
 - 自动修改、部署或演化自身。
 
 ## 架构修改约束

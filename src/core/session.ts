@@ -18,8 +18,6 @@ import { deriveVerificationStatus } from "./verification.js";
 import { renderSkillContent } from "../skills/render.js";
 import type { ModelStepEvent, SessionEvent } from "./events.js";
 import {
-  appendCheckpoint,
-  buildContextProjection,
   COMPACTION_SECTIONS,
   DEFAULT_CONTEXT_RETAIN_TURNS,
   DEFAULT_MAX_CONTEXT_CHARS,
@@ -30,8 +28,11 @@ import {
   type SessionContext,
   type ContextCheckpoint,
 } from "./context.js";
+import { buildRequestMessageProjection } from "./request-message-projection.js";
+import { buildSessionPersistenceState, type SessionPersistenceState } from "./session-persistence.js";
+import { mapTurnFailure } from "./turn-failure.js";
+import { prepareToolResultMessage } from "./tool-result-message.js";
 import { estimateRequestTokens, resolveTokenBudget, type TokenBudgetPolicy } from './token-budget.js';
-import { pruneToolResult } from './tool-result-pruner.js';
 import { LoopBudgetState } from './loop-budget.js';
 import type { UserQuestionService } from "../user-questions/types.js";
 export const DEFAULT_MAX_CONTEXT_TURNS = 20;
@@ -53,7 +54,7 @@ export interface ChatSessionOptions {
   readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1;
   readonly capabilityActivation?: import("../capability-routing.js").CapabilityActivationStateV1;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
-  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief | TaskStateV1; readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1; readonly capabilityActivation?: import("../capability-routing.js").CapabilityActivationStateV1 }) => Promise<void>;
+  readonly onSessionStateChanged?: (state: SessionPersistenceState) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
   readonly onModelStepEvent?: (event: ModelStepEvent) => void;
   readonly projectRoot?: string;
@@ -143,7 +144,7 @@ export class ChatSession {
   private readonly onMessagesChanged: ((messages: readonly Message[]) => Promise<void>) | undefined;
   private readonly skillCatalog: import("../session-store.js").StoredSkillCatalogV1 | undefined;
   private readonly capabilityActivation: import("../capability-routing.js").CapabilityActivationStateV1 | undefined;
-  private readonly onSessionStateChanged: ((state: { readonly messages: readonly Message[]; readonly context?: SessionContext; readonly journal?: SessionJournal; readonly task?: TaskBrief | TaskStateV1; readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1; readonly capabilityActivation?: import("../capability-routing.js").CapabilityActivationStateV1 }) => Promise<void>) | undefined;
+  private readonly onSessionStateChanged: ((state: SessionPersistenceState) => Promise<void>) | undefined;
   private readonly journal: SessionJournal;
   private readonly onSessionEvent: ((event: SessionEvent) => Promise<void>) | undefined;
   private readonly onModelStepEvent: ((event: ModelStepEvent) => void) | undefined;
@@ -288,7 +289,6 @@ export class ChatSession {
           await this.appendSkippedToolResults(response.toolCalls.slice(callIndex + 1), "相同写入已完成，本批次其余调用未执行。");
           return { text: "写入已完成，已停止重复写入。", outcome: "completed", evidence, model: response.model ?? provider.model };
         }
-        let result: string;
         let terminalResponse: ModelResponse | undefined;
         let execution: ToolExecutionResult = { ok: false, code: "EXECUTION_FAILED", message: "Tool execution interrupted" };
         try {
@@ -349,7 +349,6 @@ export class ChatSession {
           if (actionTurn && execution.ok && execution.details?.type === "command_execution" && execution.details.purpose === "verification") {
             (actionTurn.actions as TurnActionRecord[]).push({ type: "verification", step: round, outcome: execution.details.exitCode === 0 && !execution.details.timedOut && !execution.details.aborted && execution.details.signal === null ? "passed" : "failed" });
           }
-          result = execution.ok ? execution.content : `[${execution.code}] ${execution.message}`;
           if (!execution.ok) {
             if (execution.code === "USER_REJECTED") {
               terminalResponse = { text: "用户拒绝了工具调用，已停止本轮执行。", outcome: "blocked", evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}), ...(response.model ? { model: response.model } : {}) };
@@ -368,12 +367,10 @@ export class ChatSession {
         }
         if (!execution.ok && execution.code === "TURN_CANCELLED") throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
         this.onToolsUsed?.([call.name]);
-        const prunedResult = pruneToolResult(result);
-        if (prunedResult.pruned) this.onDiagnostic?.({ code: "TOOL_RESULT_PRUNED", component: "context", severity: "debug", detail: `tool=${call.name};originalChars=${prunedResult.originalChars};retainedChars=${prunedResult.retainedChars}` });
-        result = prunedResult.content;
-        const toolMessage = { role: "tool" as const, toolCallId: call.id, content: result };
-        next.push(toolMessage);
-        await this.appendMessage(toolMessage);
+        const preparedResult = prepareToolResultMessage(call.id, execution);
+        if (preparedResult.pruning.pruned) this.onDiagnostic?.({ code: "TOOL_RESULT_PRUNED", component: "context", severity: "debug", detail: `tool=${call.name};originalChars=${preparedResult.pruning.originalChars};retainedChars=${preparedResult.pruning.retainedChars}` });
+        next.push(preparedResult.message);
+        await this.appendMessage(preparedResult.message);
           if (terminalResponse) {
           await this.appendSkippedToolResults(response.toolCalls.slice(callIndex + 1), "本批次前序调用已使执行停止。", next);
           return terminalResponse;
@@ -469,15 +466,12 @@ export class ChatSession {
     await this.onSessionEvent?.({ type: "user", input });
     try { await this.compactIfNeeded(signal);
     const prepareRequest = async () => {
-      const checkpointThrough = this.context?.checkpoint?.throughMessageIndex ?? -1;
-      const modelMessages = this.messages.filter((message, index) =>
-        (message.role === "system" || index > checkpointThrough)
-        && (message.source?.kind !== "skill-invocation" || message.source.userMessageIndex === userIndex));
-      const projection = buildContextProjection(modelMessages, {
+      const history = buildRequestMessageProjection(this.messages, {
+        currentUserMessageIndex: userIndex,
+        checkpoint: this.context?.checkpoint,
         maxTurns: this.context?.checkpoint ? this.contextRetainTurns : this.maxContextTurns,
         maxChars: this.maxContextChars,
       });
-      const history = appendCheckpoint(projection, this.context?.checkpoint);
       let memoryContext: string | undefined;
       if (this.retrieveContext) {
         try {
@@ -539,14 +533,12 @@ export class ChatSession {
     await this.persistState(false);
     return result;
     } catch (error) {
-      const cancelled = signal.aborted || (isRuntimeError(error) && error.code === "TURN_CANCELLED");
-      turn.status = cancelled ? "cancelled" : "failed";
+      const failure = mapTurnFailure(error, signal.aborted);
+      turn.status = failure.status;
       turn.endedAt = new Date().toISOString();
-      if (cancelled) turn.error = { code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" };
-      else if (isRuntimeError(error)) turn.error = error.toRecord();
+      if (failure.record) turn.error = failure.record;
       await this.persistState(false);
-      if (cancelled) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
-      throw error;
+      throw failure.errorToThrow;
     }
   }
 
@@ -602,11 +594,11 @@ export class ChatSession {
   }
 
   private async persistState(includeMessages = true): Promise<void> {
-    const messages = [...this.messages];
+    const state = buildSessionPersistenceState({ messages: this.messages, context: this.context, journal: this.journal, task: this.task, skillCatalog: this.skillCatalog, capabilityActivation: this.capabilityActivation });
     if (this.onSessionStateChanged) {
-      await this.onSessionStateChanged({ messages, ...(this.context ? { context: this.context } : {}), journal: this.journal, ...(this.task ? { task: this.task } : {}), ...(this.skillCatalog ? { skillCatalog: this.skillCatalog } : {}), ...(this.capabilityActivation ? { capabilityActivation: this.capabilityActivation } : {}) });
+      await this.onSessionStateChanged(state);
     } else if (includeMessages) {
-      await this.onMessagesChanged?.(messages);
+      await this.onMessagesChanged?.(state.messages);
     }
   }
 
@@ -665,7 +657,7 @@ export class ChatSession {
       const skipped: ToolExecutionResult = { ok: false, code: "EXECUTION_FAILED", message: reason };
       await this.onSessionEvent?.({ type: "tool_call", callId: call.id, tool: call.name, arguments: call.arguments });
       await this.onSessionEvent?.({ type: "tool_result", callId: call.id, tool: call.name, result: skipped });
-      const message = { role: "tool" as const, toolCallId: call.id, content: `[${skipped.code}] ${skipped.message}` };
+      const message = prepareToolResultMessage(call.id, skipped).message;
       requestMessages?.push(message);
       await this.appendMessage(message);
     }

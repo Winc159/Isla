@@ -11,6 +11,8 @@
 | Protocol 测试 | `tests/protocol*.test.ts`、`tests/protocol-*.e2e.test.ts` | 是 |
 | MCP smoke | `tests/smoke/mcp-interoperability.test.ts`；`npm run test:smoke:mcp` 使用本地 fixture/进程 | 测试文件默认可运行；专项命令按需 |
 | Browser/PTY | Browser mock/适配器测试默认运行；真实 PTY 用 `npm run test:pty`，依赖可选 `node-pty` 和本机工具链 | Browser 离线测试是；真实 PTY 否 |
+| Resource 子系统 | `tests/resource/`，覆盖契约、SQLite schema、Scheduler、百度下载、归档、HTTP API、Web 工具台后端和 mock E2E | 是 |
+| Resource Worker | Config/Profile、Host structured inference、HTTP client、三类 schema、调用条件、失败降级和命名兜底 | 是 |
 | 真实 Provider | `test:smoke:real`、`test:smoke:real:ndjson`，需要显式开关、网络、Profile/环境和费用授权 | 否 |
 | 本地真实评估 | `.isla-local/evaluation-scripts/` 与 `.isla-local/evaluations/` | 否，且不得入 Git |
 | 发布前检查 | `verify`、`pack:check`、Markdown/安全/版本检查 | 是或发布前手工执行 |
@@ -59,7 +61,7 @@ CI 在 Node.js 24 上对 Ubuntu、Windows 和 macOS 执行 `npm ci`、`npm run c
 
 安全扫描中的示例变量名、占位符和设计说明不是凭据；发现疑似秘密时必须人工核对，不能把扫描无命中当作绝对证明。
 
-## v0.4.8 关键回归面
+## 主 Agent Runtime 关键回归面
 
 - Catalog manifest 校验、稳定 ID、检索、availability 和 policy；
 - Task 激活持久化、重复激活与新任务重置；
@@ -69,6 +71,28 @@ CI 在 Node.js 24 上对 Ubuntu、Windows 和 macOS 执行 `npm ci`、`npm run c
 - Browser URL Policy、人工接管和凭据不泄漏；
 - 外部研究完成门禁与 HTTP 非 2xx 证据拒绝；
 - Session、Context、Journal、Memory、NDJSON 和取消回归。
+
+## v0.5.0 Resource 关键回归面
+
+- Resource 配置、受管目录、loopback/认证和公开配置投影；
+- SQLite Job/Event/Secret/Lease schema、重启恢复、取消、重试和清理语义；
+- 下载、检查、解压、发布的分池并发和同一 Job 状态迁移；
+- 百度网盘目录浏览、批量建 Job、下载 runner 和稳定错误分类；
+- 普通密码归档、候选密码、改后缀、分卷、RAR5、输出校验和空包装目录整理；
+- 文件夹 watch、稳定观察、账本去重和受管根路径边界；
+- Resource Web 工具台只操作 Resource API，不承担主 Agent 对话。
+
+## v0.5.1 Worker 关键回归面
+
+- Config 中 primary Profile 与 `workerProfile` 独立选择、装配和模型快照；
+- Resident Host `POST /api/v1/inference/structured` 的认证、取消、安全错误和未配置角色行为；
+- `parse-share-text`、`identify-content`、`suggest-title` 的 task/schema 对应、输入上限和输出校验；
+- 规则充分时零 Worker 调用，规则不足时通过 inference pool 发起一次有界请求；
+- Worker 结果不覆盖已验证事实，非法路径或标题被拒绝，需要时进入人工确认；
+- Worker 未配置、不可达、超时、取消或返回非法内容时保留规则/人工/日期兜底；
+- Worker 不获得 Session、Memory、Tool、Capability、文件系统权限或多轮循环。
+
+已完成的本地真实验收材料保存在被 Git 忽略的 `.isla-local/evaluations/v0.5.1/`。最近一次闭环覆盖百度网盘测试归档下载、Worker 命名判断、无可靠标题时日期兜底、解压与输出校验；Job 到达 `completed`，输出文件 SHA256 与原始测试文件一致。该记录只证明已执行的本地链路，不替代跨平台发布门禁。
 
 ## 发布门禁
 
