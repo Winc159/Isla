@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { ResidentHost } from '../src/host.js';
-import { ResidentHostClient } from '../src/host-client.js';
+import { ResidentHost } from '../src/host/server.js';
+import { ResidentHostClient } from '../src/client/host-client.js';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import type { SessionStore, StoredSession } from '../src/session-store.js';
+import type { SessionStore, StoredSession } from '../src/sessions/store.js';
 
 const sessions: StoredSession[] = [];
 const store: SessionStore = {
   list: async () => sessions,
   listAll: async () => sessions,
   loadLatest: async () => sessions[0],
-  create: async (_provider, model, messages) => { const now = new Date().toISOString(); const session = { version: 5 as const, id: `s-${sessions.length + 1}`, createdAt: now, updatedAt: now, provider: 'fake', model, workspaceKey: 'workspace', messages, journal: { version: 1 as const, turns: [] }, skillCatalog: { version: 1 as const, entries: [] } }; sessions.push(session); return session; },
+  create: async (_provider, model, messages, currentWorkspaceKey) => { const now = new Date().toISOString(); const session = { version: 5 as const, id: `s-${sessions.length + 1}`, createdAt: now, updatedAt: now, provider: 'fake', model, workspaceKey: currentWorkspaceKey ?? 'workspace', messages, journal: { version: 1 as const, turns: [] }, skillCatalog: { version: 1 as const, entries: [] } }; sessions.push(session); return session; },
   save: async (session) => session,
 };
 let host: ResidentHost | undefined;
@@ -43,5 +43,16 @@ describe('resident host', () => {
     const client = new ResidentHostClient(`http://${address.host}:${address.port}`, address.token);
     expect(await client.health()).toMatchObject({ ok: true });
     expect(await client.capabilities()).toMatchObject({ version: 1 });
+  });
+
+  it('resumes the latest workspace session for quick prompts and supports --new semantics', async () => {
+    host = new ResidentHost({ host: '127.0.0.1', port: 0, token: 'client-token', provider: 'fake', model: 'm', sessionStore: store, createSession: stored => ({ send: async text => ({ text: `${stored.id}:${text}` }), cancelActiveTurn: () => true, whenIdle: async () => {} } as never) });
+    const address = await host.start();
+    const client = new ResidentHostClient(`http://${address.host}:${address.port}`, address.token);
+    const root = process.cwd();
+    const key = (await import('../src/sessions/workspace.js')).workspaceKey(root);
+    expect(await client.quickPrompt('one', key, root)).toMatchObject({ sessionId: 's-1', text: 's-1:one' });
+    expect(await client.quickPrompt('two', key, root)).toMatchObject({ sessionId: 's-1', text: 's-1:two' });
+    expect(await client.quickPrompt('three', key, root, true)).toMatchObject({ sessionId: 's-2', text: 's-2:three' });
   });
 });

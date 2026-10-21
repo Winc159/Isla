@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ConfigStore } from '../src/config-store.js';
-import type { IslaConfigFileV1 } from '../src/config.js';
+import { ConfigStore } from '../src/config/store.js';
+import type { IslaConfigFileV1 } from '../src/config/schema.js';
 
 const config: IslaConfigFileV1 = {
   version: 1,

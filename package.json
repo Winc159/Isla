@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "bin": {
-    "isla": "dist/cli.js"
+    "isla": "dist/entrypoints/cli.js",
+    "isla-host": "dist/entrypoints/host.js",
+    "isla-resource": "dist/entrypoints/resource.js"
   },
   "files": [
     "dist",
@@ -15,7 +17,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "tsx --env-file-if-exists=.env src/cli.ts",
+    "dev": "tsx --env-file-if-exists=.env src/entrypoints/cli.ts",
     "clean": "node scripts/clean.mjs",
     "build": "npm run clean && tsc -p tsconfig.json",
     "install:browser": "node scripts/install-browser.mjs",
@@ -23,11 +25,12 @@
     "install:all": "node scripts/install-all.mjs",
     "install:bdpan": "node scripts/install-bdpan.mjs",
     "resource:bdpan": "node scripts/bdpan-runner.mjs",
-    "resource:start": "node dist/resource-main.js",
+    "resource:start": "node dist/entrypoints/resource.js",
+    "host:start": "node dist/entrypoints/host.js",
     "test:archive:fixtures": "node scripts/create-archive-fixtures.mjs",
     "setup:browser": "npm install && npm run install:browser",
     "setup": "npm install && npm run install:all && npm run build && npm link",
-    "start": "node --env-file-if-exists=.env dist/cli.js",
+    "start": "node --env-file-if-exists=.env dist/entrypoints/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

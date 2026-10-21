@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseConfigFile, profileToAppConfig, resolveProfile, resolveWorkerProfile } from '../src/config.js';
+import { parseConfigFile, profileToAppConfig, resolveProfile, resolveWorkerProfile } from '../src/config/schema.js';
 
 const deepseek = (extra: Record<string, unknown> = {}) => JSON.stringify({ version: 1, profiles: { main: { provider: 'deepseek', model: 'deepseek-chat', apiKey: 'test-only-key', ...extra } } });
 

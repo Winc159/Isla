@@ -1,5 +1,5 @@
 import type { CliCommand } from './command.js';
-import { workspaceKey } from '../session-workspace.js';
+import { workspaceKey } from '../sessions/workspace.js';
 
 export const newCommand: CliCommand = {
   name: '/new',

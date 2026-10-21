@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createSessionQueryCapability } from "../../src/tools/session-query.js";
-import { SessionQuery } from "../../src/session-query.js";
-import type { SessionStore, StoredSession } from "../../src/session-store.js";
+import { SessionQuery } from "../../src/sessions/query.js";
+import type { SessionStore, StoredSession } from "../../src/sessions/store.js";
 
 const workspace = "a".repeat(64);
 const stored: StoredSession = { version: 4, id: "session-1", createdAt: "2026-09-18T00:00:00.000Z", updatedAt: "2026-09-18T00:00:01.000Z", provider: "fake", model: "model", workspaceKey: workspace, messages: [{ role: "user", content: "查找旧任务" }, { role: "assistant", content: "历史答案" }], journal: { version: 1, turns: [] } };

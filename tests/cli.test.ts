@@ -1,9 +1,9 @@
 import { PassThrough, Readable, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { createCliInterruptController, runCli } from "../src/cli.js";
+import { createCliInterruptController, runCli } from "../src/entrypoints/cli.js";
 import { IslaRuntime } from "../src/core/runtime.js";
 import type { Message } from "../src/core/types.js";
-import type { SessionState, SessionStore, StoredSession } from "../src/session-store.js";
+import type { SessionState, SessionStore, StoredSession } from "../src/sessions/store.js";
 import { FakeProvider } from "./support/fake-provider.js";
 
 class MemorySessionStore implements SessionStore {

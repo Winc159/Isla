@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { isCliEntry } from '../src/cli-entry.js';
+import { isCliEntry } from '../src/client/entry.js';
 
 const temporaryDirectory = () => mkdtemp(join(tmpdir(), 'isla-cli-entry-'));
 

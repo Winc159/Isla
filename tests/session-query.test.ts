@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { SessionQuery } from "../src/session-query.js";
-import type { SessionStore, StoredSession } from "../src/session-store.js";
+import { SessionQuery } from "../src/sessions/query.js";
+import type { SessionStore, StoredSession } from "../src/sessions/store.js";
 
 const workspace = "a".repeat(64);
 const otherWorkspace = "b".repeat(64);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { projectStoredSession } from "../../src/session-factory.js";
-import type { StoredSessionV3 } from "../../src/session-store.js";
+import { projectStoredSession } from "../../src/runtime/session-factory.js";
+import type { StoredSessionV3 } from "../../src/sessions/store.js";
 
 describe("stored session projection", () => {
   it("preserves v3 context and journal for every entrypoint", () => {

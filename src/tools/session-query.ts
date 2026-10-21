@@ -1,5 +1,5 @@
-import type { SessionQuery } from "../session-query.js";
-import { SessionQueryError } from "../session-query.js";
+import type { SessionQuery } from "../sessions/query.js";
+import { SessionQueryError } from "../sessions/query.js";
 import type { Tool, ToolCapability } from "./types.js";
 
 export function createSessionQueryCapability(query: SessionQuery, workspaceKey: string, currentSessionId: () => string): ToolCapability {

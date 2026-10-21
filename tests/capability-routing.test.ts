@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { CapabilityActivator, composeCapabilityStepSnapshot, createCapabilityRoutingTools, resolveCapabilities } from '../src/capability-routing.js';
-import { CapabilityCatalog, createCapabilityProvider } from '../src/capability-catalog.js';
+import { CapabilityActivator, composeCapabilityStepSnapshot, createCapabilityRoutingTools, resolveCapabilities } from '../src/capabilities/routing.js';
+import { CapabilityCatalog, createCapabilityProvider } from '../src/capabilities/catalog.js';
 
 function setup() {
   const catalog = new CapabilityCatalog();

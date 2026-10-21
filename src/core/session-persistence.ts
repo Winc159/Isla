@@ -1,5 +1,5 @@
-import type { CapabilityActivationStateV1 } from "../capability-routing.js";
-import type { StoredSkillCatalogV1 } from "../session-store.js";
+import type { CapabilityActivationStateV1 } from "../capabilities/routing.js";
+import type { StoredSkillCatalogV1 } from "../sessions/store.js";
 import type { TaskBrief } from "./agent-loop.js";
 import type { SessionContext } from "./context.js";
 import type { SessionJournal } from "./journal.js";

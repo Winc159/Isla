@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { parseConfirmResourceJobRequestV1, parseCreateResourceJobRequestV1, parseResourceContentInputV1, parseResourceContentResultV1, parseResourceParseResultV1, parseResourceTitleInputV1, parseResourceTitleResultV1, parseStructuredInferenceRequestV1, RESOURCE_API_PREFIX, STRUCTURED_INFERENCE_ERROR_CODES } from "../../src/resource/contracts.js";
-import { parseResourceConfig } from "../../src/resource/config.js";
+import { loadOrCreateResourceConfig, parseResourceConfig } from "../../src/resource/config.js";
 import { RESOURCE_CASE_FIXTURES } from "../fixtures/resource-cases.js";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const config = (overrides: Record<string, unknown> = {}) => JSON.stringify({
   version: 1,
@@ -57,6 +60,17 @@ describe("Resource v1 contracts", () => {
 });
 
 describe("Resource config v1", () => {
+  it("creates a user-facing config and derives internal settings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "isla-resource-config-"));
+    try {
+      const path = join(root, ".isla", "resource.json");
+      const runtime = { version: 1 as const, host: { host: "127.0.0.1" as const, port: 43110, token: "h".repeat(64) }, resource: { host: "127.0.0.1" as const, port: 43111, token: "r".repeat(64) } };
+      const loaded = await loadOrCreateResourceConfig(path, runtime);
+      const saved = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+      expect(saved).toEqual({ version: 1, managedRoots: [{ id: "resources", label: "资源目录", path: join(root, ".isla", "resources"), scanEnabled: true, outputEnabled: true }], defaultDestinationRootId: "resources" });
+      expect(loaded).toMatchObject({ listen: { host: "127.0.0.1", port: 43111 }, isla: { endpoint: "http://127.0.0.1:43110" }, databasePath: join(root, ".isla", "resource.sqlite"), stagingPath: join(root, ".isla", "staging") });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it("applies frozen pool and scanning defaults", () => expect(parseResourceConfig(config())).toMatchObject({ concurrency: { download: 2, inspection: 2, extraction: 1, inference: 2 }, scanning: { intervalMs: 30_000, settleMs: 10_000 } }));
   it("requires download concurrency of at least two", () => expect(() => parseResourceConfig(config({ concurrency: { download: 1 } }))).toThrow("concurrency.download"));
   it("requires a selectable output root", () => expect(() => parseResourceConfig(config({ managedRoots: [{ id: "inbox", label: "Inbox", path: "D:/fixture/inbox", scanEnabled: true, outputEnabled: false }], defaultDestinationRootId: "inbox" }))).toThrow("output-enabled"));

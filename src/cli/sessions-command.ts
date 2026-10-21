@@ -1,12 +1,12 @@
 import { emitKeypressEvents, type Key } from 'node:readline';
 import type { Writable } from 'node:stream';
-import type { StoredSession } from '../session-store.js';
+import type { StoredSession } from '../sessions/store.js';
 import {
   isInteractiveInput,
   type CliCommand,
   type InteractiveInput,
 } from './command.js';
-import { workspaceKey } from '../session-workspace.js';
+import { workspaceKey } from '../sessions/workspace.js';
 
 export const sessionsCommand: CliCommand = {
   name: '/sessions',

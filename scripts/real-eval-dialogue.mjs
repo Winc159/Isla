@@ -11,7 +11,7 @@ const profile = process.argv[3] ?? 'bailian';
 const sessionDir = process.argv[4] ?? join(root, '.isla-local', 'evaluations', `live-${randomUUID()}`);
 const logPath = join(sessionDir, 'dialogue.ndjson');
 await mkdir(sessionDir, { recursive: true });
-const child = spawn(node, ['dist/cli.js', '--config', config, '--profile', profile, '--protocol', 'ndjson'], { cwd: root, env: { ...process.env, ISLA_SESSION_DIR: sessionDir }, stdio: ['pipe', 'pipe', 'pipe'] });
+const child = spawn(node, ['dist/entrypoints/cli.js', '--config', config, '--profile', profile, '--protocol', 'ndjson'], { cwd: root, env: { ...process.env, ISLA_SESSION_DIR: sessionDir }, stdio: ['pipe', 'pipe', 'pipe'] });
 const lines = [];
 const rl = createInterface({ input: child.stdout });
 const errors = [];

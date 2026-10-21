@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadRuntime } from '../src/main.js';
+import { loadRuntime } from '../src/runtime/bootstrap.js';
 
 describe('startup config selection', () => {
   let root: string;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { IslaConfigFileV1 } from "../src/config.js";
-import { resolveProfile, resolveWorkerProfile } from "../src/profile-selection.js";
+import type { IslaConfigFileV1 } from "../src/config/schema.js";
+import { resolveProfile, resolveWorkerProfile } from "../src/config/profile-selection.js";
 
 function config(options: { readonly defaultProfile?: string; readonly workerProfile?: string } = {}): IslaConfigFileV1 {
   return {

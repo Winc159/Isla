@@ -60,8 +60,8 @@ export interface ChatSessionOptions {
   readonly journal?: SessionJournal;
   readonly task?: TaskBrief | TaskStateV1;
   readonly taskContract?: TaskContractV1;
-  readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1;
-  readonly capabilityActivation?: import("../capability-routing.js").CapabilityActivationStateV1;
+  readonly skillCatalog?: import("../sessions/store.js").StoredSkillCatalogV1;
+  readonly capabilityActivation?: import("../capabilities/routing.js").CapabilityActivationStateV1;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
   readonly onSessionStateChanged?: (state: SessionPersistenceState) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
@@ -156,8 +156,8 @@ export class ChatSession {
     });
   }
   private readonly onMessagesChanged: ((messages: readonly Message[]) => Promise<void>) | undefined;
-  private readonly skillCatalog: import("../session-store.js").StoredSkillCatalogV1 | undefined;
-  private readonly capabilityActivation: import("../capability-routing.js").CapabilityActivationStateV1 | undefined;
+  private readonly skillCatalog: import("../sessions/store.js").StoredSkillCatalogV1 | undefined;
+  private readonly capabilityActivation: import("../capabilities/routing.js").CapabilityActivationStateV1 | undefined;
   private readonly onSessionStateChanged: ((state: SessionPersistenceState) => Promise<void>) | undefined;
   private readonly journal: SessionJournal;
   private readonly onSessionEvent: ((event: SessionEvent) => Promise<void>) | undefined;
@@ -192,7 +192,7 @@ export class ChatSession {
     return "version" in this.task ? this.task : migrateTaskBrief(this.task, this.messages);
   }
 
-  get skillCatalogSnapshot(): import("../session-store.js").StoredSkillCatalogV1 | undefined { return this.skillCatalog; }
+  get skillCatalogSnapshot(): import("../sessions/store.js").StoredSkillCatalogV1 | undefined { return this.skillCatalog; }
 
   get verificationStatus() {
     return deriveVerificationStatus(this.journal);

@@ -19,8 +19,6 @@ const EXCLUDED_GLOBS = [
   "!**/coverage/**",
   "!**/.next/**",
   "!**/.isla-local/**",
-  "!docs/proposals/**/real-cloud-*.json",
-  "!docs/proposals/**/real-cloud-*.md",
   "!**/.env",
   "!**/.env.*",
   "!**/id_rsa",

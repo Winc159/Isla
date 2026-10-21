@@ -36,7 +36,7 @@ class Driver {
   private readonly waiters = new Map<string, Array<(event: Event) => void>>();
   private readonly child: ChildProcessWithoutNullStreams;
   constructor(cwd: string, sessionDir: string, memoryPath: string, configPath?: string) {
-    this.child = spawn(process.execPath, [resolve("dist/cli.js"), ...(configPath ? ["--config", configPath, "--profile", "eval"] : ["--env"]), "--protocol", "ndjson"], {
+    this.child = spawn(process.execPath, [resolve("dist/entrypoints/cli.js"), ...(configPath ? ["--config", configPath, "--profile", "eval"] : ["--env"]), "--protocol", "ndjson"], {
       cwd,
       env: { ...process.env, ISLA_PROVIDER: "deepseek", ISLA_SESSION_DIR: sessionDir, ISLA_MEMORY_DB: memoryPath, ISLA_MEMORY_ENABLED: "1" },
       stdio: ["pipe", "pipe", "pipe"],

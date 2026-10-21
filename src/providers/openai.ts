@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import type { RuntimePlugin } from "../core/plugin.js";
 import type { ModelCallOptions, ModelProvider, ModelRequest, ModelResponse, ProviderCapabilities } from "../core/types.js";
 import type { ModelStreamEvent } from "../core/model-stream.js";
-import type { OpenAIConfig } from "../config.js";
+import type { OpenAIConfig } from "../config/schema.js";
 import { normalizeProviderError, RuntimeError } from "../core/errors.js";
 export function createOpenAIPlugin(config: OpenAIConfig): RuntimePlugin { return { name: "openai", setup: c => c.registerProvider(new OpenAIProvider(config)) }; }
 class OpenAIProvider implements ModelProvider {

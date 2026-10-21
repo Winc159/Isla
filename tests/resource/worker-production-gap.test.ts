@@ -7,7 +7,7 @@ describe("v0.5.1 Worker production gaps", () => {
   });
 
   it("assembles the configured worker Provider into the normal Host startup path", async () => {
-    const module = await import("../../src/main.js");
+    const module = await import("../../src/runtime/bootstrap.js");
     expect("createWorkerRuntimeBinding" in module).toBe(true);
   });
 });

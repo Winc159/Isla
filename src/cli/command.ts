@@ -1,11 +1,11 @@
 import type { Readable, Writable } from 'node:stream';
-import type { SessionStore, StoredSession } from '../session-store.js';
+import type { SessionStore, StoredSession } from '../sessions/store.js';
 import type { MemoryStore } from '../memory/store.js';
 import type { MemoryRuntime } from '../memory/runtime.js';
-import type { ConfigStore } from '../config-store.js';
-import type { SessionQuery } from '../session-query.js';
+import type { ConfigStore } from '../config/store.js';
+import type { SessionQuery } from '../sessions/query.js';
 import type { McpHost } from '../mcp/host.js';
-import type { CapabilitySnapshot } from '../capabilities.js';
+import type { CapabilitySnapshot } from '../capabilities/snapshot.js';
 
 export type InteractiveInput = Readable & {
   readonly isTTY: true;

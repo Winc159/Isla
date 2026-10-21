@@ -9,7 +9,7 @@ import type {
   ToolDefinition,
   ProviderCapabilities,
 } from '../core/types.js';
-import type { DeepSeekConfig } from '../config.js';
+import type { DeepSeekConfig } from '../config/schema.js';
 import { normalizeProviderError, RuntimeError } from '../core/errors.js';
 import type { ModelCallOptions } from '../core/types.js';
 import type { ModelStreamEvent } from '../core/model-stream.js';

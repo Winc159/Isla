@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readConfig } from "../src/config.js";
+import { readConfig } from "../src/config/schema.js";
 describe("config", () => {
   it("reads cloud config", () => expect(readConfig({ ISLA_PROVIDER: "openai", ISLA_MODEL: "m", OPENAI_API_KEY: "test" })).toMatchObject({ provider: "openai", maxContextTurns: 20, maxContextChars: 60000, contextRetainTurns: 6, memoryEnabled: true }));
   it("reads Bailian env config with an explicit base URL", () => expect(readConfig({ ISLA_PROVIDER: "bailian", ISLA_MODEL: "qwen-plus", DASHSCOPE_API_KEY: "test", ISLA_BASE_URL: "https://example.test/compatible-mode/v1" })).toMatchObject({ provider: "bailian", model: "qwen-plus", baseURL: "https://example.test/compatible-mode/v1" }));

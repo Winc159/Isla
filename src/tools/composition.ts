@@ -1,4 +1,4 @@
-import type { WebFetchConfig, WebSearchConfig } from "../config.js";
+import type { WebFetchConfig, WebSearchConfig } from "../config/schema.js";
 import { createProjectFilesCapability } from "./project-files.js";
 import { createProjectDiscoveryCapability } from "./project-discovery.js";
 import type { ToolCapability } from "./types.js";
@@ -8,7 +8,7 @@ import type { UserQuestionService } from "../user-questions/types.js";
 import { createCommandExecutionCapability } from "./command-execution.js";
 import { createTaskStateCapability } from "./task-state.js";
 import { createSessionQueryCapability } from "./session-query.js";
-import type { SessionQuery } from "../session-query.js";
+import type { SessionQuery } from "../sessions/query.js";
 import type { SkillCatalog } from "../skills/catalog.js";
 import { createSkillCapability } from "./skill.js";
 import { createContextCapability } from './context.js';

@@ -17,6 +17,8 @@ import { RESOURCE_TOOLBOX } from "./toolbox.js";
 import { RESOURCE_WEB_UI } from "./web-ui.js";
 import { inspectArchive } from "./archive.js";
 import type { ResourceInferenceClient } from "./inference-client.js";
+import type { ResourceWorkerSettings } from "./worker-settings.js";
+import type { ResourceSettingsStore } from "./settings.js";
 
 export interface ResourceServiceOptions {
   readonly config: ResourceConfigV1;
@@ -25,6 +27,8 @@ export interface ResourceServiceOptions {
   readonly baiduDownloader?: { download(request: BaiduDownloadRequest, context: BdpanContext, signal?: AbortSignal): Promise<BaiduDownloadResult> };
   readonly baiduBrowser?: { list(path: string, context: BdpanContext, signal?: AbortSignal): Promise<{ code: number; stdout: string; stderr: string }> };
   readonly inferenceClient?: ResourceInferenceClient;
+  readonly workerSettings?: ResourceWorkerSettings;
+  readonly resourceSettings?: ResourceSettingsStore;
 }
 
 export interface ResourceServiceAddress {
@@ -80,6 +84,11 @@ export class ResourceService {
     try {
       const url = new URL(request.url ?? "/", `http://${this.options.config.listen.host}`);
       if (request.method === "GET" && url.pathname === "/api/v1/resource/config/public") { this.send(response, 200, this.publicConfig()); return; }
+      if (request.method === "GET" && url.pathname === "/api/v1/resource/settings/worker") { if (!this.options.workerSettings) throw new Error("WORKER_SETTINGS_UNAVAILABLE"); this.send(response, 200, await this.options.workerSettings.read()); return; }
+      if (request.method === "PUT" && url.pathname === "/api/v1/resource/settings/worker") { if (!this.options.workerSettings) throw new Error("WORKER_SETTINGS_UNAVAILABLE"); this.send(response, 200, await this.options.workerSettings.update(await this.readBody(request))); return; }
+      if (request.method === "POST" && url.pathname === "/api/v1/resource/settings/worker/test") { if (!this.options.workerSettings) throw new Error("WORKER_SETTINGS_UNAVAILABLE"); this.send(response, 200, { active: await this.options.workerSettings.active() }); return; }
+      if (request.method === "GET" && url.pathname === "/api/v1/resource/settings/directories") { if (!this.options.resourceSettings) throw new Error("RESOURCE_SETTINGS_UNAVAILABLE"); this.send(response, 200, await this.options.resourceSettings.read()); return; }
+      if (request.method === "PUT" && url.pathname === "/api/v1/resource/settings/directories") { if (!this.options.resourceSettings) throw new Error("RESOURCE_SETTINGS_UNAVAILABLE"); this.send(response, 200, { ...(await this.options.resourceSettings.update(await this.readBody(request))), restartRequired: true }); return; }
       if (request.method === "GET" && url.pathname === "/api/v1/resource/baidu/tree") { this.send(response, 200, await this.listBaiduTree(url.searchParams.get("path") ?? "/")); return; }
       if (request.method === "GET" && url.pathname === "/api/v1/resource/local/tree") { this.send(response, 200, this.listLocalTree(url.searchParams.get("rootId") ?? "", url.searchParams.get("path") ?? ".")); return; }
       if (request.method === "POST" && url.pathname === "/api/v1/resource/scans") { this.send(response, 202, this.scanFolder(await this.readBody(request), true)); return; }

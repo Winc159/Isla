@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSessionFactory } from '../../src/session-factory.js';
+import { createSessionFactory } from '../../src/runtime/session-factory.js';
 import { IslaRuntime } from '../../src/core/runtime.js';
 import { FakeProvider } from '../support/fake-provider.js';
 import { LoopBudgetState, DEFAULT_AUTO_STEP_LIMIT, DEFAULT_EXTENSION_STEPS, DEFAULT_HARD_STEP_LIMIT, DEFAULT_INITIAL_STEP_BUDGET } from '../../src/core/loop-budget.js';

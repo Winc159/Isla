@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { workspaceKey } from "../../src/session-workspace.js";
+import { workspaceKey } from "../../src/sessions/workspace.js";
 
 const enabled = process.env.ISLA_RUN_REAL_BAILIAN_SMOKE === "1";
 const configPath = join(process.env.USERPROFILE ?? "", ".isla", "config.json");
@@ -28,7 +28,7 @@ describe.skipIf(!enabled || !configured)("real Bailian Session Query evaluation"
       await writeFile(join(sessions, "prior-session.json"), `${JSON.stringify(prior)}\n`, "utf8");
       const current = { ...prior, id: "current-session", updatedAt: "2026-09-18T00:00:02.000Z", messages: [], task: undefined };
       await writeFile(join(sessions, "current-session.json"), `${JSON.stringify(current)}\n`, "utf8");
-      child = spawn(process.execPath, [resolve("dist/cli.js"), "--config", evalConfig, "--profile", "eval", "--protocol", "ndjson"], { cwd: root, env: { ...process.env, ISLA_MEMORY_ENABLED: "0" }, stdio: ["pipe", "pipe", "pipe"] });
+      child = spawn(process.execPath, [resolve("dist/entrypoints/cli.js"), "--config", evalConfig, "--profile", "eval", "--protocol", "ndjson"], { cwd: root, env: { ...process.env, ISLA_MEMORY_ENABLED: "0" }, stdio: ["pipe", "pipe", "pipe"] });
       let output = "";
       let errorOutput = "";
       child.stdout.on("data", chunk => { output += String(chunk); });

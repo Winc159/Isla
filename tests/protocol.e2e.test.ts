@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-const cliEntry = join(process.cwd(), "dist", "cli.js");
+const cliEntry = join(process.cwd(), "dist", "entrypoints", "cli.js");
 
 describe("NDJSON subprocess", () => {
   it("starts the source CLI, exchanges a prompt, and exits with JSON stdout", async () => {

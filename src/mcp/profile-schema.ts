@@ -1,4 +1,4 @@
-import type { ProfileMcpSettingsV1 } from '../config.js';
+import type { ProfileMcpSettingsV1 } from '../config/schema.js';
 
 type UnknownRecord = Record<string, unknown>;
 

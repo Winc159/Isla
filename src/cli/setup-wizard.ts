@@ -1,8 +1,8 @@
 import { createInterface } from 'node:readline/promises';
 import type { Readable, Writable } from 'node:stream';
 import type { InteractiveInput } from './command.js';
-import { ConfigStore } from '../config-store.js';
-import { DEFAULT_BAILIAN_MODEL, type IslaConfigFileV1, type StartupProfileV1 } from '../config.js';
+import { ConfigStore } from '../config/store.js';
+import { DEFAULT_BAILIAN_MODEL, type IslaConfigFileV1, type StartupProfileV1 } from '../config/schema.js';
 
 export interface SetupPrompter {
   readonly ask: (question: string, defaultValue?: string) => Promise<string | undefined>;

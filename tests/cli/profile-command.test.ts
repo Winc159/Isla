@@ -3,7 +3,7 @@ import { PassThrough, Writable } from 'node:stream';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ConfigStore } from '../../src/config-store.js';
+import { ConfigStore } from '../../src/config/store.js';
 import { profileCommand } from '../../src/cli/profile-command.js';
 import type { CliCommandContext } from '../../src/cli/command.js';
 

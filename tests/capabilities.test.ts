@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { composeCapabilitySnapshot } from '../src/capabilities.js';
+import { composeCapabilitySnapshot } from '../src/capabilities/snapshot.js';
 
 describe('capability composition', () => {
   const capability = { id: 'mcp:research', instructions: 'untrusted', tools: [{ definition: { name: 'mcp__research__read', description: 'read', parameters: { type: 'object' } }, execute: async () => 'ok' }] };

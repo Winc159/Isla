@@ -1,4 +1,4 @@
-import type { WebFetchConfig, WebSearchConfig } from "../config.js";
+import type { WebFetchConfig, WebSearchConfig } from "../config/schema.js";
 import { HttpFetchProvider } from "../web/fetch.js";
 import { createWebFetchTool } from "./web-fetch.js";
 import { createWebSearchTool } from "./web-search.js";

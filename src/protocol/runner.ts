@@ -13,16 +13,16 @@ import type { ModelCatalogEntry } from "../models/catalog.js";
 import { ProtocolUserQuestionService } from "./questions.js";
 import { summarizeTaskState, type TaskStateV1 } from "../core/task-state.js";
 import type { VerificationStatus } from "../core/verification.js";
-import type { SessionSearchHit, SessionQuery } from "../session-query.js";
+import type { SessionSearchHit, SessionQuery } from "../sessions/query.js";
 import type { TaskStatus } from "../core/task-state.js";
 import type { McpHost } from "../mcp/host.js";
-import type { CapabilitySnapshot } from "../capabilities.js";
+import type { CapabilitySnapshot } from "../capabilities/snapshot.js";
 export interface ProtocolSessionEvents {
   readonly onToolStarted: (tool: string, callId: string, argumentsJson?: string) => void;
   readonly onToolFinished: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly onModelStepEvent: (event: ModelStepEvent) => void;
 }
- export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly capabilitySnapshot?: () => CapabilitySnapshot; readonly capabilityCatalog?: () => import('../capability-catalog.js').CapabilityCatalog; readonly onNewSession?: () => void; readonly beforeNewSession?: () => Promise<void>; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly questionService?: ProtocolUserQuestionService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents, questionService: ProtocolUserQuestionService) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string; readonly listModels?: (query?: string) => Promise<readonly ModelCatalogEntry[]>; readonly useModel?: (model: string) => Promise<void>; readonly sessionQuery?: SessionQuery; readonly workspaceKey?: string; readonly selectSession?: (sessionId: string) => Promise<boolean>; readonly invokeSkill?: (name: string, text?: string) => Promise<import("../core/types.js").ModelResponse>; readonly mcpHost?: McpHost } = {}): Promise<void> {
+ export async function runProtocol(input: Readable, output: import("node:stream").Writable, session: ChatSession | undefined, provider: string, model: string, options: { readonly workspace?: string; readonly capabilities?: ProtocolCapabilities; readonly capabilitySnapshot?: () => CapabilitySnapshot; readonly capabilityCatalog?: () => import('../capabilities/catalog.js').CapabilityCatalog; readonly onNewSession?: () => void; readonly beforeNewSession?: () => Promise<void>; readonly onToolStarted?: (id: string, tool: string) => void; readonly onToolFinished?: (id: string, tool: string) => void; readonly approvalService?: ProtocolApprovalService; readonly questionService?: ProtocolUserQuestionService; readonly createSession?: (approvalService: ProtocolApprovalService, events: ProtocolSessionEvents, questionService: ProtocolUserQuestionService) => ChatSession | Promise<ChatSession>; readonly sessionId?: () => string; readonly listModels?: (query?: string) => Promise<readonly ModelCatalogEntry[]>; readonly useModel?: (model: string) => Promise<void>; readonly sessionQuery?: SessionQuery; readonly workspaceKey?: string; readonly selectSession?: (sessionId: string) => Promise<boolean>; readonly invokeSkill?: (name: string, text?: string) => Promise<import("../core/types.js").ModelResponse>; readonly mcpHost?: McpHost } = {}): Promise<void> {
   const writer = new ProtocolWriter(output);
   const ids = new Set<string>();
   const maxRequestIds = 4096;

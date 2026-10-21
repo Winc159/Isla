@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { ResidentHost } from "../../src/host.js";
-import type { SessionStore } from "../../src/session-store.js";
+import { ResidentHost } from "../../src/host/server.js";
+import type { SessionStore } from "../../src/sessions/store.js";
 
 const store = { list: async () => [], listAll: async () => [], loadLatest: async () => undefined, create: async () => { throw new Error("unused"); }, save: async session => session } as unknown as SessionStore;
 let host: ResidentHost | undefined;
@@ -21,5 +21,12 @@ describe("ResidentHost structured inference route", () => {
     const response = await fetch(`http://${address.host}:${address.port}/api/v1/inference/structured`, { method: "POST", headers: { authorization: "Bearer host-token", "content-type": "application/json" }, body: "{}" });
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({ error: { code: "ROLE_NOT_CONFIGURED", retryable: false } });
+  });
+
+  it("reports whether a worker is configured without exposing its profile or key", async () => {
+    host = new ResidentHost({ host: "127.0.0.1", port: 0, token: "host-token", provider: "fake", model: "primary", sessionStore: store, createSession: () => ({}) as never, structuredInference: async request => ({ requestId: request.requestId, status: "succeeded", output: {}, model: { role: "resource-worker", profile: "worker", provider: "fake", model: "worker", configRevision: "rev" } }) });
+    const address = await host.start();
+    const response = await fetch(`http://${address.host}:${address.port}/api/v1/inference/status`, { headers: { authorization: "Bearer host-token" } });
+    expect(await response.json()).toEqual({ configured: true });
   });
 });

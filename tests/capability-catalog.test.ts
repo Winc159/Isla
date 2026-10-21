@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CapabilityCatalog, createCapabilityProvider, type CapabilityProvider } from '../src/capability-catalog.js';
+import { CapabilityCatalog, createCapabilityProvider, type CapabilityProvider } from '../src/capabilities/catalog.js';
 
 function provider(id: string, description: string, keywords: readonly string[] = []): CapabilityProvider {
   return {

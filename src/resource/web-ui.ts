@@ -22,6 +22,11 @@ export const RESOURCE_WEB_UI = String.raw`<!doctype html>
     .dot { width:8px; height:8px; border-radius:50%; background:var(--amber); box-shadow:0 0 0 4px var(--amber-soft); }
     .connection.online .dot { background:var(--green); box-shadow:0 0 0 4px #dff4ec; }
     .lanes { display:grid; grid-template-columns:1fr 1fr; gap:1px; overflow:hidden; margin-bottom:20px; border:1px solid var(--line); border-radius:14px; background:var(--line); box-shadow:var(--shadow); }
+    .settings { margin-bottom:20px; padding:20px 22px; }
+    .settings-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; align-items:end; }
+    .settings .inline { margin-top:14px; }
+    .settings-status { color:var(--muted); }
+    .root-row { display:grid; grid-template-columns:minmax(120px,.7fr) minmax(220px,2fr) auto auto auto; gap:8px; align-items:end; margin-top:10px; }
     .lane { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:12px; padding:13px 16px; background:rgba(255,255,255,.92); }
     .lane-mark { width:10px; height:34px; border-radius:99px; background:var(--blue); }
     .lane:nth-child(2) .lane-mark { background:var(--amber); }
@@ -73,7 +78,7 @@ export const RESOURCE_WEB_UI = String.raw`<!doctype html>
     .toast { position:fixed; right:24px; bottom:24px; max-width:min(420px,calc(100vw - 48px)); padding:12px 16px; border-radius:11px; background:var(--ink); color:white; box-shadow:var(--shadow); transform:translateY(130%); transition:transform .2s ease; }
     .inline { display:flex; gap:8px; align-items:center; } .inline input { flex:1; } #baidu-tree { display:grid; gap:6px; max-height:180px; overflow:auto; margin-top:8px; } #baidu-tree button { text-align:left; }
     .toast.show { transform:translateY(0); }
-    @media (max-width:900px) { .shell{padding:20px}.lanes,main{grid-template-columns:1fr}.queue{min-height:400px}header{align-items:flex-start;flex-direction:column}.connection{align-self:flex-start} }
+    @media (max-width:900px) { .shell{padding:20px}.lanes,main,.settings-grid,.root-row{grid-template-columns:1fr}.queue{min-height:400px}header{align-items:flex-start;flex-direction:column}.connection{align-self:flex-start} }
     @media (max-width:520px) { .shell{padding:12px}.lane{padding:11px}.form,.job,.queue-head{padding:16px}.job-top{display:block}.badge{display:inline-block;margin-top:8px} }
     @media (prefers-reduced-motion:reduce) { *,*::before,*::after{scroll-behavior:auto!important;transition:none!important} }
   </style>
@@ -87,6 +92,23 @@ export const RESOURCE_WEB_UI = String.raw`<!doctype html>
     <section class="lanes" aria-label="处理通道">
       <div class="lane"><span class="lane-mark"></span><div><strong>下载通道</strong><small>百度网盘 · 可并行</small></div><span id="download-count" class="count">0</span></div>
       <div class="lane"><span class="lane-mark"></span><div><strong>解压通道</strong><small>检查 · 解压 · 整理</small></div><span id="extract-count" class="count">0</span></div>
+    </section>
+    <section class="card settings" aria-labelledby="directories-title">
+      <h2 id="directories-title">资源目录</h2><p class="sub">只配置 Isla 可以扫描和整理到的目录。保存后重启 Resource 生效。</p>
+      <form id="directories-form"><div id="directory-roots"></div><div class="inline"><button class="secondary" id="add-directory" type="button">添加目录</button><button class="secondary" type="submit">保存目录设置</button><span id="directories-status" class="settings-status">正在读取…</span></div></form>
+    </section>
+    <section class="card settings" aria-labelledby="worker-title">
+      <h2 id="worker-title">Resource Worker</h2><p class="sub">可选的结构化推理 Worker。密钥只允许输入或替换，页面不会回显已保存值；保存后重启 Resident Host 生效。</p>
+      <form id="worker-form">
+        <div class="settings-grid">
+          <label><input id="worker-enabled" type="checkbox"> 启用 Worker</label>
+          <label for="worker-provider">Provider<select id="worker-provider"><option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="bailian">Bailian</option><option value="local">Local</option></select></label>
+          <label for="worker-model">模型<input id="worker-model" placeholder="模型名称"></label>
+          <label for="worker-base-url">Base URL<input id="worker-base-url" placeholder="按 Provider 需要填写"></label>
+        </div>
+        <label for="worker-api-key">API Key（留空保留已保存密钥）</label><input id="worker-api-key" type="password" autocomplete="new-password" placeholder="未配置">
+        <div class="inline"><button class="secondary" type="submit">保存 Worker 设置</button><button class="secondary" id="worker-test" type="button">测试当前状态</button><span id="worker-status" class="settings-status">正在读取…</span></div>
+      </form>
     </section>
     <main>
       <section class="card composer">
@@ -124,6 +146,8 @@ export const RESOURCE_WEB_UI = String.raw`<!doctype html>
     const labels = {queued:'排队中',running:'处理中',waiting_user:'等待确认',cancelling:'正在取消',completed:'已完成',failed:'失败',cancelled:'已取消'};
     const stages = {preview:'预览',queued_download:'等待下载',downloading:'正在下载',inspecting:'正在检查',extracting:'正在解压',publishing:'正在整理',completed:'完成'};
     let config;
+    let workerSettings;
+    let directorySettings;
     const baiduSelected = new Set();
     const el = id => document.getElementById(id);
     async function request(path, options={}) { const response=await fetch(api+path,{credentials:'same-origin',...options,headers:{'content-type':'application/json',...(options.headers||{})}}); const body=await response.json().catch(()=>({})); if(!response.ok) throw new Error(body.error?.message||('请求失败 '+response.status)); return body; }
@@ -150,6 +174,15 @@ export const RESOURCE_WEB_UI = String.raw`<!doctype html>
     async function loadJobs() { try { const body=await request('/jobs'); renderJobs(body.jobs); el('connection').classList.add('online'); el('connection').lastElementChild.textContent='服务正常'; } catch(error) { el('connection').classList.remove('online'); el('connection').lastElementChild.textContent='连接失败'; notify(error.message); } }
     async function createJob(payload, form, batch=false) { const button=form.querySelector('button[type=submit]');button.disabled=true;try{const result=await request(batch?'/jobs/batch':'/jobs',{method:'POST',body:JSON.stringify(payload)});form.reset();notify(batch?'已创建 '+result.jobs.length+' 个下载任务':'任务已创建，请确认预览');await loadJobs();}catch(error){notify(error.message);}finally{button.disabled=false;} }
     async function createScan(form) { const button=form.querySelector('button[type=submit]');button.disabled=true;try{const result=await request('/scans',{method:'POST',body:JSON.stringify({managedRootId:el('source-root').value,relativePath:el('relative-path').value||'.',destinationRootId:el('archive-destination').value})});notify('扫描完成，发现 '+result.jobs.length+' 个新压缩包；已开启长期整理');await loadJobs();}catch(error){notify(error.message);}finally{button.disabled=false;} }
+    function renderWorker(settings){workerSettings=settings;el('worker-enabled').checked=settings.enabled;el('worker-provider').value=settings.provider||'openai';el('worker-model').value=settings.model||'';el('worker-base-url').value=settings.baseURL||'';el('worker-api-key').value='';el('worker-api-key').placeholder=settings.apiKeyConfigured?'已配置；留空表示保留':'未配置';el('worker-status').textContent=settings.active?'Worker 已运行':settings.enabled?'已保存，等待 Resident Host 重启':'Worker 未启用';}
+    async function loadWorker(){try{renderWorker(await request('/settings/worker'));}catch(error){el('worker-status').textContent='Worker 设置不可用';notify(error.message);}}
+    function rootRow(root={}){const row=node('div','root-row');row.dataset.id=root.id||('root-'+Math.random().toString(36).slice(2,8));const label=node('input');label.placeholder='显示名称';label.value=root.label||'';label.dataset.field='label';const path=node('input');path.placeholder='绝对路径';path.value=root.path||'';path.dataset.field='path';const scan=node('label','','扫描');const scanInput=document.createElement('input');scanInput.type='checkbox';scanInput.checked=root.scanEnabled!==false;scanInput.dataset.field='scan';scan.prepend(scanInput);const output=node('label','','输出');const outputInput=document.createElement('input');outputInput.type='checkbox';outputInput.checked=root.outputEnabled!==false;outputInput.dataset.field='output';output.prepend(outputInput);row.append(label,path,scan,output,actionButton('移除','secondary',()=>row.remove()));return row;}
+    function renderDirectories(settings){directorySettings=settings;const host=el('directory-roots');host.replaceChildren(...settings.managedRoots.map(root=>rootRow(root)));el('directories-status').textContent='已加载 '+settings.managedRoots.length+' 个目录';}
+    async function loadDirectories(){try{renderDirectories(await request('/settings/directories'));}catch(error){el('directories-status').textContent='目录设置不可用';notify(error.message);}}
+    el('add-directory').addEventListener('click',()=>el('directory-roots').append(rootRow()));
+    el('directories-form').addEventListener('submit',async event=>{event.preventDefault();if(!directorySettings)return;const roots=[...el('directory-roots').children].map((row,index)=>({id:row.dataset.id||('root-'+(index+1)),label:row.querySelector('[data-field=label]').value,path:row.querySelector('[data-field=path]').value,scanEnabled:row.querySelector('[data-field=scan]').checked,outputEnabled:row.querySelector('[data-field=output]').checked}));const defaultRoot=roots.find(root=>root.outputEnabled);if(!defaultRoot){notify('至少需要一个可输出目录');return;}try{const saved=await request('/settings/directories',{method:'PUT',body:JSON.stringify({revision:directorySettings.revision,managedRoots:roots,defaultDestinationRootId:defaultRoot.id})});renderDirectories(saved);notify('目录设置已保存，重启 Resource 后生效');}catch(error){notify(error.message);}});
+    el('worker-form').addEventListener('submit',async event=>{event.preventDefault();if(!workerSettings)return;const enabled=el('worker-enabled').checked;const payload={revision:workerSettings.revision,enabled,...(enabled?{provider:el('worker-provider').value,model:el('worker-model').value,baseURL:el('worker-base-url').value||undefined,apiKey:el('worker-api-key').value||undefined}:{})};try{renderWorker(await request('/settings/worker',{method:'PUT',body:JSON.stringify(payload)}));notify('Worker 设置已保存，重启 Resident Host 后生效');}catch(error){notify(error.message);}});
+    el('worker-test').addEventListener('click',async()=>{try{const result=await request('/settings/worker/test',{method:'POST',body:'{}'});el('worker-status').textContent=result.active?'Worker 已运行':'Worker 尚未运行，请检查或重启 Resident Host';}catch(error){notify(error.message);}});
     document.querySelectorAll('.tab').forEach(tab=>tab.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(item=>item.setAttribute('aria-selected',String(item===tab)));document.querySelectorAll('.form').forEach(form=>form.classList.toggle('active',form.id===tab.dataset.tab+'-form'));}));
     el('download-form').addEventListener('submit',event=>{event.preventDefault();createJob({tool:'baidu-download',input:{kind:'share-text',text:el('share-text').value},destinationRootId:el('download-destination').value,startMode:'automatic'},event.currentTarget,true);});
     el('archive-form').addEventListener('submit',event=>{event.preventDefault();createScan(event.currentTarget);});
@@ -163,7 +196,7 @@ export const RESOURCE_WEB_UI = String.raw`<!doctype html>
     el('local-up').addEventListener('click',()=>{el('relative-path').value=parentPath('/'+(el('relative-path').value||'.')).slice(1)||'.';el('browse-local').click();});
     el('browse-local').addEventListener('click',async()=>{const path=el('relative-path').value||'.';try{const result=await request('/local/tree?rootId='+encodeURIComponent(el('source-root').value)+'&path='+encodeURIComponent(path));const host=el('local-tree');host.replaceChildren();if(!result.entries.length){host.textContent='没有子文件夹';return;}result.entries.forEach(item=>host.append(actionButton('📁 '+item.name,'secondary',()=>{el('relative-path').value=item.path;el('browse-local').click();})));}catch(error){notify(error.message);}});
     el('refresh').addEventListener('click',loadJobs);
-    (async()=>{try{config=await request('/config/public');const outputs=config.managedRoots.filter(root=>root.outputEnabled);fillSelect('download-destination',outputs,config.defaultDestinationRootId);fillSelect('archive-destination',outputs,config.defaultDestinationRootId);fillSelect('source-root',config.managedRoots.filter(root=>root.scanEnabled),config.managedRoots[0]?.id);await loadJobs();window.setInterval(loadJobs,2000);}catch(error){notify(error.message);}})();
+    (async()=>{try{config=await request('/config/public');const outputs=config.managedRoots.filter(root=>root.outputEnabled);fillSelect('download-destination',outputs,config.defaultDestinationRootId);fillSelect('archive-destination',outputs,config.defaultDestinationRootId);fillSelect('source-root',config.managedRoots.filter(root=>root.scanEnabled),config.managedRoots[0]?.id);await Promise.all([loadJobs(),loadWorker(),loadDirectories()]);window.setInterval(loadJobs,2000);}catch(error){notify(error.message);}})();
   </script>
 </body>
 </html>`;

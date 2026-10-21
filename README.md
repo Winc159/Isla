@@ -2,18 +2,19 @@
 
 Isla 是一个使用 TypeScript 开发的个人 Agent Runtime。目前通过 CLI 提供进程内连续对话，并提供独立 Resource Web 工具台；支持 OpenAI、DeepSeek、阿里云百炼和兼容 OpenAI 接口的本地模型服务。v0.5.1 已补齐 Resource Worker 生产链路，当前工作区版本为 `0.5.1`。
 
-v0.4.8 增加 Host-owned Capability Catalog、确定性能力预选、Task 级激活状态和逐 Model Step Tool Snapshot。模型可通过能力搜索与激活补充 Runtime 预选；每次请求只暴露当前任务相关的 Tool Schema，且不会绕过 Profile、Sandbox 或 Approval。设计与验收见 [`docs/proposals/v0.4.8/`](docs/proposals/v0.4.8/README.md)。
+Isla 由常驻 Resident Host、Resource Service 和轻量 CLI 客户端组成。Host 持有 Session、Memory、Provider 和 Agent Runtime；关闭 CLI 不会结束后台服务或 Resource 任务。
 
 ## 文档导航
 
-- [当前架构](docs/current/architecture.md)：Runtime 分层、完整请求链路和安全边界；
-- [实现导航](docs/current/implementation.md)：从改动意图定位源码与测试；
-- [测试与发布验证](docs/current/testing.md)：离线、真实环境和发布门禁；
-- [架构决策](docs/current/decisions.md)：稳定取舍及重新评估条件；
+- [当前架构](docs/architecture.md)：Runtime 分层、完整请求链路和安全边界；
+- [配置说明](docs/configuration.md)：Config/Profile 和本机运行时配置；
+- [运行维护](docs/operations.md)：N100、systemd、服务状态和日志；
+- [开发导航](docs/development.md)：从改动意图定位源码与测试；
+- [测试与发布验证](docs/testing.md)：离线、真实环境和发布门禁；
+- [架构决策](docs/decisions.md)：稳定取舍及重新评估条件；
 - [Roadmap](docs/roadmap.md)：版本历史和后续方向；
-- [历史提案](docs/proposals/)与[归档索引](docs/archive/index.md)：设计过程、评估和被替代资料。
 
-`docs/current/` 是当前事实入口；proposal 和 archive 用于解释历史，不覆盖当前源码事实。
+文档只描述当前架构与仍有效的决策。过期的逐版本 proposal、implementation、testing 和 evaluation 不再保留在主分支。
 
 ## 安装
 
@@ -55,30 +56,20 @@ Windows x64 会下载并校验官方 7-Zip，缓存到 `"%LOCALAPPDATA%\\Isla\\t
 
 Resource 解压只在隔离 staging 目录进行，完成校验后再发布到受管目录。不要把 `~/.isla/`、bdpan 配置、Token、分享密码或真实下载内容提交到仓库。百度网盘授权仍由 bdpan 自己完成；Isla 只调用其 `whoami`、`ls` 和 `download` 能力。使用非默认授权文件时通过 `BDPAN_CONFIG_PATH` 显式指定，Isla 不读取或回显其中的 Token。
 
-构建后可启动独立的 Resource Web 工作台。先在 `~/.isla/resource.json` 创建本机配置（路径必须是绝对路径）：
-
-```json
-{
-  "version": 1,
-  "listen": { "host": "127.0.0.1", "port": 43120, "allowedOrigins": ["http://127.0.0.1:43120"] },
-  "isla": { "endpoint": "http://127.0.0.1:43110", "token": "仅供本机进程间调用的值" },
-  "databasePath": "D:/IslaData/resource.sqlite",
-  "stagingPath": "D:/IslaData/staging",
-  "managedRoots": [
-    { "id": "library", "label": "资源库", "path": "D:/Media", "scanEnabled": true, "outputEnabled": true }
-  ],
-  "defaultDestinationRootId": "library"
-}
-```
+构建后启动 Resident Host 和独立的 Resource Web 工作台：
 
 ```bash
 npm run build
+npm run host:start
+# 另一个终端：
 npm run resource:start
-# 或指定另一份配置
-npm run resource:start -- D:/path/to/resource.json
 ```
 
-浏览器打开终端显示的 `/resource` 地址。本地目录选择使用“受管目录 + 相对路径”，页面可浏览受管根内的子文件夹，但不能提交任意系统路径；Windows 和 Linux/N100 使用同一套边界。百度网盘区可从根目录进入 `/apps/bdpan`，查看文件名、大小和更新时间，返回上一级、多选文件或确认下载整个目录。Windows 若 bdpan 或 7-Zip 不在 Isla 默认安装位置，可设置 `ISLA_BDPAN_PATH`、`ISLA_7Z_PATH`；bdpan 使用非默认授权配置时设置 `BDPAN_CONFIG_PATH`。这些变量和配置文件都属于本地私人配置，不应提交。页面通过仅限 Resource API 的 HttpOnly 同源会话工作，CLI/API 自动化仍可显式设置 `ISLA_RESOURCE_TOKEN` 后使用 Bearer Token。
+首次启动会自动创建 `~/.isla/runtime.json`、`resource.json`、`resource.sqlite`、`staging/` 和 `resources/`。`runtime.json` 只保存本机 loopback 地址和随机进程间令牌；`resource.json` 只保存用户可配置的受管资源目录，不再要求填写端口、Token、数据库路径、并发、扫描间隔或解压限制。
+
+浏览器打开终端显示的 `/resource` 地址，可直接管理资源目录和可选 Worker。Worker Provider、模型和 API Key 写入正常的 `~/.isla/config.json`；API Key 只允许输入或替换，页面只显示“已配置/未配置”。配置采用 revision 检查和原子替换，保存后重启对应服务生效。本地目录选择继续使用“受管目录 + 相对路径”，页面可浏览受管根内的子文件夹，但任务 API 不能提交任意系统路径；Windows 和 Linux/N100 使用同一套边界。百度网盘区可从根目录进入 `/apps/bdpan`，查看文件名、大小和更新时间，返回上一级、多选文件或确认下载整个目录。Windows 若 bdpan 或 7-Zip 不在 Isla 默认安装位置，可设置 `ISLA_BDPAN_PATH`、`ISLA_7Z_PATH`；bdpan 使用非默认授权配置时设置 `BDPAN_CONFIG_PATH`。这些变量和配置文件都属于本地私人配置，不应提交。页面通过仅限 Resource API 的 HttpOnly 同源会话工作，CLI/API 自动化仍可显式设置 `ISLA_RESOURCE_TOKEN` 后使用 Bearer Token。
+
+Linux 用户级 systemd 模板位于 `deploy/systemd/`。它们只负责进程生命周期，CLI、systemd 和容器仍复用相同的 Runtime/Config 装配，Runtime Core 不依赖 systemd。
 
 终态任务可在页面中重新下载或清除记录。清除只删除 Resource 的任务与事件记录，不删除已下载、已解压或已整理的文件；运行中任务必须先取消，不能直接清除。
 
@@ -110,7 +101,18 @@ npx --package ./winc159-isla-0.5.1.tgz isla
 
 ## 使用
 
-首次运行 `isla` 时，如果没有配置文件，会进入启动向导，选择 Profile、Provider、模型、API Key 和基础运行设置。配置默认保存在用户目录的 `~/.isla/config.json`；API Key 与 Profile 保存在同一文件中，是本地明文凭据，请按私密文件保护。后续可使用 `/config`、`/config open`、`/config setup`、`/profile list` 和 `/profile use <name>` 管理配置，修改在下次启动生效。
+首次在 Linux/N100 交互运行 `isla` 时，如果没有配置文件，会先进入启动向导，然后安装并启动当前用户的 Host 与 Resource systemd 服务。配置默认保存在 `~/.isla/config.json`。
+
+```bash
+isla                              # 连接常驻 Host 交互对话
+isla 帮我检查今天需要处理的事情   # 恢复当前 workspace 最近会话，回答后退出
+isla --new 开始一个新话题         # 创建新会话
+isla service status               # 查看 Host 与 Resource 状态
+isla service logs                 # 跟踪后台日志
+isla --local                      # 显式使用进程内开发模式
+```
+
+API Key 与 Profile 保存在同一文件中，是本地明文凭据，请按私密文件保护。远程 CLI 默认不创建第二套 Runtime；Resident Host 未运行时会提示启动服务。
 
 测试、CI 或临时运行仍可使用环境变量：将 `.env.example` 复制为 `.env`，然后使用显式的 `--env` 启动：
 

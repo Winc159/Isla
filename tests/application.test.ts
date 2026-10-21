@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createApplication, createStderrDiagnosticSink } from "../src/application.js";
+import { createApplication, createStderrDiagnosticSink } from "../src/runtime/application.js";
 import { IslaRuntime } from "../src/core/runtime.js";
 
 describe("ApplicationContext resources", () => {

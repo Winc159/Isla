@@ -23,7 +23,7 @@ export async function createPtyFixture(options: { readonly withMcp?: boolean } =
   };
   await writeFile(configPath, JSON.stringify({ version: 1, defaultProfile: 'pty', profiles: { pty: profile } }), 'utf8');
   const node = process.execPath;
-  const entry = resolve(process.cwd(), 'dist', 'cli.js');
+  const entry = resolve(process.cwd(), 'dist', 'entrypoints', 'cli.js');
   const driver = new PtyDriver(node, [entry, '--config', configPath, '--profile', 'pty'], { cwd: process.cwd(), env: { ...process.env as Record<string, string>, USERPROFILE: root, HOME: root, HOMEDRIVE: '', HOMEPATH: '', ISLA_MEMORY_ENABLED: '0' } });
   await driver.waitForText('you>');
   return { root, workspace, server, driver, dispose: async () => { await driver.dispose(); await server.close(); await rm(root, { recursive: true, force: true }); } };

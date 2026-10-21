@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { JsonSessionStore, parseStoredSession, type StoredSkillCatalogV1 } from "../src/session-store.js";
+import { JsonSessionStore, parseStoredSession, type StoredSkillCatalogV1 } from "../src/sessions/store.js";
 
 describe("Session v5 Skill catalog", () => {
   it("persists and restores a bounded catalog", async () => {

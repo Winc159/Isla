@@ -1,4 +1,6 @@
-import { isAbsolute, normalize } from "node:path";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, normalize } from "node:path";
+import type { LocalRuntimeConfigV1 } from "../config/local-runtime.js";
 
 export interface ResourceManagedRootV1 {
   readonly id: string;
@@ -25,13 +27,39 @@ const DEFAULT_CONCURRENCY = { download: 2, inspection: 2, extraction: 1, inferen
 const DEFAULT_SCANNING = { intervalMs: 30_000, settleMs: 10_000 } as const;
 const DEFAULT_LIMITS = { maxInputChars: 20_000, maxFiles: 20_000, maxExtractedBytes: 500_000_000_000, maxSingleFileBytes: 200_000_000_000, maxExpansionRatio: 200 } as const;
 
-export function parseResourceConfig(source: string): ResourceConfigV1 {
+export interface ResourceUserConfigV1 {
+  readonly version: 1;
+  readonly managedRoots: readonly ResourceManagedRootV1[];
+  readonly defaultDestinationRootId: string;
+}
+
+export async function loadOrCreateResourceConfig(path: string, runtime: LocalRuntimeConfigV1, defaultResourceDirectory = join(dirname(path), "resources")): Promise<ResourceConfigV1> {
+  let source: string;
+  try { source = await readFile(path, "utf8"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const initial: ResourceUserConfigV1 = { version: 1, managedRoots: [{ id: "resources", label: "资源目录", path: defaultResourceDirectory, scanEnabled: true, outputEnabled: true }], defaultDestinationRootId: "resources" };
+    await mkdir(dirname(path), { recursive: true });
+    source = `${JSON.stringify(initial, null, 2)}\n`;
+    try { await writeFile(path, source, { encoding: "utf8", mode: 0o600, flag: "wx" }); }
+    catch (writeError) {
+      if ((writeError as NodeJS.ErrnoException).code !== "EEXIST") throw writeError;
+      source = await readFile(path, "utf8");
+    }
+    await chmod(path, 0o600).catch(() => {});
+  }
+  const config = parseResourceConfig(source, { directory: dirname(path), runtime });
+  await Promise.all([mkdir(dirname(config.databasePath), { recursive: true }), mkdir(config.stagingPath, { recursive: true }), ...config.managedRoots.map(root => mkdir(root.path, { recursive: true }))]);
+  return config;
+}
+
+export function parseResourceConfig(source: string, defaults?: { readonly directory: string; readonly runtime: LocalRuntimeConfigV1 }): ResourceConfigV1 {
   let value: unknown;
   try { value = JSON.parse(source); } catch { throw new Error("Invalid Resource config JSON"); }
   const root = object(value, "config");
   if (root.version !== 1) throw new Error("Resource config version must be 1");
-  const listen = object(root.listen, "listen");
-  const isla = object(root.isla, "isla");
+  const listen = root.listen === undefined && defaults ? { host: defaults.runtime.resource.host, port: defaults.runtime.resource.port, allowedOrigins: [`http://${defaults.runtime.resource.host}:${defaults.runtime.resource.port}`] } : object(root.listen, "listen");
+  const isla = root.isla === undefined && defaults ? { endpoint: `http://${defaults.runtime.host.host}:${defaults.runtime.host.port}`, token: defaults.runtime.host.token } : object(root.isla, "isla");
   const managedRoots = array(root.managedRoots, "managedRoots").map((item, index) => parseManagedRoot(item, index));
   if (managedRoots.length === 0) throw new Error("managedRoots must contain at least one root");
   const ids = managedRoots.map(item => item.id);
@@ -52,8 +80,8 @@ export function parseResourceConfig(source: string): ResourceConfigV1 {
       allowedOrigins: array(listen.allowedOrigins, "listen.allowedOrigins").map((item, index) => origin(item, `listen.allowedOrigins[${index}]`)),
     },
     isla: { endpoint, token },
-    databasePath: absolutePath(root.databasePath, "databasePath"),
-    stagingPath: absolutePath(root.stagingPath, "stagingPath"),
+    databasePath: absolutePath(root.databasePath ?? (defaults ? join(defaults.directory, "resource.sqlite") : undefined), "databasePath"),
+    stagingPath: absolutePath(root.stagingPath ?? (defaults ? join(defaults.directory, "staging") : undefined), "stagingPath"),
     managedRoots,
     defaultDestinationRootId,
     concurrency: {

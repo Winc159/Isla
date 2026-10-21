@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseConfigFile, profileToAppConfig } from '../src/config.js';
+import { parseConfigFile, profileToAppConfig } from '../src/config/schema.js';
 
 const profile = (mcp: unknown) => parseConfigFile(JSON.stringify({ version: 1, defaultProfile: 'local', profiles: { local: { provider: 'local', model: 'fixture', baseURL: 'http://127.0.0.1:11434/v1', mcp } } })).profiles.local!;
 

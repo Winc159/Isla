@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addMcpServer, editMcpServer, isSensitiveMcpEnvKey, listMcpConfig, removeMcpServer, replaceMcpServers } from '../src/mcp/profile-config.js';
-import type { IslaConfigFileV1 } from '../src/config.js';
+import type { IslaConfigFileV1 } from '../src/config/schema.js';
 
 const server = { id: 'local', transport: 'stdio' as const, command: 'node', args: ['server.mjs'], required: false, startupTimeoutMs: 10_000, callTimeoutMs: 60_000, env: { API_TOKEN: 'secret' } };
 const config: IslaConfigFileV1 = { version: 1, defaultProfile: 'main', profiles: { main: { provider: 'local', model: 'test', baseURL: 'http://127.0.0.1:11434/v1', mcp: { servers: [server] } } } };

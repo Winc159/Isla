@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import type { RuntimePlugin } from '../core/plugin.js';
 import type { ModelCallOptions, ModelProvider, ModelRequest, ModelResponse, ProviderCapabilities, ToolResponse, ToolDefinition, TokenUsage } from '../core/types.js';
 import type { ModelStreamEvent } from '../core/model-stream.js';
-import type { BailianConfig } from '../config.js';
+import type { BailianConfig } from '../config/schema.js';
 import { normalizeProviderError, RuntimeError } from '../core/errors.js';
 import { bailianCapabilities } from './bailian-capabilities.js';
 

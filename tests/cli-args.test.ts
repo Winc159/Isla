@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCliStartupArgs } from '../src/cli-args.js';
+import { parseCliStartupArgs } from '../src/client/args.js';
 
 describe('CLI startup arguments', () => {
   it('accepts the non-interactive model catalog flag', () => expect(parseCliStartupArgs(['--models'])).toMatchObject({ models: true }));

@@ -21,8 +21,8 @@ export interface CreateSessionOptions {
   readonly journal?: SessionJournal;
   readonly taskContract?: import('./task-contract.js').TaskContractV1;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
-  readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1;
-  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: import("./context.js").SessionContext; readonly journal?: SessionJournal; readonly task?: import("./agent-loop.js").TaskBrief | import("./task-state.js").TaskStateV1; readonly taskContract?: import('./task-contract.js').TaskContractV1; readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1 }) => Promise<void>;
+  readonly skillCatalog?: import("../sessions/store.js").StoredSkillCatalogV1;
+  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: import("./context.js").SessionContext; readonly journal?: SessionJournal; readonly task?: import("./agent-loop.js").TaskBrief | import("./task-state.js").TaskStateV1; readonly taskContract?: import('./task-contract.js').TaskContractV1; readonly skillCatalog?: import("../sessions/store.js").StoredSkillCatalogV1 }) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
   readonly projectRoot?: string;
   readonly onToolsUsed?: (tools: readonly string[]) => void;

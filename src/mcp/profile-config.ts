@@ -1,5 +1,5 @@
-import type { ConfigStore } from '../config-store.js';
-import { resolveProfile, type IslaConfigFileV1, type StartupProfileV1 } from '../config.js';
+import type { ConfigStore } from '../config/store.js';
+import { resolveProfile, type IslaConfigFileV1, type StartupProfileV1 } from '../config/schema.js';
 import type { McpServerConfig } from './types.js';
 
 export interface McpConfigSummary {

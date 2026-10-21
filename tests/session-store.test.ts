@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { JsonSessionStore } from "../src/session-store.js";
+import { JsonSessionStore } from "../src/sessions/store.js";
 
 const directories: string[] = [];
 

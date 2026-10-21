@@ -2,7 +2,7 @@ import { mkdtemp, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { resolveWorkspace } from "../src/workspace.js";
+import { resolveWorkspace } from "../src/config/workspace.js";
 
 describe("workspace resolution", () => {
   it("prefers explicit, then profile, then cwd and returns an absolute real path", async () => {
