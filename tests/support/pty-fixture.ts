@@ -9,10 +9,12 @@ export async function createPtyFixture(options: { readonly withMcp?: boolean } =
   const workspace = join(root, 'workspace');
   const sessions = join(root, 'sessions');
   const memory = join(root, 'memory');
-  await mkdir(join(workspace, '.isla', 'skills', 'fixture-review'), { recursive: true });
+  const personalSkills = join(root, '.isla', 'skills', 'fixture-review');
+  await mkdir(workspace, { recursive: true });
+  await mkdir(personalSkills, { recursive: true });
   await mkdir(sessions, { recursive: true });
   await mkdir(memory, { recursive: true });
-  await writeFile(join(workspace, '.isla', 'skills', 'fixture-review', 'SKILL.md'), '---\nname: fixture-review\ndescription: Review the fixture\nuser-invocable: true\nmodel-invocable: true\n---\nReturn the fixed fixture result.\n', 'utf8');
+  await writeFile(join(personalSkills, 'SKILL.md'), '---\nname: fixture-review\ndescription: Review the fixture\nuser-invocable: true\nmodel-invocable: true\n---\nReturn the fixed fixture result.\n', 'utf8');
   const server = new OpenAI_fixtureServer();
   await server.start();
   const configPath = join(root, 'config.json');

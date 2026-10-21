@@ -12,7 +12,8 @@ export const skillsCommand: CliCommand = {
     let entries = 'skillCatalog' in context.currentSession && context.currentSession.skillCatalog
       ? context.currentSession.skillCatalog.entries
       : [];
-    const liveCatalog = new SkillCatalog({ workspaceRoot: join(context.workspaceRoot, '.isla', 'skills'), personalRoot: join(homedir(), '.isla', 'skills') });
+    const personalSkillsRoot = join(homedir(), '.isla', 'skills');
+    const liveCatalog = new SkillCatalog({ workspaceRoot: personalSkillsRoot, personalRoot: personalSkillsRoot });
     if (!entries.length) entries = liveCatalog.listSync().entries;
     const commandLine = context.commandLine?.trim() ?? '';
     const invoking = commandLine === '/skill' || commandLine.startsWith('/skill ');

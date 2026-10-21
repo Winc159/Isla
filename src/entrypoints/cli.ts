@@ -348,6 +348,10 @@ function writeHeader(output: Writable, providerId: string, model: string, worksp
   );
 }
 
+function writeHelp(output: Writable): void {
+  output.write(`Isla - personal Agent Runtime\n\nUsage:\n  isla [text]                 Ask the resident Host and exit\n  isla                        Open a resident conversation\n  isla --new [text]           Start a new session\n  isla --local [text]         Run without the resident Host\n  isla service <command>      Manage Host and Resource services\n\nService commands:\n  install | start | stop | restart | status | logs\n\nOptions:\n  --workspace <path>          Select the conversation workspace\n  --profile <name>            Select a configured profile\n  --config <path>             Use an explicit config file\n  --env                       Use environment compatibility config\n  --models                    List models and exit\n  --help                      Show this help\n`);
+}
+
 function createPersistentSession(
   runtime: import('../core/runtime.js').IslaRuntime,
   providerId: string,
@@ -384,6 +388,7 @@ if (isCliEntry(import.meta.url, process.argv[1]) && process.argv[2] === 'install
 } else if (isCliEntry(import.meta.url, process.argv[1])) {
   try {
     const rawArgs = process.argv.slice(2);
+    if (rawArgs.includes('--help') || rawArgs.includes('-h')) { writeHelp(process.stdout); process.exit(0); }
     const invocation = parseRemoteCliInvocation(rawArgs);
     if (invocation.mode === 'service') {
       await runServiceCommand(invocation.serviceArgs ?? [], process.stdout);
@@ -429,7 +434,8 @@ if (isCliEntry(import.meta.url, process.argv[1]) && process.argv[2] === 'install
       let useExistingProtocolSession = true;
       let selectedProtocolSession = protocolStored;
       let activeProtocolSession: ChatSession | undefined;
-      const protocolSkillCatalog = new SkillCatalog({ workspaceRoot: join(config.workspaceRoot ?? process.cwd(), '.isla', 'skills'), personalRoot: join(homedir(), '.isla', 'skills') });
+      const personalSkillsRoot = join(homedir(), '.isla', 'skills');
+      const protocolSkillCatalog = new SkillCatalog({ workspaceRoot: personalSkillsRoot, personalRoot: personalSkillsRoot });
       await runProtocol(process.stdin, process.stdout, undefined, config.provider, config.model, {
         ...(config.workspaceRoot ? { workspace: config.workspaceRoot } : {}),
         capabilities: { toolCalling: runtime.getProviderCapabilities(config.provider)?.toolCalling === true, cancellation: true, streaming: runtime.getProviderCapabilities(config.provider)?.nativeStreaming === true, streamingToolCalls: runtime.getProviderCapabilities(config.provider)?.streamingToolCalls === true, webFetch: config.webFetch?.enabled === true, webSearch: config.webSearch?.enabled === true, userQuestions: true, mcp: Boolean(mcpHost) },

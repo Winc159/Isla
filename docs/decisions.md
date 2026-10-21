@@ -2,6 +2,13 @@
 
 每项决策均记录背景、选择、代价和重新评估条件。历史设计过程见对应 proposal。
 
+## D0 个人 Agent 的 Agent Turn 可观测性
+
+- 背景：Agent Loop 的安全判断会随着 Tool、上下文、预算、取消和验证能力增加而增长。
+- 决策：保留这些判断，但通过有限的 `TurnPhase`（preflight、model、executing_tools、observing、compacting、settling、completed、blocked、failed、cancelled）暴露当前阶段；观测回调不得影响回合执行。
+- 选择：先增加明确状态和边界，再按真实复杂度拆分 TurnRunner、ToolPolicy 和 Settlement；暂不引入完整事件总线、通用 Agent Registry 或 DSH/Cordis 服务容器。
+- 重新评估：当管理 CLI、Host API 或持久化日志需要消费同一套回合状态时，再把 Agent Turn 控制流从 `ChatSession` 提取为独立 Runner。
+
 ## D1 Config/Profile 是正常配置事实源
 
 - 背景：Provider、模型、Base URL、凭据和能力策略需要可解释、可切换且不依赖 shell 状态。

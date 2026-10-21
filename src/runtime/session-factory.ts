@@ -120,7 +120,8 @@ export function createSessionFactory(options: SessionFactoryOptions) {
   const browserConsoleToken = browserConsoles.get(workspaceRoot)?.token;
   const browserVault = browserConsoles.get(workspaceRoot)?.vault;
   const sessionQuery = new SessionQuery(sessionStore);
-  const skillCatalog = new SkillCatalog({ workspaceRoot: join(workspaceRoot, '.isla', 'skills'), personalRoot: join(homedir(), '.isla', 'skills') });
+  const personalSkillsRoot = join(homedir(), '.isla', 'skills');
+  const skillCatalog = new SkillCatalog({ workspaceRoot: personalSkillsRoot, personalRoot: personalSkillsRoot });
   const capabilitySnapshot = (): CapabilitySnapshot => {
     const capabilities = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => 'inventory', skillCatalog, ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime)] : []), ...(config.mcpHost?.capabilities() ?? [])];
     return composeCapabilitySnapshot(capabilities, skillCatalog.listSync().entries, config.capabilityPolicy);

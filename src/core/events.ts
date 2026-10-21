@@ -1,5 +1,27 @@
 import type { ToolExecutionResult } from "../tools/types.js";
 
+/** Observable phases of one Agent turn. This is deliberately a small public state machine. */
+export type TurnPhase =
+  | "idle"
+  | "preflight"
+  | "model"
+  | "awaiting_tool_approval"
+  | "executing_tools"
+  | "observing"
+  | "compacting"
+  | "settling"
+  | "completed"
+  | "blocked"
+  | "failed"
+  | "cancelled";
+
+export interface TurnPhaseEvent {
+  readonly phase: TurnPhase;
+  readonly round?: number;
+  readonly tool?: string;
+  readonly detail?: string;
+}
+
 export type SessionEvent =
   | { readonly type: "user"; readonly input: string }
   | { readonly type: "tool_call"; readonly callId: string; readonly tool: string; readonly arguments: string }

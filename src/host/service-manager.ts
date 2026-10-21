@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,20 @@ export async function runServiceCommand(args: readonly string[], output: Writabl
   if (action === 'install') { await installServices(output); return; }
   if (action === 'logs') { await systemctl(['journalctl', '--user', '-u', 'isla-host.service', '-u', 'isla-resource.service', '-f']); return; }
   if (action !== 'start' && action !== 'stop' && action !== 'restart' && action !== 'status') throw new Error('用法：isla service [install|start|stop|restart|status|logs]');
+  if ((action === 'start' || action === 'restart') && !(await serviceUnitsExist())) {
+    await installServices(output);
+    return;
+  }
+  if (action === 'status' && !(await serviceUnitsExist())) {
+    output.write('Isla user services are not installed. Run `isla service install` or `isla service start`.\n');
+    return;
+  }
   await systemctl(['systemctl', '--user', action, ...SERVICES]);
+}
+
+async function serviceUnitsExist(): Promise<boolean> {
+  const directory = join(homedir(), '.config', 'systemd', 'user');
+  try { await Promise.all(SERVICES.map(service => access(join(directory, service)))); return true; } catch { return false; }
 }
 
 async function installServices(output: Writable): Promise<void> {

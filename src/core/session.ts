@@ -18,7 +18,7 @@ import { createRequestSnapshot } from "./request-snapshot.js";
 import { validateAndCleanCitations } from "./citations.js";
 import { deriveVerificationStatus } from "./verification.js";
 import { renderSkillContent } from "../skills/render.js";
-import type { ModelStepEvent, SessionEvent } from "./events.js";
+import type { ModelStepEvent, SessionEvent, TurnPhase, TurnPhaseEvent } from "./events.js";
 import {
   COMPACTION_SECTIONS,
   DEFAULT_CONTEXT_RETAIN_TURNS,
@@ -65,6 +65,8 @@ export interface ChatSessionOptions {
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
   readonly onSessionStateChanged?: (state: SessionPersistenceState) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
+  /** Lightweight observability hook; it must not affect turn execution. */
+  readonly onTurnPhaseChanged?: (event: TurnPhaseEvent) => void;
   readonly onModelStepEvent?: (event: ModelStepEvent) => void;
   readonly projectRoot?: string;
   readonly onToolsUsed?: (tools: readonly string[]) => void;
@@ -126,6 +128,7 @@ export class ChatSession {
     this.onMessagesChanged = options.onMessagesChanged;
     this.onSessionStateChanged = options.onSessionStateChanged;
     this.onSessionEvent = options.onSessionEvent;
+    this.onTurnPhaseChanged = options.onTurnPhaseChanged;
     this.onModelStepEvent = options.onModelStepEvent;
     this.projectRoot = options.projectRoot;
     this.onToolsUsed = options.onToolsUsed;
@@ -161,6 +164,7 @@ export class ChatSession {
   private readonly onSessionStateChanged: ((state: SessionPersistenceState) => Promise<void>) | undefined;
   private readonly journal: SessionJournal;
   private readonly onSessionEvent: ((event: SessionEvent) => Promise<void>) | undefined;
+  private readonly onTurnPhaseChanged: ((event: TurnPhaseEvent) => void) | undefined;
   private readonly onModelStepEvent: ((event: ModelStepEvent) => void) | undefined;
   private readonly projectRoot: string | undefined;
   private readonly onToolsUsed: ((tools: readonly string[]) => void) | undefined;
@@ -186,6 +190,14 @@ export class ChatSession {
   private readonly projectSourceReferences = new Map<string, ProjectSourceReference>();
   private task: TaskBrief | TaskStateV1 | undefined;
   private taskContract: TaskContractV1 | undefined;
+  private turnPhase: TurnPhase = "idle";
+
+  private setTurnPhase(phase: TurnPhase, details: Omit<TurnPhaseEvent, "phase"> = {}): void {
+    this.turnPhase = phase;
+    try { this.onTurnPhaseChanged?.({ phase, ...details }); } catch { /* observability must never break a turn */ }
+  }
+
+  get currentTurnPhase(): TurnPhase { return this.turnPhase; }
 
   get taskState(): TaskStateV1 | undefined {
     if (!this.task) return undefined;
@@ -245,6 +257,7 @@ export class ChatSession {
     const loopStartedAt = Date.now();
     let wrapUpSent = false;
     let readOnlyObservationRounds = 0;
+    this.setTurnPhase("preflight");
     const preflight = preflightAgentLoop({ messages: current, tools, maxInputTokens: this.tokenBudget.maxInputTokens });
     if (preflight.researchGap) return { text: preflight.researchGap, outcome: 'blocked', model: provider.model };
     if (preflight.trimmed) {
@@ -253,6 +266,7 @@ export class ChatSession {
     }
     const researchRequired = preflight.researchRequired;
     for (let round = 0; round < loopBudget.currentBudget; round += 1) {
+      this.setTurnPhase("model", { round });
       if (Date.now() - loopStartedAt >= this.agentLoopTimeoutMs) {
         const turn = this.journal.turns.at(-1);
         if (turn) {
@@ -279,6 +293,7 @@ export class ChatSession {
       const loopRequest = { messages: current, tools, ...(requiredToolChoice ? { toolChoice: { name: requiredToolChoice } as const } : {}) };
       const loopEstimate = estimateRequestTokens(loopRequest);
       if (loopEstimate > Math.floor(this.tokenBudget.maxInputTokens * 0.82)) {
+        this.setTurnPhase("compacting", { round, detail: `estimatedTokens=${loopEstimate}` });
         const before = this.context?.checkpoint?.throughMessageIndex ?? -1;
         await this.compactIfNeeded(signal, true);
         const after = this.context?.checkpoint?.throughMessageIndex ?? -1;
@@ -301,6 +316,7 @@ export class ChatSession {
         }
         if (boundedResponse.text.trim()) return { ...boundedResponse, evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}) };
       }
+      this.setTurnPhase("model", { round });
       const response = await this.generateModel({ messages: current, tools, ...(requiredToolChoice ? { toolChoice: { name: requiredToolChoice } } : {}) }, true, signal, "agent_step");
       if (!response.toolCalls?.length && !mustSearch && !mustFetch) {
         const hasExternalEvidence = evidence.some(item => /^(?:web_search|web_fetch|browser_read|browser_links):/u.test(item));
@@ -399,8 +415,10 @@ export class ChatSession {
     readonly readOnlyObservationRounds: number;
   }): Promise<{ readonly next: Message[]; readonly readOnlyObservationRounds: number; readonly response?: ModelResponse }> {
     let readOnlyObservationRounds = input.readOnlyObservationRounds;
+    this.setTurnPhase("executing_tools", { round: input.round });
     for (let callIndex = 0; callIndex < input.calls.length; callIndex += 1) {
       const call = input.calls[callIndex]!;
+      this.setTurnPhase("executing_tools", { round: input.round, tool: call.name });
       const writeKey = `${call.name}:${call.arguments}`;
       await this.onSessionEvent?.({ type: "tool_call", callId: call.id, tool: call.name, arguments: call.arguments });
       this.onToolStarted?.(call.name, call.id, call.arguments);
@@ -468,6 +486,7 @@ export class ChatSession {
       if (!execution.ok && execution.code === "TURN_CANCELLED") throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
       this.onToolsUsed?.([call.name]);
       const preparedResult = prepareToolResultMessage(call.id, execution);
+      this.setTurnPhase("observing", { round: input.round, tool: call.name });
       if (preparedResult.pruning.pruned) this.onDiagnostic?.({ code: "TOOL_RESULT_PRUNED", component: "context", severity: "debug", detail: `tool=${call.name};originalChars=${preparedResult.pruning.originalChars};retainedChars=${preparedResult.pruning.retainedChars}` });
       const evidenceCards = buildEvidenceCards(call, execution);
       const renderedCards = renderEvidenceCards(evidenceCards);
@@ -548,6 +567,7 @@ export class ChatSession {
     (this.journal.turns as TurnRecord[]).push(turn);
     try { await this.persistState(); } catch (error) { this.messages.pop(); (this.journal.turns as TurnRecord[]).pop(); throw error; }
     await this.onSessionEvent?.({ type: "user", input });
+    this.setTurnPhase("preflight");
     try { await this.compactIfNeeded(signal);
     const prepareRequest = async () => {
       const history = buildRequestMessageProjection(this.messages, {
@@ -618,6 +638,7 @@ export class ChatSession {
     return result;
     } catch (error) {
       const failure = mapTurnFailure(error, signal.aborted);
+      this.setTurnPhase(failure.status === "cancelled" ? "cancelled" : "failed", failure.record?.code ? { detail: failure.record.code } : {});
       turn.status = failure.status;
       turn.endedAt = new Date().toISOString();
       if (failure.record) turn.error = failure.record;
@@ -670,9 +691,11 @@ export class ChatSession {
   private async commitResponse(response: ModelResponse, signal: AbortSignal): Promise<ModelResponse> {
     if (signal.aborted) throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
     await this.appendMessage({ role: "assistant", content: response.text });
-    await this.onSessionEvent?.({ type: "assistant", text: response.text });
+      this.setTurnPhase(response.outcome === "completed" ? "settling" : response.outcome === "blocked" ? "blocked" : "settling");
+      await this.onSessionEvent?.({ type: "assistant", text: response.text });
     try { await this.onTurnCommitted?.([...this.messages]); } catch { this.onDiagnostic?.({ code: "MEMORY_INDEX_FAILED", component: "memory", severity: "debug" }); }
-    return response;
+      this.setTurnPhase(response.outcome === "completed" ? "completed" : "blocked");
+      return response;
   }
 
   private async appendMessage(message: Message): Promise<void> {
