@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "turns": [
+    {
+      "id": "turn-redacted-1",
+      "sequence": 1,
+      "status": "blocked",
+      "attempts": 2,
+      "actions": [
+        { "type": "capability_snapshot", "step": 0, "hash": "safe-hash", "count": 3 },
+        { "type": "tool", "step": 1, "callId": "call-redacted-1", "tool": "read_text_file", "ok": true },
+        { "type": "loop_budget", "step": 2, "budget": 12, "reason": "repeated_failure" }
+      ],
+      "redaction": "user text, tool arguments, tool output, paths and credentials removed"
+    }
+  ]
+}

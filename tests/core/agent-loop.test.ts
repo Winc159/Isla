@@ -74,6 +74,17 @@ describe("agent loop", () => {
     expect(requests).toBe(1);
   });
 
+  it("uses the opt-in decision phase for a simple answer", async () => {
+    let calls = 0;
+    const provider = {
+      id: "fake", model: "fake",
+      async generate(request: ModelRequest): Promise<ModelResponse> { calls += 1; expect(request.responseFormat).toEqual({ type: "json_object" }); return { text: JSON.stringify({ kind: "answer", text: "直接回答", task: { goal: "回答", confirmedConstraints: [], openQuestions: [], assumptions: [] } }) }; },
+      async generateWithTools(): Promise<ToolResponse> { throw new Error("execute path should not run"); },
+    };
+    await expect(new ChatSession(provider, { enableTools: true, agentLoop: true, decisionPhase: true, projectRoot: process.cwd() }).send("简单问题")).resolves.toMatchObject({ text: "直接回答", outcome: "completed" });
+    expect(calls).toBe(1);
+  });
+
   it("does not let a legacy TaskBrief hide tools from the first step", async () => {
     let firstRequest: ModelRequest | undefined;
     const provider = {

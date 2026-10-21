@@ -19,9 +19,10 @@ export interface CreateSessionOptions {
   readonly modelRetries?: number;
   readonly context?: import("./context.js").SessionContext;
   readonly journal?: SessionJournal;
+  readonly taskContract?: import('./task-contract.js').TaskContractV1;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
   readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1;
-  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: import("./context.js").SessionContext; readonly journal?: SessionJournal; readonly task?: import("./agent-loop.js").TaskBrief | import("./task-state.js").TaskStateV1; readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1 }) => Promise<void>;
+  readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: import("./context.js").SessionContext; readonly journal?: SessionJournal; readonly task?: import("./agent-loop.js").TaskBrief | import("./task-state.js").TaskStateV1; readonly taskContract?: import('./task-contract.js').TaskContractV1; readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1 }) => Promise<void>;
   readonly onSessionEvent?: (event: SessionEvent) => Promise<void>;
   readonly projectRoot?: string;
   readonly onToolsUsed?: (tools: readonly string[]) => void;
@@ -29,6 +30,8 @@ export interface CreateSessionOptions {
   readonly onToolFinished?: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly enableTools?: boolean;
   readonly agentLoop?: boolean;
+  readonly decisionPhase?: boolean;
+  readonly loopBudget?: import('./loop-budget.js').LoopBudgetOptions;
   readonly agentLoopTimeoutMs?: number;
   readonly capabilities?: readonly import("../tools/types.js").ToolCapability[];
   readonly resolveCapabilities?: (input: string, step: number, signal: AbortSignal) => Promise<readonly import("../tools/types.js").ToolCapability[]>;

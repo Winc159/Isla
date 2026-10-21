@@ -24,6 +24,7 @@ import { PlaywrightBrowserAdapter } from './browser/playwright-adapter.js';
 import { BrowserConsoleServer } from './browser/console-server.js';
 import { CredentialVault } from './browser/vault.js';
 import { CapabilityCatalog, createCapabilityProvider } from './capability-catalog.js';
+import { CapabilityActivator, composeCapabilityStepSnapshot, createCapabilityRoutingTools } from './capability-routing.js';
 
 export interface SessionFactoryOptions {
   readonly runtime: IslaRuntime;
@@ -50,6 +51,7 @@ export interface SessionFactoryConfig {
   readonly webSearch?: WebSearchConfig;
   readonly mcpHost?: McpHost;
   readonly capabilityPolicy?: CapabilityPolicy;
+  readonly loopBudget?: import('./core/loop-budget.js').LoopBudgetOptions;
 }
 
 const browserRuntimes = new Map<string, BrowserRuntime>();
@@ -105,6 +107,7 @@ export function projectStoredSession(storedSession: StoredSession): {
     ...('context' in storedSession && storedSession.context ? { context: storedSession.context } : {}),
     ...('journal' in storedSession && storedSession.journal ? { journal: storedSession.journal } : {}),
     ...('task' in storedSession && storedSession.task ? { task: storedSession.task } : {}),
+    ...('taskContract' in storedSession && storedSession.taskContract ? { taskContract: storedSession.taskContract } : {}),
     ...('skillCatalog' in storedSession && storedSession.skillCatalog ? { skillCatalog: storedSession.skillCatalog } : {}),
     ...('capabilityActivation' in storedSession && storedSession.capabilityActivation ? { capabilityActivation: storedSession.capabilityActivation } : {}),
   };
@@ -136,9 +139,14 @@ export function createSessionFactory(options: SessionFactoryOptions) {
     create(entry: SessionEntryOptions) {
       let current = entry.stored;
         const composed = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, contextMessages: () => current.messages, skillCatalog, ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime, entry.userQuestionService, browserConsoleUrl, browserConsoleToken, browserVault)] : []), ...(config.mcpHost?.capabilities() ?? [])];
-      const snapshot = composeCapabilitySnapshot(composed, skillCatalog.listSync().entries, config.capabilityPolicy);
+      const catalog = capabilityCatalog();
+      const activator = new CapabilityActivator(catalog, ('capabilityActivation' in current && current.capabilityActivation) ? current.capabilityActivation : undefined);
+      const routingTools = createCapabilityRoutingTools(catalog, activator, () => 0);
+      const routingCapability = { id: 'capability-routing', tools: routingTools } as import('./tools/types.js').ToolCapability;
+      const withRouting = [...composed, routingCapability];
+      const snapshot = composeCapabilitySnapshot(withRouting, skillCatalog.listSync().entries, config.capabilityPolicy);
       const visible = new Set(snapshot.toolDefinitions.map(tool => tool.name));
-      const filtered = composed.map(capability => ({ ...capability, tools: capability.tools.filter(tool => visible.has(tool.definition.name)) })).filter(capability => capability.tools.length > 0);
+      const filtered = withRouting.map(capability => ({ ...capability, tools: capability.tools.filter(tool => visible.has(tool.definition.name)) })).filter(capability => capability.tools.length > 0);
       return runtime.createSession({
         providerId: config.provider,
         ...projectStoredSession(current),
@@ -153,8 +161,13 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         skillCatalog: ('skillCatalog' in current && current.skillCatalog) ? current.skillCatalog : { version: 1, entries: skillCatalog.listSync().entries },
         ...('capabilityActivation' in current && current.capabilityActivation ? { capabilityActivation: current.capabilityActivation } : {}),
         agentLoop: true,
+        ...(config.loopBudget ? { loopBudget: config.loopBudget } : {}),
         agentLoopTimeoutMs: config.timeoutMs ?? 600_000,
         capabilities: filtered,
+        resolveCapabilities: async (input, step, signal) => {
+          const dynamic = await composeCapabilityStepSnapshot(catalog, activator, input, step, [], signal);
+          return [...dynamic.capabilities, routingCapability];
+        },
         projectRoot: workspaceRoot,
         ...(diagnostics ? { onDiagnostic: diagnostics } : {}),
         permissionPreset: 'workspace',

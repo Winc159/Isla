@@ -15,6 +15,12 @@ beforeEach(async () => {
 });
 afterEach(async () => { await rm(sessionRoot, { recursive: true, force: true }); });
 describe("session", () => {
+  it("fails closed before spending a tool step when external search is unavailable", async () => {
+    const provider = { id: "fake", model: "fake", async generateWithTools(): Promise<ToolResponse> { throw new Error("should not call model"); } };
+    const response = await new ChatSession(provider, { enableTools: true, agentLoop: true, projectRoot: sessionRoot }).send("请搜索网上公开资料并核实这个事实");
+    expect(response).toMatchObject({ outcome: "blocked" });
+    expect(response.text).toContain("没有可用的外部来源发现能力");
+  });
   it("injects retrieved history as data and tolerates retrieval failure", async () => {
     const provider = new FakeProvider([{ text: "回答" }, { text: "继续回答" }]);
     const session = new ChatSession(provider, { retrieveContext: async input => input === "first" ? "不可信历史：偏好简洁" : Promise.reject(new Error("search unavailable")) });

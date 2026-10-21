@@ -5,7 +5,10 @@ export type CompletionRejectionReason =
   | "active_tool"
   | "turn_cancelled"
   | "verification_missing_after_mutation"
-  | "verification_failed_after_mutation";
+  | "verification_failed_after_mutation"
+  | "deliverable_missing"
+  | "task_step_pending"
+  | "contract_evidence_missing";
 
 import type { VerificationStatus } from "./verification.js";
 export type { VerificationStatus } from "./verification.js";
@@ -20,6 +23,9 @@ export interface CompletionGateInput {
   readonly cancelled?: boolean;
   readonly verificationStatus?: VerificationStatus;
   readonly priorRejections?: readonly CompletionRejectionReason[];
+  readonly contract?: { readonly status: "active" | "blocked" | "completed"; readonly deliverables: readonly string[]; readonly steps: readonly { readonly status: string }[]; readonly evidence: readonly unknown[] };
+  readonly completedDeliverableCount?: number;
+  readonly satisfiedContractEvidenceCount?: number;
 }
 
 export type CompletionGateResult =
@@ -34,6 +40,9 @@ const observations: Record<CompletionRejectionReason, string> = {
   turn_cancelled: "[completion_rejected] 当前 Turn 已取消，不能继续交付新的完成结果。",
   verification_missing_after_mutation: "[completion_rejected] 当前存在修改但尚未验证。请运行适用的测试、构建、类型检查或其他验证命令；如果确实没有适用检查，请明确说明未验证原因后再交付。",
   verification_failed_after_mutation: "[completion_rejected] 修改后的验证未通过。请读取验证结果，继续修复并重新运行验证，不要声称已经完成。",
+  deliverable_missing: "[completion_rejected] 当前任务仍有未交付项。请完成或明确说明无法完成的交付物。",
+  task_step_pending: "[completion_rejected] 当前任务仍有未完成步骤。请继续执行，或将阻塞原因写入任务状态。",
+  contract_evidence_missing: "[completion_rejected] 当前任务的成功标准仍缺少证据。请补充工具/验证证据，或明确说明无法核实。",
 };
 
 export function evaluateCompletionGate(input: CompletionGateInput): CompletionGateResult {
@@ -53,7 +62,13 @@ export function evaluateCompletionGate(input: CompletionGateInput): CompletionGa
               ? "verification_missing_after_mutation"
               : input.verificationStatus === "failed_after_last_change"
                 ? "verification_failed_after_mutation"
-            : undefined;
+                : input.contract && input.contract.status === "active" && input.contract.steps.some(step => step.status !== "completed")
+                  ? "task_step_pending"
+                  : input.contract && input.contract.status === "active" && input.contract.deliverables.length > (input.completedDeliverableCount ?? 0)
+                    ? "deliverable_missing"
+                    : input.contract && input.contract.status === "active" && input.contract.evidence.length > (input.satisfiedContractEvidenceCount ?? 0)
+                      ? "contract_evidence_missing"
+                      : undefined;
   if (!reason) return { accepted: true };
   const repeated = (input.priorRejections ?? []).filter(item => item === reason).length > 0;
   if (reason === "verification_missing_after_mutation" && repeated) return { accepted: true };

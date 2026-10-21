@@ -87,6 +87,18 @@ Isla 已出现新的真实问题：固定历史窗口、单一 Prompt 和“无 
 
 Luna 实现 v0 时不需要继续通读 DSH，也不应从 DSH 复制代码。只需遵守 `architecture-v0.md` 中已吸收的语义；如果发现必须引入本文件“暂缓”或“拒绝”的能力，应先停止扩展并更新设计决策。
 
+## v0.5.3 补充评审：Goal-driven Agent Runtime（2026-10-20）
+
+真实主 Agent 对话已经暴露任务缩小、能力未发现、固定 Step 预算过早停止、只读调用串行和未完成任务被包装成完成等通用问题。本轮重新检查 DSH 当前 Agent Loop、Core、Tool Catalog 和并行调度。
+
+采用：模型可见事实先进入 Session；Loop 驱动与 Task、能力呈现、Tool 和终态策略分责；Tool Result 后持续下一 Step；并行使用 argument-sensitive、fail-closed 分类、有界 rolling pool、exclusive barrier 和模型顺序提交；调度失败/取消仍闭合 Tool Call；Web Schema 与 provider 解耦；Goal/Todo 只记录任务事实。
+
+按 Isla 调整：DSH 默认无 Turn Step Budget，Isla 保留多维安全上限并以 paused 收敛；DSH 并行默认可到 10，Isla 默认 4、范围 1-8；Isla 使用类型封闭模块，不引入 Cordis；不整体移植完整工具族。
+
+暂缓：完整 inbox、Subagent、Agent Team、Ralph、Workflow、Jobs、持久 Terminal、spill、per-agent plugin scope 和资源冲突图。拒绝无限循环、按名称猜并行安全、让模型把失败链解释成成功、复制 DSH 源码或以堆 Tool 数量代替能力发现。
+
+DSH 公开资料也显示无 Step 上限可能形成高 Token 循环，失败 Tool 链若只等待模型停止可能误记 completed。Isla 必须用 Progress Budget 和 Completion Gate V2 覆盖。完整契约见 `docs/proposals/v0.5.3/`。
+
 ## v0.2.4 补充评审
 
 v0.2.3 已经出现新的现实问题：`search_project` 的展示字符串被 Runtime 正则当作内部协议，检索评测只能证明基本命中，最终来源也没有严格区分“检索到”和“回答实际引用”。因此 v0.2.4 再参考 DSH 当前 Tool pipeline、Session Query 与 Tool Result pruning 的职责边界。

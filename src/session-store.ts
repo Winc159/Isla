@@ -10,6 +10,7 @@ import type { TaskBrief } from "./core/agent-loop.js";
 import { migrateTaskBrief, type TaskStateV1 } from "./core/task-state.js";
 import type { SkillCatalogEntry } from "./skills/types.js";
 import type { CapabilityActivationStateV1 } from './capability-routing.js';
+import type { TaskContractV1 } from './core/task-contract.js';
 
 export type { ContextCheckpoint, SessionContext } from "./core/context.js";
 
@@ -72,6 +73,7 @@ export interface StoredSessionV5 extends Omit<StoredSessionV4, "version"> {
   readonly version: 5;
   readonly skillCatalog: StoredSkillCatalogV1;
   readonly capabilityActivation?: CapabilityActivationStateV1;
+  readonly taskContract?: TaskContractV1;
 }
 
 export type StoredSession = StoredSessionV1 | StoredSessionV2 | StoredSessionV3 | StoredSessionV4 | StoredSessionV5;
@@ -174,6 +176,7 @@ export class JsonSessionStore implements SessionStore {
       messages: [...state.messages],
       ...(state.context ? { context: state.context } : {}),
       ...(state.task ? { task: isTaskState(state.task) ? state.task : migrateTaskBrief(state.task, state.messages) } : {}),
+      ...('taskContract' in state && state.taskContract ? { taskContract: state.taskContract } : {}),
       journal: state.journal ?? ('journal' in session ? session.journal : emptyJournal()),
       ...((session.version === 5 || state.skillCatalog !== undefined) ? { skillCatalog: state.skillCatalog ?? (session.version === 5 ? session.skillCatalog : { version: 1, entries: [] }) } : {}),
       ...(state.capabilityActivation ? { capabilityActivation: state.capabilityActivation } : (session.version === 5 && session.capabilityActivation ? { capabilityActivation: session.capabilityActivation } : {})),
@@ -202,7 +205,7 @@ export class JsonSessionStore implements SessionStore {
       try {
         await lock.close();
       } finally {
-        await unlink(lockPath).catch(() => {});
+        await lock.release();
       }
     }
   }
@@ -210,19 +213,27 @@ export class JsonSessionStore implements SessionStore {
 
 const staleLockMs = 30_000;
 
-async function acquireLock(lockPath: string): Promise<FileHandle> {
+interface SessionLock {
+  readonly close: () => Promise<void>;
+  readonly release: () => Promise<void>;
+}
+
+async function acquireLock(lockPath: string): Promise<SessionLock> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const handle = await open(lockPath, "wx");
       try {
         await handle.writeFile(String(process.pid), "utf8");
-        return handle;
+        return { close: () => handle.close(), release: () => unlink(lockPath).catch(() => {}) };
       } catch (error) {
         await handle.close();
         await unlink(lockPath).catch(() => {});
         throw error;
       }
     } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM" && !existsSync(lockPath)) {
+        return acquireDirectoryLock(lockPath);
+      }
       if (!isLockConflict(lockPath, error)) throw lockError(lockPath, error);
       if (await isStaleLock(lockPath)) {
         await unlink(lockPath).catch(() => {});
@@ -234,6 +245,28 @@ async function acquireLock(lockPath: string): Promise<FileHandle> {
     }
   }
   throw new Error(`Unable to lock Isla session ${lockPath}`);
+}
+
+async function acquireDirectoryLock(lockPath: string): Promise<SessionLock> {
+  const directory = `${lockPath}.d`;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await mkdir(directory);
+      await writeFile(`${directory}/owner`, String(process.pid), "utf8");
+      return {
+        close: async () => {},
+        release: async () => { await unlink(`${directory}/owner`).catch(() => {}); await import("node:fs/promises").then(fs => fs.rmdir(directory)).catch(() => {}); },
+      };
+    } catch (error) {
+      if (!isFileExistsError(error)) throw lockError(directory, error);
+      if (await isStaleLock(`${directory}/owner`)) {
+        await unlink(`${directory}/owner`).catch(() => {});
+        await import("node:fs/promises").then(fs => fs.rmdir(directory)).catch(() => {});
+      } else if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 25));
+      else throw lockError(directory, error);
+    }
+  }
+  throw new Error(`Unable to lock Isla session ${directory}`);
 }
 
 async function isStaleLock(lockPath: string): Promise<boolean> {
@@ -329,6 +362,7 @@ export function parseStoredSession(source: string): StoredSession {
     ...(value.task ? { task: value.task } : {}),
     journal,
     skillCatalog: value.skillCatalog,
+    ...(value.taskContract ? { taskContract: value.taskContract } : {}),
     ...(value.capabilityActivation ? { capabilityActivation: value.capabilityActivation } : {}),
   };
   return {

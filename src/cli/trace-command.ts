@@ -27,7 +27,11 @@ export const traceCommand: CliCommand = {
       const projectSources = turn.actions.filter(action => action.type === 'project_retrieval').reduce((total, action) => total + action.sourceIds.length, 0);
       const error = turn.error?.code ?? attempts.find(attempt => attempt.error)?.error?.code ?? '-';
       const duration = turn.endedAt ? `${Math.max(0, Date.parse(turn.endedAt) - Date.parse(turn.startedAt))}ms` : '进行中';
-      context.output.write(`Turn ${turn.sequence} · ${turn.status} · ${duration} · attempts=${attempts.length} · tools=${tools} · projectSources=${projectSources} · verification=${deriveVerificationStatus(journal)} · error=${error} · hashInvalid=${invalidHashes}\n`);
+      const capabilitySnapshots = turn.actions.filter(action => action.type === 'capability_snapshot').length;
+      const budgetStops = turn.actions.filter((action): action is Extract<typeof action, { type: 'loop_budget' }> => action.type === 'loop_budget' && action.event === 'stop').map(action => action.reason ?? 'unspecified').join(',') || '-';
+      const checkpoints = turn.actions.filter(action => action.type === 'checkpoint').length;
+      const failedTools = turn.actions.filter(action => action.type === 'tool' && !action.ok).length;
+      context.output.write(`Turn ${turn.sequence} · ${turn.status} · ${duration} · attempts=${attempts.length} · tools=${tools} · failedTools=${failedTools} · projectSources=${projectSources} · capabilitySnapshots=${capabilitySnapshots} · checkpoints=${checkpoints} · budgetStops=${budgetStops} · verification=${deriveVerificationStatus(journal)} · error=${error} · hashInvalid=${invalidHashes}\n`);
     }
     return { type: 'continue' };
   },

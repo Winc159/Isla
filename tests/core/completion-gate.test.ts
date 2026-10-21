@@ -43,4 +43,17 @@ describe("completion gate", () => {
     expect(evaluateCompletionGate({ verificationStatus: "passed_after_last_change" })).toEqual({ accepted: true });
     expect(evaluateCompletionGate({ verificationStatus: "not_applicable" })).toEqual({ accepted: true });
   });
+
+  it("keeps ordinary answers fast but rejects incomplete active contracts", () => {
+    expect(evaluateCompletionGate({})).toEqual({ accepted: true });
+    const contract = { status: "active" as const, deliverables: ["报告"], steps: [{ status: "pending" }], evidence: [] };
+    expect(evaluateCompletionGate({ contract })).toMatchObject({ accepted: false, reason: "task_step_pending" });
+    expect(evaluateCompletionGate({ contract: { ...contract, steps: [{ status: "completed" }] } })).toMatchObject({ accepted: false, reason: "deliverable_missing" });
+    expect(evaluateCompletionGate({ contract: { ...contract, steps: [{ status: "completed" }], deliverables: [], evidence: [{}] } })).toMatchObject({ accepted: false, reason: "contract_evidence_missing" });
+  });
+
+  it("blocks the same contract gap on the second rejection", () => {
+    const contract = { status: "active" as const, deliverables: ["报告"], steps: [{ status: "completed" }], evidence: [] };
+    expect(evaluateCompletionGate({ contract, priorRejections: ["deliverable_missing"] })).toMatchObject({ accepted: false, reason: "deliverable_missing", terminal: "blocked" });
+  });
 });

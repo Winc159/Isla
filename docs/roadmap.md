@@ -425,6 +425,14 @@ Profile/Config 增加可更改的 Worker 模型角色。Resource 通过 Isla 的
 
 本版没有引入副 Agent 框架。Worker 不拥有 Session、Memory、Tool、Capability、文件系统权限或多轮 Agent Loop；Worker 失败不会占用 primary 模型，并继续规则、人工或日期兜底。Windows 本地真实链路已完成百度网盘测试归档下载、Worker 命名判断、日期兜底、解压和 SHA256 一致性校验。设计、实施顺序和验收门禁见 [`docs/proposals/v0.5.1/`](proposals/v0.5.1/design.md)。
 
+## v0.5.3：Goal-driven Agent Runtime（设计候选）
+
+真实对话已经证明，主 Agent 的下一项瓶颈不是单个业务 Tool，而是任务理解、能力发现、持续执行和完成判断仍主要依赖模型自由发挥。现有 `TurnDecision` 没有进入主路径，v0.4.8 的动态 Capability Routing 组件没有完整接入生产 Session，Agent Loop 仍使用 12/28/40 的固定 Model Step 预算，Completion Gate 也不知道用户交付物是否真正完成。
+
+v0.5.3 候选范围是：Runtime-owned TaskContract；逐 Model Step 动态能力路由；基于真实进展的可恢复 Loop Budget；fail-closed 的有界并行只读 Tool 调度；跨 Provider Web Search、只读 Git 和安全 System Inspection；以及根据交付物、证据、错误链和验证状态判定完成的 Completion Gate V2。
+
+本版参考 DSH 的 Session-derived Step、连续 Tool Loop、能力与执行分责、argument-sensitive 并行安全分类和模型顺序提交，但不采用无限循环、Cordis、Subagent、Workflow、后台 Job 或完整事件溯源架构。设计、实施、自动化门禁与真实评估评分见 [`docs/proposals/v0.5.3/`](proposals/v0.5.3/README.md)。在用户确认设计前不得开始实现。
+
 上述版本严格顺序推进：每版先完成 P0 自动化和真实评估，再解锁下一版；后续版本的设计完成不代表允许并行扩大实现范围。
 
 ## 候选阶段：Tool 插件

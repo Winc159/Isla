@@ -78,7 +78,10 @@ async function loadStartupConfig(startup: CliStartupArgs, env: Record<string, st
   if (loaded.status === 'ready') {
     const primary = resolveProfile(loaded.config, startup.profileName);
     const worker = resolveWorkerProfile(loaded.config);
-    return { config: profileToAppConfig(primary.profile), ...(worker ? { worker: { name: worker.name, config: profileToAppConfig(worker.profile), revision: String(loaded.revision) } } : {}) };
+    const config = profileToAppConfig(primary.profile);
+    // Explicit session-dir override is a test/CI escape hatch; provider and model still come from Config/Profile.
+    const resolvedConfig = env.ISLA_SESSION_DIR ? { ...config, sessionDirectory: env.ISLA_SESSION_DIR } : config;
+    return { config: resolvedConfig, ...(worker ? { worker: { name: worker.name, config: profileToAppConfig(worker.profile), revision: String(loaded.revision) } } : {}) };
   }
   if (loaded.status === 'invalid' || loaded.status === 'unreadable') throw new Error(`Unable to load Isla config: ${loaded.message}`);
   if (startup.profileName) throw new Error(`Isla profile configuration is unavailable: ${startup.profileName}`);

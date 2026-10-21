@@ -8,7 +8,9 @@ import type { PermissionPreset } from "../approval/presets.js";
 import { isRuntimeError, RuntimeError, type TurnCancelReason } from "./errors.js";
 import type { ModelAttemptRecord, SessionJournal, TurnActionRecord, TurnRecord } from "./journal.js";
 import type { TaskBrief } from "./agent-loop.js";
+import { preflightAgentLoop } from './agent-loop-preflight.js';
 import { migrateTaskBrief, summarizeTaskState, updateTaskState, type TaskStateV1 } from "./task-state.js";
+import type { TaskContractV1 } from './task-contract.js';
 import { evaluateCompletionGate, type CompletionRejectionReason } from "./completion-gate.js";
 import { ModelStepRunner } from "./model-step.js";
 import { RequestContextBuilder } from "./request-context.js";
@@ -33,7 +35,12 @@ import { buildSessionPersistenceState, type SessionPersistenceState } from "./se
 import { mapTurnFailure } from "./turn-failure.js";
 import { prepareToolResultMessage } from "./tool-result-message.js";
 import { estimateRequestTokens, resolveTokenBudget, type TokenBudgetPolicy } from './token-budget.js';
-import { LoopBudgetState } from './loop-budget.js';
+import { LoopBudgetState, type LoopBudgetOptions } from './loop-budget.js';
+import { evaluateToolProgress } from './progress-evaluator.js';
+import { RESEARCH_EVIDENCE_REMINDER } from './research-policy.js';
+import { runDecisionPhase } from './decision-phase.js';
+import { observeToolResult } from './tool-observation.js';
+import { createToolBatchExecutionInput } from './tool-batch-contract.js';
 import type { UserQuestionService } from "../user-questions/types.js";
 export const DEFAULT_MAX_CONTEXT_TURNS = 20;
 export const DEFAULT_MAX_TOOL_ROUNDS = 12;
@@ -51,6 +58,7 @@ export interface ChatSessionOptions {
   readonly context?: SessionContext;
   readonly journal?: SessionJournal;
   readonly task?: TaskBrief | TaskStateV1;
+  readonly taskContract?: TaskContractV1;
   readonly skillCatalog?: import("../session-store.js").StoredSkillCatalogV1;
   readonly capabilityActivation?: import("../capability-routing.js").CapabilityActivationStateV1;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
@@ -63,6 +71,8 @@ export interface ChatSessionOptions {
   readonly onToolFinished?: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly enableTools?: boolean;
   readonly agentLoop?: boolean;
+  readonly decisionPhase?: boolean;
+  readonly loopBudget?: LoopBudgetOptions;
   readonly approvalPolicy?: ApprovalPolicy;
   readonly approvalService?: ApprovalService;
   readonly permissionPreset?: PermissionPreset;
@@ -108,6 +118,7 @@ export class ChatSession {
       throw new Error("contextRetainTurns must be a positive integer");
     this.context = options.context;
     this.task = options.task;
+    this.taskContract = options.taskContract;
     this.skillCatalog = options.skillCatalog;
     this.capabilityActivation = options.capabilityActivation;
     this.journal = options.journal ?? { version: 1, turns: [] };
@@ -121,6 +132,8 @@ export class ChatSession {
     this.onToolFinished = options.onToolFinished;
     this.enableTools = options.enableTools ?? false;
     this.agentLoop = options.agentLoop ?? false;
+    this.decisionPhase = options.decisionPhase ?? false;
+    this.loopBudget = options.loopBudget ?? {};
     this.retrieveContext = options.retrieveContext;
     this.onTurnCommitted = options.onTurnCommitted;
     this.onContextCompacted = options.onContextCompacted;
@@ -154,6 +167,8 @@ export class ChatSession {
   private readonly onToolFinished: ((tool: string, callId: string, result: ToolExecutionResult) => void) | undefined;
   private readonly enableTools: boolean;
   private readonly agentLoop: boolean;
+  private readonly decisionPhase: boolean;
+  private readonly loopBudget: LoopBudgetOptions;
   private readonly retrieveContext: ((input: string, visibleMessages: readonly Message[]) => Promise<string | undefined>) | undefined;
   private readonly onTurnCommitted: ((messages: readonly Message[]) => Promise<void>) | undefined;
   private readonly onContextCompacted: ((checkpoint: ContextCheckpoint) => Promise<void>) | undefined;
@@ -169,6 +184,7 @@ export class ChatSession {
   private readonly retrievedProjectSources = new Set<string>();
   private readonly projectSourceReferences = new Map<string, ProjectSourceReference>();
   private task: TaskBrief | TaskStateV1 | undefined;
+  private taskContract: TaskContractV1 | undefined;
 
   get taskState(): TaskStateV1 | undefined {
     if (!this.task) return undefined;
@@ -224,15 +240,24 @@ export class ChatSession {
     const completionRejections: CompletionRejectionReason[] = [];
     const successfulWrites = new Set<string>();
     let tools: readonly ToolDefinition[] = this.selectToolDefinitions(current.map(message => message.content).join("\n"));
-    const loopBudget = new LoopBudgetState();
+    const loopBudget = new LoopBudgetState(this.loopBudget);
     const loopStartedAt = Date.now();
     let wrapUpSent = false;
-    const latestUserInput = [...request.messages].reverse().find(message => message.role === "user")?.content ?? "";
-    const externalResearchRequired = /(?:查找|搜索|查询|参考|核实).{0,12}(?:网上|网络|公开资料|公开来源)|(?:网上|网络|公开资料|公开来源).{0,12}(?:查找|搜索|查询|参考|核实)|\b(?:search|research|look up|verify)\b.{0,24}\b(?:web|online|public sources?)\b/iu.test(latestUserInput);
+    let readOnlyObservationRounds = 0;
+    const preflight = preflightAgentLoop({ messages: current, tools, maxInputTokens: this.tokenBudget.maxInputTokens });
+    if (preflight.researchGap) return { text: preflight.researchGap, outcome: 'blocked', model: provider.model };
+    if (preflight.trimmed) {
+      current = preflight.messages;
+      this.onDiagnostic?.({ code: "AGENT_LOOP_CONTEXT_TRIMMED", component: "agent_loop.preflight", severity: "warning", detail: `messages=${current.length}` });
+    }
+    const researchRequired = preflight.researchRequired;
     for (let round = 0; round < loopBudget.currentBudget; round += 1) {
       if (Date.now() - loopStartedAt >= this.agentLoopTimeoutMs) {
         const turn = this.journal.turns.at(-1);
-        if (turn) (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: round, event: "stop", budget: loopBudget.currentBudget, reason: "wall_clock_timeout" });
+        if (turn) {
+          (turn.actions as TurnActionRecord[]).push({ type: "checkpoint", throughMessageIndex: this.messages.length - 1 });
+          (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: round, event: "stop", budget: loopBudget.currentBudget, reason: "wall_clock_timeout" });
+        }
         return { text: "Agent Loop 达到时间上限，已暂停执行。", outcome: "blocked", model: provider.model };
       }
       if (this.resolveCapabilities) {
@@ -250,18 +275,40 @@ export class ChatSession {
       const mustSearch = requiredTool === "web_search" && !evidence.some(item => item.startsWith("web_search:"));
       const mustFetch = requiredTool === "web_search" && !mustSearch && !evidence.some(item => item.startsWith("web_fetch:")) && tools.some(tool => tool.name === "web_fetch");
       const requiredToolChoice = mustSearch ? requiredTool : mustFetch ? "web_fetch" : undefined;
+      const loopRequest = { messages: current, tools, ...(requiredToolChoice ? { toolChoice: { name: requiredToolChoice } as const } : {}) };
+      const loopEstimate = estimateRequestTokens(loopRequest);
+      if (loopEstimate > Math.floor(this.tokenBudget.maxInputTokens * 0.82)) {
+        const before = this.context?.checkpoint?.throughMessageIndex ?? -1;
+        await this.compactIfNeeded(signal, true);
+        const after = this.context?.checkpoint?.throughMessageIndex ?? -1;
+        if (after > before) {
+          current = this.requestContextBuilder.build(this.messages, "agent_step", undefined, this.task).messages;
+          this.onDiagnostic?.({ code: "AGENT_LOOP_CONTEXT_COMPACTED", component: "context", severity: "debug", detail: `estimated=${loopEstimate};through=${after}` });
+        }
+        const postCompaction = preflightAgentLoop({ messages: current, tools, maxInputTokens: this.tokenBudget.maxInputTokens });
+        if (postCompaction.trimmed) {
+          current = postCompaction.messages;
+          this.onDiagnostic?.({ code: "AGENT_LOOP_CONTEXT_TRIMMED", component: "context", severity: "warning", detail: `estimated=${loopEstimate};messages=${current.length}` });
+        }
+      }
       const response = await this.generateModel({ messages: current, tools, ...(requiredToolChoice ? { toolChoice: { name: requiredToolChoice } } : {}) }, true, signal, "agent_step");
       if (!response.toolCalls?.length && !mustSearch && !mustFetch) {
         const hasExternalEvidence = evidence.some(item => /^(?:web_search|web_fetch|browser_read|browser_links):/u.test(item));
-        if (externalResearchRequired && !hasExternalEvidence) {
+        if (researchRequired && !hasExternalEvidence) {
           const canDiscoverSources = tools.some(tool => tool.name === "web_search" || tool.name === "browser_open");
           if (!canDiscoverSources) return { text: "当前 Profile 没有可用的外部来源发现能力，无法把这项研究描述为已联网核实。", outcome: "blocked", model: response.model ?? provider.model };
-          current = [...current, { role: "system", content: "该请求明确要求查找外部公开资料，但当前尚无成功的外部工具证据。必须先使用可用的 Web Search 或 Browser 查找并读取来源；不能用模型记忆冒充联网结果。" }];
+          current = [...current, { role: "system", content: RESEARCH_EVIDENCE_REMINDER }];
           continue;
         }
         const toolCallIds = current.flatMap(message => message.toolCalls?.map(call => call.id) ?? []);
         const toolResultIds = current.filter(message => message.role === "tool" && message.toolCallId).map(message => message.toolCallId!);
-        const completion = evaluateCompletionGate({ toolCallIds, toolResultIds, verificationStatus: deriveVerificationStatus(this.journal), priorRejections: completionRejections });
+        const completion = evaluateCompletionGate({
+          toolCallIds,
+          toolResultIds,
+          verificationStatus: deriveVerificationStatus(this.journal),
+          priorRejections: completionRejections,
+          ...(this.taskContract ? { contract: this.taskContract } : {}),
+        });
         if (!completion.accepted) {
           completionRejections.push(completion.reason);
           this.onDiagnostic?.({ code: "COMPLETION_REJECTED", component: "agent_loop", severity: "warning", detail: `reason=${completion.reason}` });
@@ -273,114 +320,24 @@ export class ChatSession {
         return { ...response, ...(evidence.length ? { evidence } : {}), ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}) };
       }
       if (!response.toolCalls?.length) return { text: mustSearch ? "未能发起必要的 Web Search。" : "未能读取必要的 Web Search 来源。", outcome: "blocked", evidence, model: response.model ?? provider.model };
-      const assistantToolMessage = { role: "assistant" as const, content: response.assistantContent ?? "", toolCalls: response.toolCalls };
+      const batchInput = createToolBatchExecutionInput(response, round);
+      const assistantToolMessage = { role: "assistant" as const, content: response.assistantContent ?? "", toolCalls: batchInput.calls };
       const next = [...current, assistantToolMessage];
       await this.appendMessage(assistantToolMessage);
-      for (let callIndex = 0; callIndex < response.toolCalls.length; callIndex += 1) {
-        const call = response.toolCalls[callIndex]!;
-        const writeKey = `${call.name}:${call.arguments}`;
-        await this.onSessionEvent?.({ type: "tool_call", callId: call.id, tool: call.name, arguments: call.arguments });
-        this.onToolStarted?.(call.name, call.id, call.arguments);
-        if ((call.name === "write_text_file" || call.name === "edit_text_file") && successfulWrites.has(writeKey)) {
-          const duplicateResult: ToolExecutionResult = { ok: true, content: "相同写入已在本轮成功执行，未重复写入。" };
-          this.onToolFinished?.(call.name, call.id, duplicateResult);
-          await this.onSessionEvent?.({ type: "tool_result", callId: call.id, tool: call.name, result: duplicateResult });
-          await this.appendMessage({ role: "tool", toolCallId: call.id, content: duplicateResult.content });
-          await this.appendSkippedToolResults(response.toolCalls.slice(callIndex + 1), "相同写入已完成，本批次其余调用未执行。");
-          return { text: "写入已完成，已停止重复写入。", outcome: "completed", evidence, model: response.model ?? provider.model };
+      const batch = await this.executeToolBatch({ calls: batchInput.calls, round, responseModel: response.model ?? provider.model, signal, next, evidence, searchResultUrls, failures, successfulWrites, loopBudget, readOnlyObservationRounds });
+      current = batch.next;
+      readOnlyObservationRounds = batch.readOnlyObservationRounds;
+      if (batch.response) return batch.response;
+      if (readOnlyObservationRounds >= 6) {
+        const turn = this.journal.turns.at(-1);
+        if (turn) (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: round, event: "stop", budget: loopBudget.currentBudget, reason: "read_only_observation_limit" });
+        const synthesisMessages = [...current, { role: "system" as const, content: "已获得足够的只读证据。现在必须停止调用工具，直接整理最终报告：区分当前代码事实、历史文档结论、未验证推断和结论；不要声称未执行的检查。证据绑定规则：每个当前事实都必须能对应本轮已读取的具体文件或工具结果；不能把依赖、目录名或历史文档推断成运行时能力，不能使用‘完全成熟’‘无缝接入’等夸大结论；未读取的 transport/provider 实现、实际网络状态、代理是否生效一律标为未验证。只有本轮成功执行的 project_search 才允许输出 project source marker；不得复用历史会话中的 source marker，也不要为了显得有引用而编造标记。报告控制在 800 字以内，并以完整结论句结束。" }];
+        let synthesis = await this.generateModel({ messages: synthesisMessages, tools: [] }, false, signal, "agent_step");
+        if (synthesis.text.length > 160 && !/[。！？.!?）)\]】」』`}]$/u.test(synthesis.text.trim())) {
+          synthesis = await this.generateModel({ messages: [...synthesisMessages, { role: "system", content: "上一版回答疑似被截断。请重新输出一份完整、简洁、以结论句收尾的报告，不要调用工具。" }], tools: [] }, false, signal, "agent_step");
         }
-        let terminalResponse: ModelResponse | undefined;
-        let execution: ToolExecutionResult = { ok: false, code: "EXECUTION_FAILED", message: "Tool execution interrupted" };
-        try {
-          execution = await this.toolRuntime.execute(call, { signal, webFetchAllowedUrls: [...searchResultUrls] });
-          if (execution.ok && (call.name === "list_directory" || call.name === "read_text_file")) evidence.push(call.name);
-          if (execution.ok && execution.details?.type === "web_search") {
-            for (const source of execution.details.sources) searchResultUrls.add(source.url);
-            evidence.push(`web_search:${execution.details.sources.map(source => source.url).join(",") || "no-sources"}`);
-          }
-          if (execution.ok && execution.details?.type === "web_fetch" && execution.details.statusCode >= 200 && execution.details.statusCode < 300) evidence.push("web_fetch:source-read");
-          if (execution.ok && (call.name === "browser_read" || call.name === "browser_links")) evidence.push(`${call.name}:source-read`);
-          if (execution.ok && execution.details?.type === "web_fetch") {
-            evidence.push(`web_fetch:${execution.details.finalUrl}#status=${execution.details.statusCode}${execution.details.truncated ? "#truncated" : ""}`);
-          }
-          if (execution.ok && execution.details?.type === "project_search") {
-            const sourceIds = [...new Set(execution.details.sources.map(source => source.id))].sort();
-            const references = new Map<string, ProjectSourceReference>();
-            for (const source of execution.details.sources) {
-              const existing = this.projectSourceReferences.get(source.id);
-              const reference = { path: source.path, startLine: source.startLine };
-              if (existing && (existing.path !== reference.path || existing.startLine !== reference.startLine)) {
-                terminalResponse = { text: "项目来源身份冲突，已停止本轮执行。", outcome: "blocked", evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}), ...(response.model ? { model: response.model } : {}) };
-                continue;
-              }
-              references.set(source.id, reference);
-            }
-            for (const sourceId of sourceIds) {
-              this.retrievedProjectSources.add(sourceId);
-              const reference = references.get(sourceId);
-              if (reference) this.projectSourceReferences.set(sourceId, reference);
-            }
-            const turn = this.journal.turns.at(-1);
-            if (turn && sourceIds.length) {
-              const action: TurnActionRecord = { type: "project_retrieval", sourceIds, truncated: execution.details.truncated };
-              (turn.actions as TurnActionRecord[]).push(action);
-            }
-          }
-          if (execution.ok && (call.name === "write_text_file" || call.name === "edit_text_file")) successfulWrites.add(writeKey);
-          const actionTurn = this.journal.turns.at(-1);
-          if (actionTurn && execution.ok && (call.name === "write_text_file" || call.name === "edit_text_file")) {
-            (actionTurn.actions as TurnActionRecord[]).push({ type: "workspace_mutation", step: round, tool: call.name });
-          }
-          if (execution.ok && execution.details?.type === "task_state_update") {
-            try {
-              const currentTask = this.task && "version" in this.task ? this.task : this.task ? migrateTaskBrief(this.task, this.messages) : undefined;
-              const nextState = { ...execution.details.state, steps: execution.details.state.steps.map((step, index) => ({ ...step, id: step.id ?? `step-${index + 1}` })) };
-              if (currentTask && sameTaskState(currentTask, nextState)) {
-                this.task = currentTask;
-              } else {
-                this.task = updateTaskState(currentTask, nextState, currentTask?.revision ?? 0, this.messages);
-              }
-              const summary = summarizeTaskState(this.task);
-              execution = { ...execution, content: `任务状态已保存：${summary.status}，步骤 ${summary.completedSteps}/${summary.totalSteps}，阻塞 ${summary.blockerCount}。` };
-            } catch (error) {
-              execution = { ok: false, code: "EXECUTION_FAILED", message: error instanceof Error ? error.message : "TaskState update failed" };
-            }
-          }
-          if (actionTurn && execution.ok && execution.details?.type === "command_execution" && execution.details.purpose === "verification") {
-            (actionTurn.actions as TurnActionRecord[]).push({ type: "verification", step: round, outcome: execution.details.exitCode === 0 && !execution.details.timedOut && !execution.details.aborted && execution.details.signal === null ? "passed" : "failed" });
-          }
-          if (!execution.ok) {
-            if (execution.code === "USER_REJECTED") {
-              terminalResponse = { text: "用户拒绝了工具调用，已停止本轮执行。", outcome: "blocked", evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}), ...(response.model ? { model: response.model } : {}) };
-            }
-            const key = `${call.name}:${call.arguments}:${execution.code}`;
-            const count = (failures.get(key) ?? 0) + 1;
-            failures.set(key, count);
-            if (count >= 2) terminalResponse = { text: "工具调用连续失败，已停止自动重试。", outcome: "blocked", evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}), ...(response.model ? { model: response.model } : {}) };
-          }
-        } finally {
-          const turn = this.journal.turns.at(-1);
-          if (turn) (turn.actions as TurnActionRecord[]).push({ type: "tool", step: round, callId: call.id, tool: call.name, ok: execution.ok, ...(!execution.ok ? { code: execution.code } : {}) });
-          await this.persistState(false);
-          this.onToolFinished?.(call.name, call.id, execution);
-          await this.onSessionEvent?.({ type: "tool_result", callId: call.id, tool: call.name, result: execution });
-        }
-        if (!execution.ok && execution.code === "TURN_CANCELLED") throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
-        this.onToolsUsed?.([call.name]);
-        const preparedResult = prepareToolResultMessage(call.id, execution);
-        if (preparedResult.pruning.pruned) this.onDiagnostic?.({ code: "TOOL_RESULT_PRUNED", component: "context", severity: "debug", detail: `tool=${call.name};originalChars=${preparedResult.pruning.originalChars};retainedChars=${preparedResult.pruning.retainedChars}` });
-        next.push(preparedResult.message);
-        await this.appendMessage(preparedResult.message);
-          if (terminalResponse) {
-          await this.appendSkippedToolResults(response.toolCalls.slice(callIndex + 1), "本批次前序调用已使执行停止。", next);
-          return terminalResponse;
-        }
-        loopBudget.record({ action: `${call.name}:${call.arguments}`, result: execution.ok ? execution.content.slice(0, 500) : execution.message, changed: execution.ok, ...(execution.ok ? {} : { errorCode: execution.code }) });
-        if (!execution.ok && loopBudget.hasRepeatedFailure()) {
-          const turn = this.journal.turns.at(-1);
-          if (turn) (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: round, event: "stop", budget: loopBudget.currentBudget, reason: `repeated_failure:${call.name}:${execution.code}` });
-          return { text: `工具 ${call.name} 连续失败，错误类型为 ${execution.code}，原因：${execution.message.slice(0, 240)}。已停止重复重试。`, outcome: "blocked", model: provider.model };
-        }
+        if (synthesis.text.trim()) return { ...synthesis, evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}) };
+        return { text: `只读观察连续多次没有产生新的证据，已停止继续扫描。当前已记录 ${evidence.length} 条证据、${this.projectSourceReferences.size} 个项目来源。`, outcome: "blocked", model: provider.model };
       }
       const verificationStatus = deriveVerificationStatus(this.journal);
       const verificationObservation = verificationStatus === "not_applicable" ? undefined : { role: "system" as const, content: `当前工作区验证状态（仅供本步骤判断，不是用户事实）：${verificationStatus}` };
@@ -409,7 +366,116 @@ export class ChatSession {
         if (turn) (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: round, event: "user_extend", budget: loopBudget.currentBudget });
       }
     }
-    return { text: "工具调用达到本轮上限，已停止继续执行。", outcome: "blocked", model: provider.model };
+    const turn = this.journal.turns.at(-1);
+    if (turn) {
+      (turn.actions as TurnActionRecord[]).push({ type: "checkpoint", throughMessageIndex: this.messages.length - 1 });
+      (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: loopBudget.currentBudget, event: "stop", budget: loopBudget.currentBudget, reason: "hard_limit" });
+    }
+    await this.persistState(false);
+    return { text: `工具调用达到本轮硬上限，当前进度已保存，可在下一轮继续。已记录 ${evidence.length} 条证据、${this.projectSourceReferences.size} 个项目来源；下一轮将从 checkpoint 继续，避免重复已完成的观察。`, outcome: "blocked", model: provider.model };
+  }
+
+  private async executeToolBatch(input: {
+    readonly calls: readonly import('./types.js').ToolCall[];
+    readonly round: number;
+    readonly responseModel?: string;
+    readonly signal: AbortSignal;
+    readonly next: Message[];
+    readonly evidence: string[];
+    readonly searchResultUrls: Set<string>;
+    readonly failures: Map<string, number>;
+    readonly successfulWrites: Set<string>;
+    readonly loopBudget: LoopBudgetState;
+    readonly readOnlyObservationRounds: number;
+  }): Promise<{ readonly next: Message[]; readonly readOnlyObservationRounds: number; readonly response?: ModelResponse }> {
+    let readOnlyObservationRounds = input.readOnlyObservationRounds;
+    for (let callIndex = 0; callIndex < input.calls.length; callIndex += 1) {
+      const call = input.calls[callIndex]!;
+      const writeKey = `${call.name}:${call.arguments}`;
+      await this.onSessionEvent?.({ type: "tool_call", callId: call.id, tool: call.name, arguments: call.arguments });
+      this.onToolStarted?.(call.name, call.id, call.arguments);
+      if ((call.name === "write_text_file" || call.name === "edit_text_file") && input.successfulWrites.has(writeKey)) {
+        const duplicateResult: ToolExecutionResult = { ok: true, content: "相同写入已在本轮成功执行，未重复写入。" };
+        this.onToolFinished?.(call.name, call.id, duplicateResult);
+        await this.onSessionEvent?.({ type: "tool_result", callId: call.id, tool: call.name, result: duplicateResult });
+        await this.appendMessage({ role: "tool", toolCallId: call.id, content: duplicateResult.content });
+        await this.appendSkippedToolResults(input.calls.slice(callIndex + 1), "相同写入已完成，本批次其余调用未执行。");
+        return { next: input.next, readOnlyObservationRounds, response: { text: "写入已完成，已停止重复写入。", outcome: "completed", evidence: input.evidence, ...(input.responseModel ? { model: input.responseModel } : {}) } };
+      }
+      let terminalResponse: ModelResponse | undefined;
+      let execution: ToolExecutionResult = { ok: false, code: "EXECUTION_FAILED", message: "Tool execution interrupted" };
+      try {
+        execution = await this.toolRuntime.execute(call, { signal: input.signal, webFetchAllowedUrls: [...input.searchResultUrls] });
+        const observation = observeToolResult(call.name, execution);
+        input.evidence.push(...observation.evidence);
+        for (const url of observation.sourceUrls) input.searchResultUrls.add(url);
+        if (execution.ok && execution.details?.type === "project_search") {
+          const sourceIds = [...new Set(observation.projectSources.map(source => source.id))].sort();
+          const references = new Map<string, ProjectSourceReference>();
+          for (const source of observation.projectSources) {
+            const existing = this.projectSourceReferences.get(source.id);
+            if (existing && (existing.path !== source.reference.path || existing.startLine !== source.reference.startLine)) {
+              terminalResponse = { text: "项目来源身份冲突，已停止本轮执行。", outcome: "blocked", evidence: input.evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}), ...(input.responseModel ? { model: input.responseModel } : {}) };
+              continue;
+            }
+            references.set(source.id, source.reference);
+          }
+          for (const sourceId of sourceIds) {
+            this.retrievedProjectSources.add(sourceId);
+            const reference = references.get(sourceId);
+            if (reference) this.projectSourceReferences.set(sourceId, reference);
+          }
+          const turn = this.journal.turns.at(-1);
+          if (turn && sourceIds.length) (turn.actions as TurnActionRecord[]).push({ type: "project_retrieval", sourceIds, truncated: execution.details.truncated });
+        }
+        if (execution.ok && (call.name === "write_text_file" || call.name === "edit_text_file")) input.successfulWrites.add(writeKey);
+        const actionTurn = this.journal.turns.at(-1);
+        if (actionTurn && execution.ok && (call.name === "write_text_file" || call.name === "edit_text_file")) (actionTurn.actions as TurnActionRecord[]).push({ type: "workspace_mutation", step: input.round, tool: call.name });
+        if (execution.ok && execution.details?.type === "task_state_update") {
+          try {
+            const currentTask = this.task && "version" in this.task ? this.task : this.task ? migrateTaskBrief(this.task, this.messages) : undefined;
+            const nextState = { ...execution.details.state, steps: execution.details.state.steps.map((step, index) => ({ ...step, id: step.id ?? `step-${index + 1}` })) };
+            this.task = currentTask && sameTaskState(currentTask, nextState) ? currentTask : updateTaskState(currentTask, nextState, currentTask?.revision ?? 0, this.messages);
+            const summary = summarizeTaskState(this.task);
+            execution = { ...execution, content: `任务状态已保存：${summary.status}，步骤 ${summary.completedSteps}/${summary.totalSteps}，阻塞 ${summary.blockerCount}。` };
+          } catch (error) { execution = { ok: false, code: "EXECUTION_FAILED", message: error instanceof Error ? error.message : "TaskState update failed" }; }
+        }
+        if (actionTurn && execution.ok && execution.details?.type === "command_execution" && execution.details.purpose === "verification") (actionTurn.actions as TurnActionRecord[]).push({ type: "verification", step: input.round, outcome: execution.details.exitCode === 0 && !execution.details.timedOut && !execution.details.aborted && execution.details.signal === null ? "passed" : "failed" });
+        if (!execution.ok) {
+          if (execution.code === "USER_REJECTED") terminalResponse = { text: "用户拒绝了工具调用，已停止本轮执行。", outcome: "blocked", evidence: input.evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}), ...(input.responseModel ? { model: input.responseModel } : {}) };
+          const key = `${call.name}:${call.arguments}:${execution.code}`;
+          const count = (input.failures.get(key) ?? 0) + 1;
+          input.failures.set(key, count);
+          if (count >= 2) terminalResponse = { text: "工具调用连续失败，已停止自动重试。", outcome: "blocked", evidence: input.evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}), ...(input.responseModel ? { model: input.responseModel } : {}) };
+        }
+      } finally {
+        const turn = this.journal.turns.at(-1);
+        if (turn) (turn.actions as TurnActionRecord[]).push({ type: "tool", step: input.round, callId: call.id, tool: call.name, ok: execution.ok, ...(!execution.ok ? { code: execution.code } : {}) });
+        await this.persistState(false);
+        this.onToolFinished?.(call.name, call.id, execution);
+        await this.onSessionEvent?.({ type: "tool_result", callId: call.id, tool: call.name, result: execution });
+      }
+      if (!execution.ok && execution.code === "TURN_CANCELLED") throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
+      this.onToolsUsed?.([call.name]);
+      const preparedResult = prepareToolResultMessage(call.id, execution);
+      if (preparedResult.pruning.pruned) this.onDiagnostic?.({ code: "TOOL_RESULT_PRUNED", component: "context", severity: "debug", detail: `tool=${call.name};originalChars=${preparedResult.pruning.originalChars};retainedChars=${preparedResult.pruning.retainedChars}` });
+      input.next.push(preparedResult.message);
+      await this.appendMessage(preparedResult.message);
+      if (terminalResponse) {
+        await this.appendSkippedToolResults(input.calls.slice(callIndex + 1), "本批次前序调用已使执行停止。", input.next);
+        return { next: input.next, readOnlyObservationRounds, response: terminalResponse };
+      }
+      const progress = evaluateToolProgress(call.name, execution);
+      if (progress.kind === 'observation' && execution.ok) readOnlyObservationRounds += 1;
+      else if (progress.changed || progress.kind === 'evidence' || progress.kind === 'task_update' || progress.kind === 'verification') readOnlyObservationRounds = 0;
+      input.loopBudget.record({ action: `${call.name}:${call.arguments}`, result: execution.ok ? `${progress.kind}:${execution.content.slice(0, 500)}` : execution.message, changed: progress.changed, ...(execution.ok ? {} : { errorCode: execution.code }) });
+      if (!execution.ok && input.loopBudget.hasRepeatedFailure()) {
+        const turn = this.journal.turns.at(-1);
+        if (turn) (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: input.round, event: "stop", budget: input.loopBudget.currentBudget, reason: `repeated_failure:${call.name}:${execution.code}` });
+        return { next: input.next, readOnlyObservationRounds, response: { text: `工具 ${call.name} 连续失败，错误类型为 ${execution.code}，原因：${execution.message.slice(0, 240)}。已停止重复重试。`, outcome: "blocked", ...(input.responseModel ? { model: input.responseModel } : {}) } };
+      }
+    }
+    return { next: input.next, readOnlyObservationRounds };
   }
 
   private async askForLoopContinuation(loopBudget: LoopBudgetState, signal: AbortSignal): Promise<boolean> {
@@ -546,6 +612,12 @@ export class ChatSession {
     const request = this.requestContextBuilder.build(history, "agent_step", memoryContext, this.task);
     const turn = this.journal.turns.at(-1);
     if (turn) (turn.actions as TurnActionRecord[]).push({ type: "phase", phase: "agent_step" });
+    if (this.decisionPhase) {
+      const decision = await runDecisionPhase(this.provider, history, { signal });
+      if (decision.decision.kind === 'answer') return { text: decision.decision.text, outcome: 'completed' };
+      if (decision.decision.kind === 'clarify') return { text: decision.decision.questions.join('\n'), outcome: 'needs_user' };
+      this.onDiagnostic?.({ code: 'DECISION_EXECUTE', component: 'decision', severity: 'debug', detail: `repaired=${decision.repaired}` });
+    }
     return this.generateWithAvailableTools(request, signal);
   }
 
@@ -594,7 +666,7 @@ export class ChatSession {
   }
 
   private async persistState(includeMessages = true): Promise<void> {
-    const state = buildSessionPersistenceState({ messages: this.messages, context: this.context, journal: this.journal, task: this.task, skillCatalog: this.skillCatalog, capabilityActivation: this.capabilityActivation });
+    const state = buildSessionPersistenceState({ messages: this.messages, context: this.context, journal: this.journal, task: this.task, ...(this.taskContract ? { taskContract: this.taskContract } : {}), skillCatalog: this.skillCatalog, capabilityActivation: this.capabilityActivation });
     if (this.onSessionStateChanged) {
       await this.onSessionStateChanged(state);
     } else if (includeMessages) {

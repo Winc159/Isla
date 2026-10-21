@@ -188,7 +188,7 @@ export interface ProfileWebFetchSettingsV1 {
   readonly maxRedirects?: number;
   readonly allowSearchResultUrls?: boolean;
 }
-export interface ProfileWebSearchSettingsV1 { readonly enabled?: boolean; readonly provider?: 'deepseek-official'; readonly maxResults?: number; readonly timeoutMs?: number; readonly maxOutputChars?: number; }
+export interface ProfileWebSearchSettingsV1 { readonly enabled?: boolean; readonly provider?: 'deepseek-official'; readonly apiKey?: string; readonly model?: string; readonly maxResults?: number; readonly timeoutMs?: number; readonly maxOutputChars?: number; }
 export interface ProfileToolsSettingsV1 { readonly webFetch?: ProfileWebFetchSettingsV1; readonly webSearch?: ProfileWebSearchSettingsV1; }
 export interface ProfileMcpSettingsV1 { readonly servers?: readonly McpServerConfig[]; }
 export interface ProfileCapabilitiesSettingsV1 extends CapabilityPolicy {}
@@ -278,12 +278,14 @@ function parseTools(name: string, value: unknown, onWarning?: (message: string) 
 
 function parseWebSearch(name: string, value: unknown, onWarning?: (message: string) => void): ProfileWebSearchSettingsV1 {
   if (!isRecord(value)) throw new Error(`Isla profile ${name}.tools.webSearch must be an object`);
-  warnUnknown(value, ['enabled', 'provider', 'maxResults', 'timeoutMs', 'maxOutputChars'], `profile ${name}.tools.webSearch`, onWarning);
+  warnUnknown(value, ['enabled', 'provider', 'apiKey', 'model', 'maxResults', 'timeoutMs', 'maxOutputChars'], `profile ${name}.tools.webSearch`, onWarning);
   const provider = value.provider === undefined ? undefined : value.provider;
   if (provider !== undefined && provider !== 'deepseek-official') throw new Error(`Isla profile ${name}.tools.webSearch.provider is invalid`);
   const bounded = (field: 'maxResults' | 'timeoutMs' | 'maxOutputChars', min: number, max: number): number | undefined => value[field] === undefined ? undefined : (!Number.isInteger(value[field]) || (value[field] as number) < min || (value[field] as number) > max) ? (() => { throw new Error(`Isla profile ${name}.tools.webSearch.${field} is invalid`); })() : value[field] as number;
   const maxResults = bounded('maxResults', 1, 20); const timeoutMs = bounded('timeoutMs', 1, 120_000); const maxOutputChars = bounded('maxOutputChars', 1, 200_000);
-  return { ...(value.enabled === undefined ? {} : { enabled: booleanValue(value.enabled, `Isla profile ${name}.tools.webSearch.enabled`) }), ...(provider === undefined ? {} : { provider }), ...(maxResults === undefined ? {} : { maxResults }), ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(maxOutputChars === undefined ? {} : { maxOutputChars }) };
+  const apiKey = value.apiKey === undefined ? undefined : nonEmptyString(value.apiKey, `Isla profile ${name}.tools.webSearch.apiKey`);
+  const model = value.model === undefined ? undefined : nonEmptyString(value.model, `Isla profile ${name}.tools.webSearch.model`);
+  return { ...(value.enabled === undefined ? {} : { enabled: booleanValue(value.enabled, `Isla profile ${name}.tools.webSearch.enabled`) }), ...(provider === undefined ? {} : { provider }), ...(apiKey === undefined ? {} : { apiKey }), ...(model === undefined ? {} : { model }), ...(maxResults === undefined ? {} : { maxResults }), ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(maxOutputChars === undefined ? {} : { maxOutputChars }) };
 }
 
 function parseWebFetch(name: string, value: unknown, onWarning?: (message: string) => void): ProfileWebFetchSettingsV1 {

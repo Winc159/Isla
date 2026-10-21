@@ -38,7 +38,7 @@ export function profileToAppConfig(profile: StartupProfileV1): AppConfig {
     // Web Fetch is a built-in read-only capability. Keep its security limits
     // internal so a normal user does not need to maintain a host allowlist.
     ...(profile.tools?.webFetch ? { webFetch: normalizeWebFetchConfig(profile.tools.webFetch) } : { webFetch: normalizeWebFetchConfig({ enabled: true, allowedHosts: ['*'] }) }),
-    ...(profile.tools?.webSearch?.enabled && profile.provider === 'deepseek' ? { webSearch: normalizeWebSearchConfig(profile.tools.webSearch, profile.apiKey, profile.model) } : {}),
+    ...(profile.tools?.webSearch?.enabled && (profile.tools.webSearch.apiKey ?? profile.apiKey) ? { webSearch: normalizeWebSearchConfig(profile.tools.webSearch, profile.tools.webSearch.apiKey ?? profile.apiKey!, profile.tools.webSearch.model ?? profile.model) } : {}),
     ...(profile.mcp?.servers?.length ? { mcpServers: profile.mcp.servers } : {}),
     ...(profile.capabilities ? { capabilityPolicy: profile.capabilities } : {}),
   };

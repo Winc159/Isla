@@ -46,4 +46,20 @@ describe('LoopBudgetState', () => {
     expect(state.hasRepeatedFailure()).toBe(true);
     expect(state.shouldStop()).toBe(true);
   });
+  it('accepts bounded profile overrides without changing defaults', () => {
+    const state = new LoopBudgetState({ initialBudget: 2, extensionSteps: 2, autoLimit: 4, hardLimit: 6 });
+    expect(state.currentBudget).toBe(2);
+    expect(state.tryExtend()).toBe(true);
+    expect(state.currentBudget).toBe(4);
+    expect(state.extendAfterApproval()).toBe(true);
+    expect(state.currentBudget).toBe(6);
+  });
+  it('stops repeated no-change observations even when result text differs', () => {
+    const state = new LoopBudgetState();
+    state.record({ action: 'list_directory:{"path":"."}', result: 'observation:[]', changed: false });
+    state.record({ action: 'list_directory:{"path":"src"}', result: 'observation:[...]', changed: false });
+    state.record({ action: 'list_directory:{"path":"docs"}', result: 'observation:[...]', changed: false });
+    expect(state.isStuck()).toBe(true);
+    expect(state.tryExtend()).toBe(false);
+  });
 });

@@ -13,6 +13,9 @@ describe('/trace', () => {
     expect(text).toContain('Turn 1');
     expect(text).toContain('read_text_file');
     expect(text).toContain('projectSources=0');
+    expect(text).toContain('capabilitySnapshots=0');
+    expect(text).toContain('budgetStops=-');
+    expect(text).toContain('failedTools=0');
     expect(text).toContain('verification=not_applicable');
     expect(text).not.toContain('PRIVATE_USER_TEXT');
   });
