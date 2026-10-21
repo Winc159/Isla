@@ -284,3 +284,32 @@ v0.2.8 已验证 Provider-neutral stream 与共享 assembler，但尚未把真�
 - 对 tool catalog 设置工具数、schema 和总字节预算；达到大 catalog 需求后再评估 MCP Lens 类动态检索，不在首版预建。
 
 具体契约和门禁见 [`docs/proposals/v0.4.0/`](proposals/v0.4.0/README.md)。
+
+## v0.5.3 工具发现与证据卡片补充评审（2026-10-21）
+
+DSH 的工具层把工具定义、执行结果和展示投影分开，并提供文件读写、glob/grep、终端、任务、会话查询和 Web 等分层工具目录。本轮 Isla 已有的 `read_text_file`、`edit_text_file`、`write_text_file`、`glob_project`、`grep_project`、`run_command`、`update_task_state`、`session_query`、`web_fetch`/`web_search` 已覆盖其中最小的高价值集合；因此没有新增同义的 `str_replace_editor`、`todo_write` 或第二套终端接口。
+
+### 采用
+
+- 新增 `tool_catalog`，按能力、风险、可用状态和工具摘要列出当前可发现工具，解决“工具实际存在但模型只看到几个读写工具”的可见性问题。
+- 工具执行结果独立生成 `EvidenceCard`，保存来源、定位、状态和置信度；卡片作为 canonical system message 进入 Session，模型后续请求可重建。
+- 工具结果与展示文本分离，失败结果也生成明确的 failed card，避免模型把失败当成事实。
+
+### 暂缓
+
+持久终端/jobs、LSP、Subagent、图片读取和完整 DSH 工具目录继续暂缓：当前 Isla 没有对应的真实需求或多模态契约；引入它们只会扩大上下文和权限面。后续只有出现长期进程、代码诊断或图像任务时才重新评估。
+
+本轮参考的是 DSH 的工具分层和目录语义，不复制 DSH 源码、包结构或运行时依赖。参考：[DSH 工具子系统](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/tools.md)、[DSH 工具目录](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/tool-catalog.md)。
+
+### Isla 工具职责分类
+
+工具目录现在为每个工具提供统一的 `category / boundary / canonicalPurpose`：
+
+- `file`: 工作区文件与目录；`read`、`write` 边界明确。
+- `search`: 文件名、内容匹配和带来源的语义搜索；搜索结果不等于已读取事实。
+- `command`: 受控命令执行；不与文件读写混用。
+- `task` / `session`: 任务状态和历史上下文；都不能替代当前环境检查。
+- `browser` / `web`: 外部资源和网页操作；统一视为外部边界。
+- `capability` / `interaction` / `skill`: 能力发现、用户授权和 Skill 调用，不直接伪装成业务工具。
+
+未知工具默认归类为 `other/control`，必须补充职责后才能纳入稳定目录，避免第三方或 MCP 工具被错误当作只读工具。

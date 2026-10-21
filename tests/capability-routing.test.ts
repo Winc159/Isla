@@ -29,6 +29,8 @@ describe('capability routing', () => {
     expect(activation).toContain('next_model_step');
     const status = await tools[2]!.execute('{}');
     expect(status).toContain('"state":"active"');
+    const catalogResult = await tools[3]!.execute('{}');
+    expect(catalogResult).toContain('read_text_file');
   });
 
   it('composes a stable per-step snapshot from active capabilities', async () => {

@@ -40,6 +40,7 @@ import { evaluateToolProgress } from './progress-evaluator.js';
 import { RESEARCH_EVIDENCE_REMINDER } from './research-policy.js';
 import { runDecisionPhase } from './decision-phase.js';
 import { observeToolResult } from './tool-observation.js';
+import { buildEvidenceCards, renderEvidenceCards } from './evidence-cards.js';
 import { createToolBatchExecutionInput } from './tool-batch-contract.js';
 import type { UserQuestionService } from "../user-questions/types.js";
 export const DEFAULT_MAX_CONTEXT_TURNS = 20;
@@ -291,6 +292,15 @@ export class ChatSession {
           this.onDiagnostic?.({ code: "AGENT_LOOP_CONTEXT_TRIMMED", component: "context", severity: "warning", detail: `estimated=${loopEstimate};messages=${current.length}` });
         }
       }
+      if (loopEstimate > this.tokenBudget.maxInputTokens && readOnlyObservationRounds >= 2 && evidence.length > 0) {
+        const bounded = current.filter(message => message.role === 'user' || (message.role === 'system' && message.content.includes('[[evidence_cards]]'))).slice(-24);
+        const boundedPrompt = { role: 'system' as const, content: '上下文预算不足，必须立即停止工具调用并基于下方已持久化证据卡片作简短报告。不要补充未被证据直接支持的能力结论；每条当前事实标注 [证据: 路径或工具名]，其余放入未验证。' };
+        let boundedResponse = await this.generateModel({ messages: [...bounded, boundedPrompt], tools: [] }, false, signal, 'agent_step');
+        if (/tool_use|tool_call|read_text_file|list_dir|```json/iu.test(boundedResponse.text)) {
+          boundedResponse = await this.generateModel({ messages: [...bounded, boundedPrompt, { role: 'system', content: '上一版输出错误地模拟了工具调用。现在只输出中文自然语言报告，不要 JSON、代码块、tool_use、tool_call 或任何新的工具请求。' }], tools: [] }, false, signal, 'agent_step');
+        }
+        if (boundedResponse.text.trim()) return { ...boundedResponse, evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}) };
+      }
       const response = await this.generateModel({ messages: current, tools, ...(requiredToolChoice ? { toolChoice: { name: requiredToolChoice } } : {}) }, true, signal, "agent_step");
       if (!response.toolCalls?.length && !mustSearch && !mustFetch) {
         const hasExternalEvidence = evidence.some(item => /^(?:web_search|web_fetch|browser_read|browser_links):/u.test(item));
@@ -331,7 +341,7 @@ export class ChatSession {
       if (readOnlyObservationRounds >= 6) {
         const turn = this.journal.turns.at(-1);
         if (turn) (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: round, event: "stop", budget: loopBudget.currentBudget, reason: "read_only_observation_limit" });
-        const synthesisMessages = [...current, { role: "system" as const, content: "已获得足够的只读证据。现在必须停止调用工具，直接整理最终报告：区分当前代码事实、历史文档结论、未验证推断和结论；不要声称未执行的检查。证据绑定规则：每个当前事实都必须能对应本轮已读取的具体文件或工具结果；不能把依赖、目录名或历史文档推断成运行时能力，不能使用‘完全成熟’‘无缝接入’等夸大结论；未读取的 transport/provider 实现、实际网络状态、代理是否生效一律标为未验证。只有本轮成功执行的 project_search 才允许输出 project source marker；不得复用历史会话中的 source marker，也不要为了显得有引用而编造标记。报告控制在 800 字以内，并以完整结论句结束。" }];
+        const synthesisMessages = [...current, { role: "system" as const, content: "已获得足够的只读证据。现在必须停止调用工具，直接整理最终报告：区分当前代码事实、历史文档结论、未验证推断和结论；不要声称未执行的检查。证据绑定规则：每个‘当前代码事实’必须能对应本轮成功读取的具体文件内容或工具结果，并在同一句末尾写 [证据: <实际路径或工具名>]；只有能逐字支持该事实时才可写入当前事实，否则移到‘未验证’。不能把依赖、目录名、存在某个模块或历史文档推断成运行时能力，不能使用‘完全成熟’‘无缝接入’等夸大结论；未读取的 transport/provider 实现、实际网络状态、代理是否生效一律标为未验证。只有本轮成功执行的 project_search 才允许输出 project source marker；不得复用历史会话中的 source marker，也不要为了显得有引用而编造标记。报告控制在 800 字以内，并以完整结论句结束。" }];
         let synthesis = await this.generateModel({ messages: synthesisMessages, tools: [] }, false, signal, "agent_step");
         if (synthesis.text.length > 160 && !/[。！？.!?）)\]】」』`}]$/u.test(synthesis.text.trim())) {
           synthesis = await this.generateModel({ messages: [...synthesisMessages, { role: "system", content: "上一版回答疑似被截断。请重新输出一份完整、简洁、以结论句收尾的报告，不要调用工具。" }], tools: [] }, false, signal, "agent_step");
@@ -459,8 +469,16 @@ export class ChatSession {
       this.onToolsUsed?.([call.name]);
       const preparedResult = prepareToolResultMessage(call.id, execution);
       if (preparedResult.pruning.pruned) this.onDiagnostic?.({ code: "TOOL_RESULT_PRUNED", component: "context", severity: "debug", detail: `tool=${call.name};originalChars=${preparedResult.pruning.originalChars};retainedChars=${preparedResult.pruning.retainedChars}` });
+      const evidenceCards = buildEvidenceCards(call, execution);
+      const renderedCards = renderEvidenceCards(evidenceCards);
       input.next.push(preparedResult.message);
       await this.appendMessage(preparedResult.message);
+      if (renderedCards) {
+        // Persist cards as canonical session facts without placing a system
+        // message between an assistant tool call and its matching tool result
+        // in the immediate provider request.
+        await this.appendMessage({ role: 'system', content: renderedCards });
+      }
       if (terminalResponse) {
         await this.appendSkippedToolResults(input.calls.slice(callIndex + 1), "本批次前序调用已使执行停止。", input.next);
         return { next: input.next, readOnlyObservationRounds, response: terminalResponse };

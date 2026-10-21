@@ -1,5 +1,6 @@
 import type { ToolCapability, Tool } from './tools/types.js';
 import { CapabilityCatalog, type CapabilityAvailabilityState, type CapabilityCatalogEntry, type CapabilityId } from './capability-catalog.js';
+import { classifyTool } from './tools/catalog.js';
 
 export interface ActivatedCapability {
   readonly id: CapabilityId;
@@ -113,7 +114,24 @@ export function createCapabilityRoutingTools(catalog: CapabilityCatalog, activat
       return JSON.stringify(entries.map(entry => ({ id: entry.manifest.id, description: entry.manifest.description, state: activator.isActive(entry.manifest.id) ? 'active' : entry.availability.state, ...(entry.availability.reasonCode ? { reasonCode: entry.availability.reasonCode } : {}) })));
     },
   };
-  return [search, activate, status];
+  const toolCatalog: Tool = {
+    definition: { name: 'tool_catalog', description: '列出当前可发现能力及其工具摘要，帮助选择合适的工具；不会激活或执行工具。', parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 32 } }, additionalProperties: false } },
+    async execute(raw) {
+      const args = parseObject(raw);
+      const query = args.query === undefined ? '' : stringArg(args, 'query');
+      const limit = args.limit === undefined ? 16 : integerArg(args, 'limit');
+      const entries = query ? catalog.search(query, limit) : catalog.list().slice(0, limit).map(entry => ({ ...entry, score: 0 }));
+      return JSON.stringify(entries.map(entry => ({
+        id: entry.manifest.id,
+        description: entry.manifest.description,
+        risk: entry.manifest.risk,
+        state: activator.isActive(entry.manifest.id) ? 'active' : entry.availability.state,
+        tools: entry.manifest.toolSummaries.map(tool => ({ name: tool.name, ...classifyTool(tool.name) })),
+        ...(entry.availability.reasonCode ? { reasonCode: entry.availability.reasonCode } : {}),
+      })));
+    },
+  };
+  return [search, activate, status, toolCatalog];
 }
 
 function publicEntry(entry: { manifest: { id: string; description: string; risk: string }; availability: { state: CapabilityAvailabilityState }; score: number }): object {

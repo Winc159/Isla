@@ -164,6 +164,7 @@ describe("session", () => {
     const snapshots: Array<readonly Message[]> = [];
     await new ChatSession(p, { projectRoot: sessionRoot, enableTools: true, onMessagesChanged: async messages => { snapshots.push(messages); } }).send("读取 README");
     expect(snapshots.some(messages => messages.some(message => message.role === "tool" && message.toolCallId === "2"))).toBe(true);
+    expect(snapshots.some(messages => messages.some(message => message.role === "system" && message.content.includes("[[evidence_cards]]")))).toBe(true);
   });
   it("stops the tool loop after approval rejection", async () => {
     class WriteProvider extends FakeProvider {

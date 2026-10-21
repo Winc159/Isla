@@ -176,3 +176,56 @@ E10: passed, webSearch=false reported without fabricated web result
 ```
 
 E01 本轮评分：**78/100**。主要扣分点是模型仍会对已读取代码做偏强的能力归纳，且个别“当前事实”需要更细粒度的工具来源绑定；但已经从“安全阻断、无最终报告”提升为“完成结构化报告”。E01/E02/E10 按 40%/30%/30% 加权后的阶段分数为 **91/100**。
+
+## 第七轮真实运行：证据卡片、工具目录与上下文保护（2026-10-21）
+
+本轮新增结构化 EvidenceCard、模型可调用的 `tool_catalog`，并在只读观察接近上下文上限时切换到有界 synthesis；若模型误输出 `tool_use`/JSON，则自动要求纯自然语言重试。
+
+```text
+log: .isla-local/evaluations/live-e0c59bf5-5bdb-462f-8fb1-6cd1546b892f/dialogue.ndjson
+E01: completed, no CONTEXT_INPUT_TOO_LARGE; 3 model steps; report separated current/history/unverified/conclusion
+E02: passed, package.json version 0.5.1
+E10: passed, webSearch=false reported without fabricated web result
+```
+
+评分：E01 **64/100**、E02 **100/100**、E10 **100/100**；当前阶段加权分数 **86/100**。E01 已解决“扫描到上下文溢出/无法收束”的硬问题，但仍有模型把依赖、目录或历史内容推成能力事实的现象，故不能把 64 分解释为事实准确性达标；下一步应继续做来源级事实校验，而不是继续增加工具数量。
+
+## 第八轮真实运行：Tool Result 协议兼容性回归（2026-10-21）
+
+本轮验证证据卡片改为独立 canonical system fact 后的真实行为；Tool Call→Tool Result 即时顺序保持不变，未再出现上下文溢出。
+
+```text
+log: .isla-local/evaluations/live-d471357b-c912-4542-afd6-32de0ad3d2bd/dialogue.ndjson
+E01: completed, 5 model steps, no CONTEXT_INPUT_TOO_LARGE
+E02: passed, package.json version 0.5.1
+E10: passed, webSearch=false reported without fabricated web result
+```
+
+评分：E01 **62/100**、E02 **100/100**、E10 **100/100**；当前阶段加权分数 **85/100**。硬性稳定性与协议兼容性通过；E01 的主要扣分仍是模型把依赖、历史记录和目录存在性上升为运行时事实，属于模型事实校验能力问题，不能用继续增加工具来掩盖。
+
+## 第九轮真实运行：qwen3.6-flash（2026-10-21）
+
+将 Bailian Profile 切换为 `qwen3.6-flash` 后重跑同一评估矩阵。
+
+```text
+log: .isla-local/evaluations/live-7181e23d-4530-4934-8990-4cf9d77a1575/dialogue.ndjson
+model: qwen3.6-flash
+E01: completed with evidence-bound sections; no context overflow
+E02: passed, package.json version 0.5.1
+E10: passed, webSearch=false reported without fabricated web result
+```
+
+评分：E01 **84/100**、E02 **100/100**、E10 **100/100**；当前阶段加权分数 **94/100**。相较上一模型，qwen3.6-flash 的工具收束和证据标注明显更稳定，但仍需把“代码存在”与“运行时已启用”严格区分。
+
+## 第十轮真实运行：工具职责分类回归（2026-10-21）
+
+本轮加入统一工具分类和边界元数据后，使用 `qwen3.6-flash` 重跑真实场景。
+
+```text
+log: .isla-local/evaluations/live-8052b61c-d574-4200-8fce-5b77318c6973/dialogue.ndjson
+E01: completed; tool selection remained bounded; evidence-bound report produced
+E02: passed, package.json version 0.5.1
+E10: passed, webSearch=false reported without fabricated web result
+```
+
+评分：E01 **84/100**、E02 **100/100**、E10 **100/100**；当前阶段加权分数 **94/100**。分类元数据没有造成工具选择退化。

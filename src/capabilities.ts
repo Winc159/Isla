@@ -1,6 +1,7 @@
 import type { ToolDefinition } from './core/types.js';
 import type { ToolCapability } from './tools/types.js';
 import type { SkillCatalogEntry } from './skills/types.js';
+import { classifyTool, type ToolBoundary, type ToolCategory } from './tools/catalog.js';
 
 export type CapabilityKind = 'builtin-tool' | 'skill' | 'mcp-tool';
 
@@ -15,6 +16,9 @@ export interface CapabilityInventoryEntry {
   readonly schemaBytes?: number;
   readonly descriptionChars?: number;
   readonly diagnosticCode?: string;
+  readonly category?: ToolCategory;
+  readonly boundary?: ToolBoundary;
+  readonly canonicalPurpose?: string;
 }
 
 export interface CapabilityPolicy {
@@ -48,7 +52,8 @@ export function composeCapabilitySnapshot(capabilities: readonly ToolCapability[
       const id = tool.definition.name;
       const allowed = kind === 'mcp-tool' ? mcpAllowed(id, server!, policy) : true;
       const definition = tool.definition;
-      entries.push({ id, kind, origin: capability.id, available: true, modelVisible: allowed, userInvocable: true, ...(tool.permission ? { permission: tool.permission.kind } : {}), schemaBytes: Buffer.byteLength(JSON.stringify(definition.parameters), 'utf8') });
+      const classification = classifyTool(id);
+      entries.push({ id, kind, origin: capability.id, available: true, modelVisible: allowed, userInvocable: true, category: classification.category, boundary: classification.boundary, canonicalPurpose: classification.canonicalPurpose, ...(tool.permission ? { permission: tool.permission.kind } : {}), schemaBytes: Buffer.byteLength(JSON.stringify(definition.parameters), 'utf8') });
       if (allowed) toolDefinitions.push(definition);
     }
   }
