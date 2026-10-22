@@ -227,6 +227,21 @@ export class ResourceService {
     }
     return archives.sort((a, b) => a.localeCompare(b));
   }
+  private findLikelyMedia(folder: string): readonly string[] {
+    const media: string[] = []; const queue = [folder];
+    while (queue.length) {
+      const current = queue.pop()!;
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        const path = join(current, entry.name);
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isDirectory()) { queue.push(path); continue; }
+        if (!entry.isFile()) continue;
+        const fd = openSync(path, "r");
+        try { const header = Buffer.alloc(1024 * 1024); const length = readSync(fd, header, 0, header.length, 0); const inspected = inspectArchive(path, header.subarray(0, length), lstatSync(path).size); if (inspected.likelyMedia && !inspected.isArchive) media.push(path); } finally { closeSync(fd); }
+      }
+    }
+    return media.sort((a, b) => a.localeCompare(b));
+  }
   private async scanSavedFolders(force: boolean): Promise<void> {
     const watches = this.db.prepare("SELECT managed_root_id, relative_path, destination_root_id FROM resource_folder_watches WHERE enabled = 1").all() as unknown as Array<{ managed_root_id: string; relative_path: string; destination_root_id: string }>;
     for (const watch of watches) { try { this.scanFolder({ managedRootId: watch.managed_root_id, relativePath: watch.relative_path, destinationRootId: watch.destination_root_id }, force); } catch { /* 单个目录不可用不阻塞其他 watch，下次周期继续 */ } }
@@ -305,14 +320,19 @@ export class ResourceService {
     const parsed = parseResultJson ? JSON.parse(parseResultJson) as { archivePasswordCandidates?: string[]; titleCandidates?: string[] } : {};
     const destinationRoot = this.options.config.managedRoots.find(root => root.id === input.destinationRootId && root.outputEnabled); if (!destinationRoot) throw new Error("DESTINATION_ROOT_INVALID");
     const downloadDirectory = join(this.options.config.stagingPath, id, "download"); const assumedDownloadPath = join(downloadDirectory, "downloaded.bin");
-    this.setStage(id, "inspecting", "queued"); const discovered = this.findArchives(downloadDirectory); const downloadPath = discovered[0] ?? assumedDownloadPath;
+    this.setStage(id, "inspecting", "queued"); const discovered = this.findArchives(downloadDirectory);
+    // bdpan may create a directory at the requested destination. Scan its
+    // contents before deciding that the download is not an archive; this also
+    // catches archives whose names were deliberately changed to .mp4/.bin.
+    if (discovered.length === 0) throw new Error(this.findLikelyMedia(downloadDirectory).length > 0 ? "DOWNLOADED_CONTENT_IS_MEDIA" : "DOWNLOADED_ARCHIVE_NOT_FOUND");
+    const downloadPath = discovered[0]!;
     const name = await chooseResourceNameWithWorker(this.options.inferenceClient, { ...(parsed.titleCandidates ? { titleCandidates: parsed.titleCandidates } : {}), downloadedNames: [basename(downloadPath)], completedAt: new Date() }); const outputPath = availableOutputPath(destinationRoot.path, name.name); const stagingPath = join(this.options.config.stagingPath, id, "extracted");
     const passwordCandidates = this.passwordCandidates(id, parsed.archivePasswordCandidates ?? []);
     const extraction = this.scheduler.enqueue(id, "extraction", signal => { this.setStage(id, "extracting", "running"); return this.options.archiveOrganizer!.organize({ archivePath: downloadPath, stagingPath, outputPath, passwordCandidates }, signal); });
     void extraction.promise.then(extracted => { if (extracted.successfulPasswordIndex !== undefined) this.recordSuccessfulPassword(passwordCandidates[extracted.successfulPasswordIndex]); this.completeJob(id, extracted.totalBytes); }).catch(error => this.handleJobError(id, error, "inspecting"));
   }
   private completeJob(id: string, totalBytes: number): void { const now = new Date().toISOString(); this.db.prepare("UPDATE resource_jobs SET status = 'completed', stage = 'completed', revision = revision + 1, progress_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({ ratio: 1, completedBytes: totalBytes, totalBytes }), now, id); }
-  private failJob(id: string, error: unknown, resumeStage: ResourceJobSnapshotV1["stage"]): void { const now = new Date().toISOString(); this.db.prepare("UPDATE resource_jobs SET status = 'failed', revision = revision + 1, failure_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({ code: error instanceof Error ? error.message : "RESOURCE_JOB_FAILED", message: "资源任务执行失败。", retryable: true, resumeStage }), now, id); }
+  private failJob(id: string, error: unknown, resumeStage: ResourceJobSnapshotV1["stage"]): void { const now = new Date().toISOString(); const code = error instanceof Error ? error.message : "RESOURCE_JOB_FAILED"; const message = code === "DOWNLOADED_CONTENT_IS_MEDIA" ? "下载内容经文件头识别为媒体文件，未发现可解压的压缩包；为避免误信伪装文件，任务未继续。" : code === "DOWNLOADED_ARCHIVE_NOT_FOUND" ? "下载目录中未发现可识别的压缩包。" : "资源任务执行失败。"; this.db.prepare("UPDATE resource_jobs SET status = 'failed', revision = revision + 1, failure_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({ code, message, retryable: true, resumeStage }), now, id); }
   private handleJobError(id: string, error: unknown, resumeStage: ResourceJobSnapshotV1["stage"]): void {
     const code = error instanceof Error ? error.message : "RESOURCE_JOB_FAILED"; const now = new Date().toISOString();
     const intervention = code === "ARCHIVE_PASSWORD_REQUIRED" ? { type: "provide_archive_password", message: "压缩包需要密码，自动密码候选均未成功。请输入解压密码后继续。", actions: ["provide_values", "reject"] as const }
@@ -360,7 +380,16 @@ export class ResourceService {
     const provided = Buffer.from(credential); const expected = Buffer.from(this.token);
     return provided.length === expected.length && timingSafeEqual(provided, expected);
   }
-  private originAllowed(request: IncomingMessage): boolean { const origin = request.headers.origin; return origin === undefined || this.options.config.listen.allowedOrigins.includes(origin); }
+  private originAllowed(request: IncomingMessage): boolean {
+    const origin = request.headers.origin;
+    if (origin === undefined) return true;
+    if (this.options.config.listen.allowedOrigins.includes(origin)) return true;
+    try {
+      const parsed = new URL(origin);
+      const host = request.headers.host;
+      return parsed.protocol === "http:" && host !== undefined && parsed.host === host;
+    } catch { return false; }
+  }
   private async readBody(request: IncomingMessage): Promise<unknown> { let text = ""; for await (const chunk of request) { text += chunk.toString(); if (text.length > this.options.config.limits.maxInputChars) throw new Error("REQUEST_TOO_LARGE"); } return JSON.parse(text || "{}"); }
   private send(response: ServerResponse, status: number, body: unknown): void { response.statusCode = status; response.setHeader("content-type", "application/json; charset=utf-8"); response.end(JSON.stringify(body)); }
   private sendHtml(response: ServerResponse, body: string): void { response.statusCode = 200; response.setHeader("content-type", "text/html; charset=utf-8"); response.setHeader("cache-control", "no-store"); response.end(body); }

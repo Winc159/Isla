@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 export interface LocalRuntimeConfigV1 {
   readonly version: 1;
   readonly host: { readonly host: '127.0.0.1'; readonly port: number; readonly token: string };
-  readonly resource: { readonly host: '127.0.0.1'; readonly port: number; readonly token: string };
+  readonly resource: { readonly host: '127.0.0.1' | '0.0.0.0'; readonly port: number; readonly token: string };
 }
 
 export function defaultLocalRuntimeConfigPath(): string {
@@ -40,14 +40,18 @@ export function parseLocalRuntimeConfig(source: string): LocalRuntimeConfigV1 {
   try { value = JSON.parse(source); } catch { throw new Error('Invalid Isla runtime config JSON'); }
   if (!value || typeof value !== 'object' || Array.isArray(value) || (value as { version?: unknown }).version !== 1) throw new Error('Isla runtime config version must be 1');
   const root = value as Record<string, unknown>;
-  return { version: 1, host: endpoint(root.host, 'host'), resource: endpoint(root.resource, 'resource') };
+  return {
+    version: 1,
+    host: endpoint(root.host, 'host', true) as LocalRuntimeConfigV1['host'],
+    resource: endpoint(root.resource, 'resource', false) as LocalRuntimeConfigV1['resource'],
+  };
 }
 
-function endpoint(value: unknown, name: string): { host: '127.0.0.1'; port: number; token: string } {
+function endpoint(value: unknown, name: string, loopbackOnly: boolean): { host: '127.0.0.1' | '0.0.0.0'; port: number; token: string } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Isla runtime ${name} must be an object`);
   const item = value as Record<string, unknown>;
-  if (item.host !== '127.0.0.1') throw new Error(`Isla runtime ${name} must use loopback`);
+  if (item.host !== '127.0.0.1' && (!(!loopbackOnly && item.host === '0.0.0.0'))) throw new Error(`Isla runtime ${name} must use loopback or 0.0.0.0`);
   if (!Number.isSafeInteger(item.port) || (item.port as number) < 1 || (item.port as number) > 65_535) throw new Error(`Isla runtime ${name} port is invalid`);
   if (typeof item.token !== 'string' || item.token.length < 32) throw new Error(`Isla runtime ${name} token is invalid`);
-  return { host: '127.0.0.1', port: item.port as number, token: item.token };
+  return { host: item.host as '127.0.0.1' | '0.0.0.0', port: item.port as number, token: item.token };
 }

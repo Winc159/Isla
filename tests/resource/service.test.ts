@@ -86,7 +86,7 @@ describe("Resource service skeleton", () => {
 
   it("chains an approved Baidu download into the independent extraction pool", async () => {
     directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); let downloaded = false; let extracted = false;
-    const baiduDownloader = { download: async () => { downloaded = true; return { code: 0, stdout: "{}", stderr: "" }; } };
+    const baiduDownloader = { download: async (request: { destinationPath?: string }) => { downloaded = true; if (request.destinationPath) writeFileSync(request.destinationPath, Buffer.from([0x50, 0x4b, 0x03, 0x04])); return { code: 0, stdout: "{}", stderr: "" }; } };
     const archiveOrganizer = { organize: async () => { extracted = true; return { inspection: { path: "downloaded.bin", format: "zip" as const, isArchive: true, likelyMedia: false, normalizedName: "downloaded.zip", confidence: "high" as const }, outputPath: join(directory!, "library", "课程资料"), files: [{ relativePath: "content.txt", size: 4 }], totalBytes: 4 }; } };
     service = new ResourceService({ config: makeConfig(directory), token: "resource-token", baiduDownloader, archiveOrganizer }); const address = await service.start(); const headers = { authorization: "Bearer resource-token", "content-type": "application/json" };
     const created = await fetch(`http://${address.host}:${address.port}/api/v1/resource/jobs`, { method: "POST", headers, body: JSON.stringify({ tool: "baidu-download", input: { kind: "share-text", text: "课程资料\nhttps://pan.baidu.com/s/fixture 提取码 ab12" }, destinationRootId: "library" }) }); const job = (await created.json() as { job: { id: string; revision: number; pendingDecision: { id: string } } }).job;
