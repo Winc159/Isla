@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, statSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, statSync, writeSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import type { ResourceConfigV1 } from "./config.js";
 import { migrateResourceDatabase } from "./database-schema.js";
@@ -242,6 +242,14 @@ export class ResourceService {
     }
     return media.sort((a, b) => a.localeCompare(b));
   }
+  private findEmbeddedArchives(folder: string): readonly { path: string; offset: number }[] {
+    const results: { path: string; offset: number }[] = []; const queue = [folder]; const signatures = [Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from("Rar!\x1a\x07\x00", "binary"), Buffer.from("Rar!\x1a\x07\x01\x00", "binary"), Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])];
+    while (queue.length) { const current = queue.pop()!; for (const entry of readdirSync(current, { withFileTypes: true })) { const path = join(current, entry.name); if (entry.isSymbolicLink()) continue; if (entry.isDirectory()) { queue.push(path); continue; } if (!entry.isFile()) continue; const fd = openSync(path, "r"); try { const size = lstatSync(path).size; const chunkSize = 16 * 1024 * 1024; const overlap = 8; let offset = 0; let tail = Buffer.alloc(0); while (offset < size) { const buffer = Buffer.alloc(Math.min(chunkSize, size - offset)); const length = readSync(fd, buffer, 0, buffer.length, offset); if (!length) break; const data = Buffer.concat([tail, buffer.subarray(0, length)]); const base = offset - tail.length; const found = signatures.map(signature => data.indexOf(signature)).filter(index => index >= 0).sort((a, b) => a - b)[0]; if (found !== undefined && base + found > 0) { results.push({ path, offset: base + found }); break; } tail = data.subarray(Math.max(0, data.length - overlap)); offset += length; } } finally { closeSync(fd); } } }
+    return results.sort((a, b) => a.path.localeCompare(b.path) || a.offset - b.offset);
+  }
+  private materializeEmbeddedArchive(source: { path: string; offset: number }, directory: string): string {
+    const output = join(directory, `embedded-${basename(source.path)}-${source.offset}.zip`); const input = openSync(source.path, "r"); const out = openSync(output, "w"); try { const size = statSync(source.path).size; const buffer = Buffer.alloc(16 * 1024 * 1024); let position = source.offset; while (position < size) { const length = readSync(input, buffer, 0, Math.min(buffer.length, size - position), position); if (!length) break; writeSync(out, buffer, 0, length); position += length; } } finally { closeSync(input); closeSync(out); } return output;
+  }
   private async scanSavedFolders(force: boolean): Promise<void> {
     const watches = this.db.prepare("SELECT managed_root_id, relative_path, destination_root_id FROM resource_folder_watches WHERE enabled = 1").all() as unknown as Array<{ managed_root_id: string; relative_path: string; destination_root_id: string }>;
     for (const watch of watches) { try { this.scanFolder({ managedRootId: watch.managed_root_id, relativePath: watch.relative_path, destinationRootId: watch.destination_root_id }, force); } catch { /* 单个目录不可用不阻塞其他 watch，下次周期继续 */ } }
@@ -326,12 +334,17 @@ export class ResourceService {
     // catches archives whose names were deliberately changed to .mp4/.bin.
     let downloadPath = discovered[0];
     if (!downloadPath) {
-      const media = this.findLikelyMedia(downloadDirectory);
-      if (media.length === 0) throw new Error("DOWNLOADED_ARCHIVE_NOT_FOUND");
+      const embedded = this.findEmbeddedArchives(downloadDirectory);
+      if (embedded.length > 0) downloadPath = this.materializeEmbeddedArchive(embedded[0]!, downloadDirectory);
+      const media = embedded.length > 0 ? [] : this.findLikelyMedia(downloadDirectory);
+      if (media.length === 0 && !downloadPath) throw new Error("DOWNLOADED_ARCHIVE_NOT_FOUND");
+      if (downloadPath) { /* use the extracted embedded archive */ }
+      else {
       // Some resources are advertised as RAR but arrive with a media suffix.
       // Probe a copy with a .rar suffix; the original download is preserved.
       downloadPath = join(downloadDirectory, "archive-probe.rar");
       copyFileSync(media[0]!, downloadPath);
+      }
     }
     const name = await chooseResourceNameWithWorker(this.options.inferenceClient, { ...(parsed.titleCandidates ? { titleCandidates: parsed.titleCandidates } : {}), downloadedNames: [basename(downloadPath)], completedAt: new Date() }); const outputPath = availableOutputPath(destinationRoot.path, name.name); const stagingPath = join(this.options.config.stagingPath, id, "extracted");
     const passwordCandidates = this.passwordCandidates(id, parsed.archivePasswordCandidates ?? []);
