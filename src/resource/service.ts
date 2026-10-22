@@ -362,6 +362,7 @@ export class ResourceService {
     const failure = JSON.parse(row.failure_json) as { retryable?: boolean; resumeStage?: ResourceJobSnapshotV1["stage"] };
     if (!failure.retryable) throw new Error("JOB_NOT_RETRYABLE");
     if (row.source === "baidu" && failure.resumeStage === "queued_download") this.startBaiduJob(id, row.input_json, row.parse_result_json);
+    else if (row.source === "baidu" && failure.resumeStage === "inspecting") void this.startBaiduExtraction(id, row.input_json, row.parse_result_json);
     else if (row.source === "managed-folder" && failure.resumeStage === "inspecting") this.startArchiveJob(id, row.input_json);
     else throw new Error("RETRY_STAGE_UNSUPPORTED");
     return true;
