@@ -27,7 +27,10 @@ export class ArchiveOrganizer {
     if (existsSync(outputPath)) throw new Error("OUTPUT_ALREADY_EXISTS");
     if (stagingPath === outputPath || stagingPath.startsWith(`${outputPath}${sep}`)) throw new Error("STAGING_PATH_INVALID");
     const header = readHeader(archivePath); const inspection = inspectArchive(archivePath, header, statSync(archivePath).size);
-    if (!inspection.isArchive) throw new Error("ARCHIVE_FORMAT_UNSUPPORTED");
+    // A media-looking file may be a renamed archive. When the caller has
+    // explicitly created a .rar probe, let 7-Zip inspect the bytes instead of
+    // trusting the extension or the media hint.
+    if (!inspection.isArchive && !/\.rar$/iu.test(archivePath)) throw new Error("ARCHIVE_FORMAT_UNSUPPORTED");
     const candidates = [...new Set([...(request.password ? [request.password] : []), ...(request.passwordCandidates ?? [])].map(value => value.trim()).filter(Boolean))].slice(0, 20);
     const initial = await this.tool.run(["t", archivePath], signal); let successfulPasswordIndex: number | undefined; let passwordArgs: string[] = [];
     if (initial.code !== 0) {

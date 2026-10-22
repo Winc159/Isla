@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, statSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import type { ResourceConfigV1 } from "./config.js";
 import { migrateResourceDatabase } from "./database-schema.js";
@@ -259,7 +259,7 @@ export class ResourceService {
       const supplied = [decision.values?.password, ...(Array.isArray(decision.values?.passwords) ? decision.values.passwords : [])].filter((value): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 256).map(value => value.trim());
       if (supplied.length === 0) throw new Error("ARCHIVE_PASSWORD_REQUIRED");
       const now = new Date().toISOString(); const insert = this.db.prepare("INSERT OR IGNORE INTO resource_job_secrets (job_id, kind, secret_value, created_at) VALUES (?, 'archive-password', ?, ?)"); for (const password of supplied.slice(0, 20)) insert.run(id, password, now);
-      if (row.source === "baidu") this.startBaiduExtraction(id, row.input_json, row.parse_result_json);
+      if (row.source === "baidu") void this.startBaiduExtraction(id, row.input_json, row.parse_result_json).catch(error => this.handleJobError(id, error, "inspecting"));
       else this.startArchiveJob(id, row.input_json);
       return true;
     }
@@ -324,8 +324,15 @@ export class ResourceService {
     // bdpan may create a directory at the requested destination. Scan its
     // contents before deciding that the download is not an archive; this also
     // catches archives whose names were deliberately changed to .mp4/.bin.
-    if (discovered.length === 0) throw new Error(this.findLikelyMedia(downloadDirectory).length > 0 ? "DOWNLOADED_CONTENT_IS_MEDIA" : "DOWNLOADED_ARCHIVE_NOT_FOUND");
-    const downloadPath = discovered[0]!;
+    let downloadPath = discovered[0];
+    if (!downloadPath) {
+      const media = this.findLikelyMedia(downloadDirectory);
+      if (media.length === 0) throw new Error("DOWNLOADED_ARCHIVE_NOT_FOUND");
+      // Some resources are advertised as RAR but arrive with a media suffix.
+      // Probe a copy with a .rar suffix; the original download is preserved.
+      downloadPath = join(downloadDirectory, "archive-probe.rar");
+      copyFileSync(media[0]!, downloadPath);
+    }
     const name = await chooseResourceNameWithWorker(this.options.inferenceClient, { ...(parsed.titleCandidates ? { titleCandidates: parsed.titleCandidates } : {}), downloadedNames: [basename(downloadPath)], completedAt: new Date() }); const outputPath = availableOutputPath(destinationRoot.path, name.name); const stagingPath = join(this.options.config.stagingPath, id, "extracted");
     const passwordCandidates = this.passwordCandidates(id, parsed.archivePasswordCandidates ?? []);
     const extraction = this.scheduler.enqueue(id, "extraction", signal => { this.setStage(id, "extracting", "running"); return this.options.archiveOrganizer!.organize({ archivePath: downloadPath, stagingPath, outputPath, passwordCandidates }, signal); });
@@ -362,7 +369,7 @@ export class ResourceService {
     const failure = JSON.parse(row.failure_json) as { retryable?: boolean; resumeStage?: ResourceJobSnapshotV1["stage"] };
     if (!failure.retryable) throw new Error("JOB_NOT_RETRYABLE");
     if (row.source === "baidu" && failure.resumeStage === "queued_download") this.startBaiduJob(id, row.input_json, row.parse_result_json);
-    else if (row.source === "baidu" && failure.resumeStage === "inspecting") void this.startBaiduExtraction(id, row.input_json, row.parse_result_json);
+    else if (row.source === "baidu" && failure.resumeStage === "inspecting") void this.startBaiduExtraction(id, row.input_json, row.parse_result_json).catch(error => this.handleJobError(id, error, "inspecting"));
     else if (row.source === "managed-folder" && failure.resumeStage === "inspecting") this.startArchiveJob(id, row.input_json);
     else throw new Error("RETRY_STAGE_UNSUPPORTED");
     return true;
