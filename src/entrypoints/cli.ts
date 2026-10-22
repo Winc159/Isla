@@ -286,7 +286,7 @@ export async function runCliAdapter(options: CliAdapterOptions): Promise<void> {
 function writeSessionHistory(output: Writable, session: StoredSession): void {
   for (const message of session.messages) {
     if (message.role === 'system') continue;
-    output.write(`${message.role === 'user' ? 'you' : 'isla'}> ${message.content}\n`);
+    output.write(`${message.role === 'user' ? 'user' : 'isla'}> ${message.content}\n`);
   }
   output.write('\n');
 }

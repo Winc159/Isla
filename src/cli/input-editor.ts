@@ -11,7 +11,7 @@ export interface CommandSuggestion {
   readonly description: string;
 }
 
-const prompt = 'you> ';
+const prompt = 'user> ';
 const defaultColumns = 80;
 const maxVisibleSuggestions = 10;
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });

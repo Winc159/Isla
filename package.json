@@ -19,7 +19,7 @@
   "scripts": {
     "dev": "tsx --env-file-if-exists=.env src/entrypoints/cli.ts",
     "clean": "node scripts/clean.mjs",
-    "build": "npm run clean && tsc -p tsconfig.json",
+    "build": "npm run clean && tsc -p tsconfig.json && node scripts/mark-entrypoints-executable.mjs",
     "install:browser": "node scripts/install-browser.mjs",
     "install:deps": "node scripts/install-dependencies.mjs",
     "install:all": "node scripts/install-all.mjs",

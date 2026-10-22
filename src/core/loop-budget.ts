@@ -42,6 +42,11 @@ export class LoopBudgetState {
     const first = failures[0]!;
     return failures.filter(item => item.action.split(':', 1)[0] === first.action.split(':', 1)[0] && item.errorCode === first.errorCode).length >= 3;
   }
+  hasRepeatedTool(toolName: string, count = 4): boolean {
+    const recent = this.samples.slice(-count);
+    if (recent.length < count) return false;
+    return recent.every(item => item.action.split(':', 1)[0] === toolName && !item.changed);
+  }
   shouldStop(): boolean { return this.isStuck() || this.hasAlternatingLoop() || this.hasRepeatedFailure(); }
   tryExtend(): boolean { if (this.shouldStop() || this.budget >= Math.min(this.autoLimit, this.hardLimit)) return false; this.budget = Math.min(this.budget + this.extensionSteps, this.autoLimit, this.hardLimit); return true; }
   extendAfterApproval(): boolean { if (this.shouldStop() || this.budget >= this.hardLimit) return false; this.budget = Math.min(this.budget + this.extensionSteps, this.hardLimit); return true; }

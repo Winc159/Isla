@@ -506,6 +506,11 @@ export class ChatSession {
       if (progress.kind === 'observation' && execution.ok) readOnlyObservationRounds += 1;
       else if (progress.changed || progress.kind === 'evidence' || progress.kind === 'task_update' || progress.kind === 'verification') readOnlyObservationRounds = 0;
       input.loopBudget.record({ action: `${call.name}:${call.arguments}`, result: execution.ok ? `${progress.kind}:${execution.content.slice(0, 500)}` : execution.message, changed: progress.changed, ...(execution.ok ? {} : { errorCode: execution.code }) });
+      if (execution.ok && input.loopBudget.hasRepeatedTool(call.name)) {
+        const turn = this.journal.turns.at(-1);
+        if (turn) (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: input.round, event: "stop", budget: input.loopBudget.currentBudget, reason: `repeated_observation:${call.name}` });
+        return { next: input.next, readOnlyObservationRounds, response: { text: `工具 ${call.name} 连续进行了多次无进展检查，已停止重复执行。`, outcome: "blocked", evidence: input.evidence, ...(input.responseModel ? { model: input.responseModel } : {}) } };
+      }
       if (!execution.ok && input.loopBudget.hasRepeatedFailure()) {
         const turn = this.journal.turns.at(-1);
         if (turn) (turn.actions as TurnActionRecord[]).push({ type: "loop_budget", step: input.round, event: "stop", budget: input.loopBudget.currentBudget, reason: `repeated_failure:${call.name}:${execution.code}` });

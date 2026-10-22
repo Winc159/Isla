@@ -10,7 +10,7 @@ describe.skipIf(!PTY_AVAILABLE)('CLI PTY acceptance', () => {
       fixture.server.enqueue({ content: 'ready' });
       fixture.driver.enter('hello Isla');
       await fixture.driver.waitForText('isla> ready');
-      await fixture.driver.waitForText('you>');
+      await fixture.driver.waitForText('user>');
       fixture.driver.enter('/exit');
       expect((await fixture.driver.waitForExit()).exitCode).toBe(0);
     } finally { await fixture.dispose(); }
@@ -48,7 +48,7 @@ describe.skipIf(!PTY_AVAILABLE)('CLI PTY acceptance', () => {
       fixture.driver.enter('before');
       await fixture.driver.waitForText('isla> before new');
       fixture.driver.enter('/new');
-      await fixture.driver.waitForText('you>');
+      await fixture.driver.waitForText('user>');
       fixture.driver.enter('after');
       await fixture.driver.waitForText('isla> after new');
       fixture.driver.enter('/exit');
@@ -64,7 +64,7 @@ describe.skipIf(!PTY_AVAILABLE)('CLI PTY acceptance', () => {
       await fixture.driver.waitForText('生成中');
       fixture.driver.sendCtrlC();
       await fixture.driver.waitForText('正在取消本轮');
-      await fixture.driver.waitForText('you>', { from: fixture.driver.textOutput.length, timeoutMs: 8_000 });
+      await fixture.driver.waitForText('user>', { from: fixture.driver.textOutput.length, timeoutMs: 8_000 });
       fixture.driver.enter('/exit');
       await fixture.driver.waitForExit();
     } finally { await fixture.dispose(); }
@@ -87,7 +87,7 @@ describe.skipIf(!PTY_AVAILABLE)('CLI PTY acceptance', () => {
       fixture.driver.sendEscape();
       await fixture.driver.waitForText('用户拒绝了工具调用');
       await expect(access(`${fixture.workspace}/approval.txt`).then(() => true, () => false)).resolves.toBe(false);
-      await fixture.driver.waitForText('you>', { from: fixture.driver.textOutput.length - 20 });
+      await fixture.driver.waitForText('user>', { from: fixture.driver.textOutput.length - 20 });
     } finally { await fixture.dispose(); }
   }, 30_000);
 

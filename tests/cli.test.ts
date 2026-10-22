@@ -46,7 +46,7 @@ describe("cli", () => {
     await runCli(Readable.from(["你好\n", "/exit\n"]), writable(text => { out += text; }, true), writable(text => { err += text; }), r, "fake", "fake-model", undefined, false, 20, store);
     expect(out).toContain("isla> ok");
     expect(out).toMatch(/耗时 \d+s/);
-    expect(out).not.toContain("you> 你好");
+    expect(out).not.toContain("user> 你好");
     expect(err).toBe("");
   });
 
@@ -142,7 +142,7 @@ describe("cli", () => {
     expect(out).toContain("选择会话");
     expect(out).toContain("\x1b[?1049h");
     expect(out).toContain("\x1b[?1049l");
-    expect(out).toContain("you> 旧问题");
+    expect(out).toContain("user> 旧问题");
     expect(out).toContain("isla> 旧回答");
     expect(p.requests).toHaveLength(0);
   });
