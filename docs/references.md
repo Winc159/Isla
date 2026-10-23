@@ -28,18 +28,18 @@
 ## Agent Runtime 参考实现
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — 用于审查插件边界、Provider 适配、会话日志和模型历史不变量；不作为 Isla 的依赖或脚手架。
-- [本次审查的 DSH 提交](https://github.com/deepseek-ai/deepseek-harness/commit/76fda729799fe9b3848dbe2c211d4b231032b81e) — `0.1.2-rc.1`，查看日期 2026-09-08；具体采用、暂缓和拒绝项见 [DSH 参考评审](dsh-reference-review.md)。
+- [本次审查的 DSH 提交](https://github.com/deepseek-ai/deepseek-harness/commit/76fda729799fe9b3848dbe2c211d4b231032b81e) — `0.1.2-rc.1`，查看日期 2026-09-08；后续取舍已经汇总到当前架构决策和版本计划。
 - [DSH MCP package](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/mcp) — 多 Server 配置、限定工具名、原子 generation、transport 与结果规范化的对照实现；v0.4.0 采用设计不变量，不复制源码或 Cordis 服务层；查看日期 2026-09-20。
 - [DSH MCP client](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/mcp/mcp-client) — raw/public tool identity、stdio 环境、启动失败和资源入口的具体边界；用于 v0.4.0 安全与生命周期设计；查看日期 2026-09-20。
 - [DSH Session](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session.md) — 事实日志与模型消息投影，影响 v0.2.1 的“原始事实与上下文视图分离”；查看日期 2026-09-11。
 - [DSH Compaction](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/compaction.md) — 持久化压缩检查点、Tool 配对边界和失败语义；采用原则，拒绝完整事件框架；查看日期 2026-09-11。
 - [DSH Session Query](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session-query.md) — 确定性读取、过滤和全文检索；v0.2.1 采用职责分离，暂缓完整 Query 服务；查看日期 2026-09-11。
-- DSH Session Query 对 v0.2.3 的补充取舍：采用确定性读取、可定位来源和可重建派生视图；暂缓 SQLite/FTS、查询 DSL 和跨项目统一索引；查看日期 2026-09-12，具体见 `docs/architecture-v0.2.3.md`。
+- DSH Session Query 对早期 Session Query 设计的补充取舍：采用确定性读取、可定位来源和可重建派生视图；暂缓 SQLite/FTS、查询 DSL 和跨项目统一索引；查看日期 2026-09-12。
 - [DSH Tools](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/tools.md) — 模型可见 schema、host-only Tool 定义字段、规范化执行结果和最终权威结果的边界；v0.2.4 采用“展示内容与 Runtime details 分离”，不复制 middleware 或类型框架；查看日期 2026-09-12。
 - [DSH Session Query package](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/session-query/session-query/README.md) — 确定性读取、语义文档投影、live-preferred corpus 与全文索引职责边界；v0.2.4 采用稳定身份、排序和关系校验原则，继续暂缓 SQLite backend、游标与 reconciliation；查看日期 2026-09-12。
 - [DSH Compaction packages](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/compaction/README.md) — 先裁剪过大 Tool Result 再压缩历史的职责拆分；v0.2.4 只采用有界 Tool 输出与优先保留有效片段，不引入 pruner pipeline 或 spill store；查看日期 2026-09-12。
 - [DSH DeepSeek Provider](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/llm/llm-deepseek/src/index.ts) — Provider/model 配置与凭据解析分离；v0.2.5 采用“启动路由不进入模型历史、缺少凭据明确失败”的原则，但按用户选择使用单个本地 `config.json`，不复制其配置或 credential service；查看日期 2026-09-12。
-- DSH host composition、资源所有权与 capability negotiation 对 v0.2.5.1 的补充取舍：采用单一装配和入口等价不变量；拒绝 Cordis、通用服务容器、Surface 和完整事件框架；具体见 `docs/architecture-v0.2.5.1.md` 与 `docs/dsh-reference-review.md`，查看日期 2026-09-13。
+- DSH host composition、资源所有权与 capability negotiation 的补充取舍：采用单一装配和入口等价不变量；拒绝 Cordis、通用服务容器、Surface 和完整事件框架；当前结论见 `docs/architecture.md`、`docs/decisions.md` 和 `docs/plan-v0.5.7.md`，查看日期 2026-09-13。
 - [DSH Agent cancellation](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/core.md) — 当前活动独占signal、空闲cancel不影响未来工作、第一原因生效以及等待quiescence；v0.2.6采用这些不变量，拒绝Inbox、steer、Agent Registry和事件溯源Session；查看日期2026-09-13。
 - [DSH Tool cancellation](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/tools/README.md) — Tool执行接收活动signal并协作停止；v0.2.6映射到Isla现有ToolRuntime/Tool接口，不复制DSH middleware、scope或包结构；查看日期2026-09-13。
 - [DSH Web subsystem](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/web.md) — Web fetch 的能力分层、请求/结果类型、Provider timeout、结构化错误和安全边界；v0.2.7 采用安全获取与展示分离，不复制 WebRuntime/Provider Registry；查看日期 2026-09-13。

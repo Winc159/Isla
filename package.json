@@ -1,6 +1,6 @@
 {
   "name": "@winc159/isla",
-  "version": "0.5.1",
+  "version": "0.5.7",
   "private": true,
   "type": "module",
   "bin": {
@@ -34,7 +34,7 @@
     "setup": "npm install && npm run install:all && npm run build && npm link",
     "start": "node --env-file-if-exists=.env dist/entrypoints/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --exclude tests/pty/**",
     "test:watch": "vitest",
     "test:smoke": "vitest run tests/smoke",
     "test:smoke:mcp": "node scripts/run-mcp-eval.mjs",

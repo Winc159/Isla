@@ -86,7 +86,7 @@ resource.intermediates_removed
 resource.organize_retry_started
 ```
 
-这些内部事件已经持久化到 `resource_events`，并由任务事件 API 和 Web UI 使用，但尚未纳入 `ResourceEventTypeV1`。因此当前类型契约与数据库中的实际事件集合不完全一致。后续统一事件契约时，需要先确定哪些事件属于稳定的公共 API，再同步类型、事件数据结构和测试；在完成前，消费者应把未知事件类型作为可展示但不可穷举的事件处理。
+这些 Resource 处理事件已经纳入 `ResourceEventTypeV1`，并由任务事件 API 和 Web UI 使用。公共消费者仍应把未知事件类型作为可展示但不可穷举的记录处理，以便后续增加内部诊断事件时保持兼容。
 
 ## API 入口
 
@@ -131,5 +131,5 @@ isla service logs
 
 - Resource 不是通用下载器，当前主要支持百度网盘和本地受管目录。
 - 它不应把 root 权限、API Key、分享码或解压密码交给 LLM。
-- `ResourceEventV1` 的基础事件契约与数据库实际事件集合尚未统一，当前兼容边界见“事件契约”。
+- Resource 公共事件与当前数据库写入类型已经统一；事件 payload 仍以有界诊断数据为主，不作为秘密或原始模型内容通道。
 - 内容识别和命名 Worker 仍依赖 Resident Host 的 `resource-worker` Profile；该 Profile 不可用时任务应停在可解释的失败状态，而不是无限重试。

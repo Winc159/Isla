@@ -1,12 +1,12 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { closeSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, rmdirSync, statSync, writeSync } from "node:fs";
+import { closeSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, writeSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ResourceConfigV1 } from "./config.js";
 import { migrateResourceDatabase } from "./database-schema.js";
-import { parseConfirmResourceJobRequestV1, parseCreateResourceJobRequestV1, type ResourceJobSnapshotV1 } from "./contracts.js";
+import { parseConfirmResourceJobRequestV1, parseCreateResourceJobRequestV1, type ResourceEventTypeV1, type ResourceJobSnapshotV1 } from "./contracts.js";
 import { parseResourceShareText, parseShareTextNeedsWorker, splitResourceShareText } from "./parser.js";
 import { chooseResourceName } from "./naming.js";
 import { chooseResourceNameWithWorker } from "./title-worker.js";
@@ -15,7 +15,6 @@ import type { ArchiveOrganizeRequest, ArchiveOrganizeResult } from "./archive-or
 import type { BaiduDownloadRequest, BaiduDownloadResult } from "./baidu-download-runner.js";
 import type { BdpanContext } from "./bdpan-runner.js";
 import { RESOURCE_TOOLBOX } from "./toolbox.js";
-import { RESOURCE_WEB_UI } from "./web-ui.js";
 import { inspectArchive } from "./archive.js";
 import type { ResourceInferenceClient } from "./inference-client.js";
 import type { ResourceWorkerSettings } from "./worker-settings.js";
@@ -31,6 +30,7 @@ export interface ResourceServiceOptions {
   readonly inferenceClient?: ResourceInferenceClient;
   readonly workerSettings?: ResourceWorkerSettings;
   readonly resourceSettings?: ResourceSettingsStore;
+  readonly trashPolicy?: { readonly retentionMs: number; readonly maxBytes: number };
 }
 
 export interface ResourceServiceAddress {
@@ -82,7 +82,9 @@ export class ResourceService {
     if (request.method === "GET" && request.url === "/resource") {
       if (!this.originAllowed(request)) { this.send(response, 403, { error: { code: "ORIGIN_FORBIDDEN", message: "请求来源不被允许。", retryable: false } }); return; }
       response.setHeader("set-cookie", `isla_resource=${this.token}; HttpOnly; SameSite=Strict; Path=/api/v1/resource`);
-      this.sendHtml(response, this.reactWebUi() ?? RESOURCE_WEB_UI);
+      const webUi = this.reactWebUi();
+      if (!webUi) { this.send(response, 503, { error: { code: "RESOURCE_UI_NOT_BUILT", message: "Resource UI 尚未构建，请先运行 npm run resource:ui:build。", retryable: false } }); return; }
+      this.sendHtml(response, webUi);
       return;
     }
     if (request.method === "GET" && request.url?.startsWith("/resource/assets/")) {
@@ -132,7 +134,10 @@ export class ResourceService {
       if (request.method === "POST" && match[2] === "retry") { this.send(response, 202, { accepted: this.retryJob(id, await this.readBody(request)) }); return; }
       if (request.method === "POST" && match[2] === "repeat") { this.send(response, 201, { job: this.repeatJob(id) }); return; }
       this.send(response, 405, { error: { code: "METHOD_NOT_ALLOWED", message: "方法不支持。", retryable: false } });
-    } catch (error) { this.send(response, 400, { error: { code: error instanceof Error ? error.message : "RESOURCE_REQUEST_FAILED", message: "请求无效。", retryable: false } }); }
+    } catch (error) {
+      const requestError = error instanceof ResourceRequestError ? error : undefined;
+      this.send(response, 400, { error: { code: requestError?.code ?? (error instanceof Error ? error.message : "RESOURCE_REQUEST_FAILED"), message: requestError?.userMessage ?? "请求无效。", retryable: false, ...(requestError?.details ? { details: requestError.details } : {}) } });
+    }
   }
 
   private async listBaiduTree(path: string): Promise<Record<string, unknown>> {
@@ -157,19 +162,33 @@ export class ResourceService {
     const relativeTarget = relative(root.path, target);
     if (relativeTarget.startsWith("..") || relativeTarget.includes(`..${process.platform === "win32" ? "\\" : "/"}`)) throw new Error("SCAN_PATH_INVALID");
     if (!existsSync(target) || !statSync(target).isDirectory()) throw new Error("LOCAL_DIRECTORY_NOT_FOUND");
-    const entries = readdirSync(target, { withFileTypes: true }).map(entry => { const entryPath = relativePath === "." ? entry.name : join(relativePath, entry.name).replaceAll("\\", "/"); const fullPath = join(target, entry.name); const info = lstatSync(fullPath); return { name: entry.name, path: entryPath, type: entry.isDirectory() ? "directory" : "file", size: entry.isDirectory() ? undefined : info.size, modifiedAt: info.mtime.toISOString() }; });
+    this.assertRealPathInsideRoot(root.path, target);
+    const entries = readdirSync(target, { withFileTypes: true }).filter(entry => entry.name !== ".isla-trash" && !entry.isSymbolicLink()).map(entry => { const entryPath = relativePath === "." ? entry.name : join(relativePath, entry.name).replaceAll("\\", "/"); const fullPath = join(target, entry.name); const info = lstatSync(fullPath); return { name: entry.name, path: entryPath, type: entry.isDirectory() ? "directory" : "file", size: entry.isDirectory() ? undefined : info.size, modifiedAt: info.mtime.toISOString(), ...(entry.isFile() ? { archiveCandidate: this.isArchiveCandidate(fullPath) } : {}) }; });
     return { rootId, path: relativePath, entries };
   }
 
+  private isArchiveCandidate(path: string): boolean { const fd = openSync(path, "r"); try { const info = lstatSync(path); const header = Buffer.alloc(Math.min(1024 * 1024, info.size)); const length = readSync(fd, header, 0, header.length, 0); return inspectArchive(path, header.subarray(0, length), info.size).isArchive; } finally { closeSync(fd); } }
+
   private managedTarget(value: unknown, key = "path"): { root: ResourceConfigV1["managedRoots"][number]; path: string; absolute: string } {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("FILE_REQUEST_INVALID"); const input = value as Record<string, unknown>; const rootId = input.rootId; const path = input[key]; if (typeof rootId !== "string" || typeof path !== "string" || !path || path.includes("..") || /^[\\/]/u.test(path)) throw new Error("FILE_PATH_INVALID"); const root = this.options.config.managedRoots.find(item => item.id === rootId); if (!root) throw new Error("MANAGED_ROOT_INVALID"); const absolute = resolve(root.path, path); const rel = relative(root.path, absolute); if (rel.startsWith("..") || /^[\\/]/u.test(rel) || rel === ".isla-trash" || rel.startsWith(`.isla-trash${process.platform === "win32" ? "\\" : "/"}`)) throw new Error("FILE_PATH_RESERVED"); return { root, path, absolute }; }
-  private renameManagedPath(value: unknown): Record<string, unknown> { const target = this.managedTarget(value); const name = value as { name?: unknown }; if (typeof name.name !== "string" || !name.name.trim() || name.name.includes("\\") || name.name.includes("/")) throw new Error("FILE_NAME_INVALID"); if (!existsSync(target.absolute)) throw new Error("FILE_NOT_FOUND"); const destination = join(dirname(target.absolute), name.name.trim()); if (existsSync(destination)) throw new Error("FILE_DESTINATION_EXISTS"); renameSync(target.absolute, destination); return { path: relative(target.root.path, destination).replaceAll("\\", "/") }; }
-  private moveManagedPath(value: unknown): Record<string, unknown> { const source = this.managedTarget(value); const input = value as { destinationPath?: unknown }; if (typeof input.destinationPath !== "string") throw new Error("FILE_DESTINATION_INVALID"); const destination = this.managedTarget({ rootId: source.root.id, path: input.destinationPath }); if (!existsSync(source.absolute) || !existsSync(destination.absolute) || !statSync(destination.absolute).isDirectory()) throw new Error("FILE_DESTINATION_INVALID"); const target = join(destination.absolute, basename(source.absolute)); if (existsSync(target)) throw new Error("FILE_DESTINATION_EXISTS"); renameSync(source.absolute, target); return { path: relative(source.root.path, target).replaceAll("\\", "/") }; }
-  private trashManagedPath(value: unknown): Record<string, unknown> { const source = this.managedTarget(value); if (!existsSync(source.absolute)) throw new Error("FILE_NOT_FOUND"); const trashRoot = join(source.root.path, ".isla-trash"); mkdirSync(trashRoot, { recursive: true }); const id = randomUUID(); const trashPath = join(trashRoot, id); renameSync(source.absolute, trashPath); const size = this.pathSize(trashPath); const now = new Date().toISOString(); this.db.prepare("INSERT INTO resource_trash_entries (id, managed_root_id, original_path, trash_path, size_bytes, deleted_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, source.root.id, source.path, trashPath, size, now); this.cleanupTrash(); return { id, originalPath: source.path, sizeBytes: size }; }
+  private renameManagedPath(value: unknown): Record<string, unknown> { const target = this.managedTarget(value); const name = value as { name?: unknown }; if (typeof name.name !== "string" || !name.name.trim() || name.name.includes("\\") || name.name.includes("/")) throw new Error("FILE_NAME_INVALID"); if (!existsSync(target.absolute)) throw new Error("FILE_NOT_FOUND"); this.assertRealPathInsideRoot(target.root.path, target.absolute); const destination = join(dirname(target.absolute), name.name.trim()); if (existsSync(destination)) throw new Error("FILE_DESTINATION_EXISTS"); this.assertPathAvailable(target.root.id, target.path, relative(target.root.path, destination).replaceAll("\\", "/")); renameSync(target.absolute, destination); return { path: relative(target.root.path, destination).replaceAll("\\", "/") }; }
+  private moveManagedPath(value: unknown): Record<string, unknown> { const source = this.managedTarget(value); const input = value as { destinationPath?: unknown }; if (typeof input.destinationPath !== "string") throw new Error("FILE_DESTINATION_INVALID"); const destination = this.managedTarget({ rootId: source.root.id, path: input.destinationPath }); if (!existsSync(source.absolute) || !existsSync(destination.absolute) || !statSync(destination.absolute).isDirectory()) throw new Error("FILE_DESTINATION_INVALID"); this.assertRealPathInsideRoot(source.root.path, source.absolute); this.assertRealPathInsideRoot(source.root.path, destination.absolute); const target = join(destination.absolute, basename(source.absolute)); if (existsSync(target)) throw new Error("FILE_DESTINATION_EXISTS"); this.assertPathAvailable(source.root.id, source.path, relative(source.root.path, target).replaceAll("\\", "/")); renameSync(source.absolute, target); return { path: relative(source.root.path, target).replaceAll("\\", "/") }; }
+  private trashManagedPath(value: unknown): Record<string, unknown> { const source = this.managedTarget(value); if (!existsSync(source.absolute)) throw new Error("FILE_NOT_FOUND"); this.assertRealPathInsideRoot(source.root.path, source.absolute); this.assertPathAvailable(source.root.id, source.path); const trashRoot = join(source.root.path, ".isla-trash"); mkdirSync(trashRoot, { recursive: true }); const id = randomUUID(); const trashPath = join(trashRoot, id); renameSync(source.absolute, trashPath); const size = this.pathSize(trashPath); const now = new Date().toISOString(); this.db.prepare("INSERT INTO resource_trash_entries (id, managed_root_id, original_path, trash_path, size_bytes, deleted_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, source.root.id, source.path, trashPath, size, now); this.cleanupTrash(); return { id, originalPath: source.path, sizeBytes: size }; }
   private listTrash(): readonly Record<string, unknown>[] { return this.db.prepare("SELECT id, managed_root_id AS managedRootId, original_path AS originalPath, size_bytes AS sizeBytes, deleted_at AS deletedAt FROM resource_trash_entries ORDER BY deleted_at DESC").all() as unknown as Array<Record<string, unknown>>; }
-  private restoreTrash(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value) || typeof (value as { id?: unknown }).id !== "string") throw new Error("TRASH_REQUEST_INVALID"); const row = this.db.prepare("SELECT * FROM resource_trash_entries WHERE id = ?").get((value as { id: string }).id) as { id: string; managed_root_id: string; original_path: string; trash_path: string } | undefined; if (!row) throw new Error("TRASH_ENTRY_NOT_FOUND"); const root = this.options.config.managedRoots.find(item => item.id === row.managed_root_id); if (!root || !existsSync(row.trash_path)) throw new Error("TRASH_ENTRY_NOT_FOUND"); const target = resolve(root.path, row.original_path); if (existsSync(target)) throw new Error("FILE_DESTINATION_EXISTS"); mkdirSync(dirname(target), { recursive: true }); renameSync(row.trash_path, target); this.db.prepare("DELETE FROM resource_trash_entries WHERE id = ?").run(row.id); return { restored: row.original_path }; }
+  private restoreTrash(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value) || typeof (value as { id?: unknown }).id !== "string") throw new Error("TRASH_REQUEST_INVALID"); const row = this.db.prepare("SELECT * FROM resource_trash_entries WHERE id = ?").get((value as { id: string }).id) as { id: string; managed_root_id: string; original_path: string; trash_path: string } | undefined; if (!row) throw new Error("TRASH_ENTRY_NOT_FOUND"); const root = this.options.config.managedRoots.find(item => item.id === row.managed_root_id); if (!root || !existsSync(row.trash_path)) throw new Error("TRASH_ENTRY_NOT_FOUND"); const target = resolve(root.path, row.original_path); if (existsSync(target)) throw new Error("FILE_DESTINATION_EXISTS"); this.assertPathAvailable(root.id, row.original_path); mkdirSync(dirname(target), { recursive: true }); this.assertRealPathInsideRoot(root.path, dirname(target)); renameSync(row.trash_path, target); this.db.prepare("DELETE FROM resource_trash_entries WHERE id = ?").run(row.id); return { restored: row.original_path }; }
+  private assertRealPathInsideRoot(rootPath: string, targetPath: string): void { const root = realpathSync(rootPath); const target = realpathSync(targetPath); const rel = relative(root, target); if (rel.startsWith("..") || /^[\\/]/u.test(rel)) throw new Error("FILE_SYMLINK_ESCAPE"); }
+  private assertPathAvailable(rootId: string, ...paths: readonly string[]): void { const claims = this.activeManagedClaims(rootId); for (const path of paths) { const normalized = path.replaceAll("\\", "/").replace(/^\.\//u, ""); const claim = claims.find(item => pathsIntersect(normalized, item.path)); if (claim) throw new ResourceRequestError("FILE_IN_USE", "文件正在被资源任务使用。", { jobId: claim.jobId, path: normalized }); } }
+  private activeManagedClaims(rootId: string): readonly { jobId: string; path: string }[] {
+    const rows = this.db.prepare("SELECT id, input_json FROM resource_jobs WHERE status IN ('queued','running','waiting_user','cancelling')").all() as unknown as Array<{ id: string; input_json: string }>;
+    const claims: Array<{ jobId: string; path: string }> = [];
+    for (const row of rows) { try { const input = parseCreateResourceJobRequestV1(JSON.parse(row.input_json)); if (input.input.kind !== "managed-folder" && input.input.kind !== "managed-file") continue; if (input.input.managedRootId === rootId) claims.push({ jobId: row.id, path: input.input.relativePath.replaceAll("\\", "/") }); } catch { /* 旧任务输入损坏时不扩大文件占用范围 */ } }
+    const root = this.options.config.managedRoots.find(item => item.id === rootId);
+    if (!root) return claims;
+    for (const row of this.db.prepare("SELECT a.job_id AS jobId, a.relative_path AS path FROM resource_artifacts a JOIN resource_jobs j ON j.id = a.job_id WHERE j.status IN ('queued','running','waiting_user','cancelling')").all() as unknown as Array<{ jobId: string; path: string }>) { const rel = relative(root.path, row.path).replaceAll("\\", "/"); if (rel && rel !== "." && !rel.startsWith("..") && !/^[\\/]/u.test(rel)) claims.push({ jobId: row.jobId, path: rel }); }
+    return claims;
+  }
   private pathSize(path: string): number { const info = lstatSync(path); if (info.isFile()) return info.size; return readdirSync(path).reduce((sum, entry) => sum + this.pathSize(join(path, entry)), 0); }
-  private cleanupTrash(): void { const max = 100 * 1024 * 1024 * 1024; const expiry = Date.now() - 30 * 24 * 60 * 60 * 1000; const rows = this.db.prepare("SELECT * FROM resource_trash_entries ORDER BY deleted_at ASC").all() as unknown as Array<{ id: string; trash_path: string; size_bytes: number; deleted_at: string }>; let total = rows.reduce((sum, row) => sum + row.size_bytes, 0); for (const row of rows) { if (total <= max && Date.parse(row.deleted_at) >= expiry) continue; if (existsSync(row.trash_path)) rmSync(row.trash_path, { recursive: true, force: true }); this.db.prepare("DELETE FROM resource_trash_entries WHERE id = ?").run(row.id); total -= row.size_bytes; } }
+  private cleanupTrash(): void { const max = this.options.trashPolicy?.maxBytes ?? 100 * 1024 * 1024 * 1024; const expiry = Date.now() - (this.options.trashPolicy?.retentionMs ?? 30 * 24 * 60 * 60 * 1000); const rows = this.db.prepare("SELECT * FROM resource_trash_entries ORDER BY deleted_at ASC").all() as unknown as Array<{ id: string; trash_path: string; size_bytes: number; deleted_at: string }>; let total = rows.reduce((sum, row) => sum + row.size_bytes, 0); for (const row of rows) { if (total <= max && Date.parse(row.deleted_at) >= expiry) continue; if (existsSync(row.trash_path)) rmSync(row.trash_path, { recursive: true, force: true }); this.db.prepare("DELETE FROM resource_trash_entries WHERE id = ?").run(row.id); total -= row.size_bytes; } }
 
   private listArchivePasswords(): readonly Record<string, unknown>[] { return (this.db.prepare("SELECT password, success_count AS successCount, first_succeeded_at AS firstSucceededAt, last_succeeded_at AS lastSucceededAt FROM resource_archive_passwords ORDER BY success_count DESC, last_succeeded_at DESC").all() as unknown as Array<Record<string, unknown>>); }
   private addArchivePasswords(value: unknown): readonly Record<string, unknown>[] {
@@ -379,7 +398,7 @@ export class ResourceService {
     this.db.prepare("INSERT INTO resource_artifacts (id, job_id, kind, relative_path, size_bytes, verification_status, source_artifact_id, metadata_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(job_id, relative_path) DO UPDATE SET kind=excluded.kind, size_bytes=excluded.size_bytes, verification_status=excluded.verification_status, source_artifact_id=excluded.source_artifact_id, metadata_json=excluded.metadata_json, updated_at=excluded.updated_at").run(artifactId, id, kind, path, size, status, parentId ?? null, JSON.stringify(metadata), now, now);
     return artifactId;
   }
-  private appendJobEvent(id: string, type: string, data: Record<string, unknown>): void { const now = new Date().toISOString(); this.db.prepare("INSERT INTO resource_events (id, job_id, sequence, type, data_json, occurred_at) SELECT ?, id, COALESCE((SELECT MAX(sequence) + 1 FROM resource_events WHERE job_id = resource_jobs.id), 1), ?, ?, ? FROM resource_jobs WHERE id = ?").run(randomUUID(), type, JSON.stringify(data), now, id); }
+  private appendJobEvent(id: string, type: ResourceEventTypeV1, data: Record<string, unknown>): void { const now = new Date().toISOString(); this.db.prepare("INSERT INTO resource_events (id, job_id, sequence, type, data_json, occurred_at) SELECT ?, id, COALESCE((SELECT MAX(sequence) + 1 FROM resource_events WHERE job_id = resource_jobs.id), 1), ?, ?, ? FROM resource_jobs WHERE id = ?").run(randomUUID(), type, JSON.stringify(data), now, id); }
   private confirmJob(id: string, value: unknown): boolean {
     const decision = parseConfirmResourceJobRequestV1(value);
     const row = this.db.prepare("SELECT revision, source, input_json, parse_result_json, pending_decision_json FROM resource_jobs WHERE id = ?").get(id) as { revision: number; source: string; input_json: string; parse_result_json: string | null; pending_decision_json: string | null } | undefined;
@@ -652,6 +671,12 @@ export class ResourceService {
 }
 
 interface JobRow { id: string; revision: number; source: string; status: string; stage: string; destination_root_id: string; input_json: string; parse_result_json: string | null; progress_json: string; model_snapshot_json: string | null; pending_decision_json: string | null; failure_json: string | null; created_at: string; updated_at: string; }
+
+class ResourceRequestError extends Error {
+  constructor(readonly code: string, readonly userMessage: string, readonly details?: Record<string, unknown>) { super(code); }
+}
+
+function pathsIntersect(left: string, right: string): boolean { const a = left.replace(/^\.\//u, "").replace(/\/$/u, ""); const b = right.replace(/^\.\//u, "").replace(/\/$/u, ""); return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`); }
 
 function archiveOutputStem(name: string): string {
   const stripped = name.replace(/(?:\.part0*1|\.0*01|\.r00)$/iu, "").replace(/(?:\.(?:zip|7z|rar|tar|gz|tgz|bz2|xz|mp4|bin|download))+$/giu, "").trim();

@@ -28,7 +28,7 @@ describe("prompt composition", () => {
       [createProjectFilesCapability(process.cwd())],
       "agent_step",
     );
-    expect(messages.map(message => message.content).join("\n")).toContain("简洁、可靠的个人助理");
+    expect(messages.map(message => message.content).join("\n")).toContain("运行在用户自己的主机上的个人 Agent");
     expect(messages.map(message => message.content).join("\n")).toContain("能力 project-files");
   });
 });

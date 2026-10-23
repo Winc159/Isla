@@ -37,7 +37,7 @@ Resource 使用另一条启动路径：`src/entrypoints/resource.ts` 自动创�
 | Resident Host | `src/entrypoints/host.ts`、`src/host/`、`src/client/host-client.ts` | `tests/host.test.ts`、`tests/local-runtime-config.test.ts` |
 | Worker Profile 与结构化推理 | `src/runtime/bootstrap.ts`、`src/host/server.ts`、`src/resource/inference.ts` | `tests/config-selection.test.ts`、`tests/resource/host-inference.test.ts` |
 | Resource 启动与配置 | `src/entrypoints/resource.ts`、`src/resource/config.ts`、`src/resource/settings.ts` | `tests/resource/contracts.test.ts`、`tests/resource/settings.test.ts` |
-| Resource API、Job 与 Web 工具台 | `src/resource/service.ts`、`src/resource/database-schema.ts`、`src/resource/web-ui.ts` | `tests/resource/service.test.ts`、`tests/resource/database-schema.test.ts` |
+| Resource API、Job 与 Web 工具台 | `src/resource/service.ts`、`src/resource/database-schema.ts`、`resource-ui/src/main.tsx` | `tests/resource/service.test.ts`、`tests/resource/database-schema.test.ts` |
 | Resource 调度、下载与归档 | `src/resource/scheduler.ts`、`baidu-download-runner.ts`、`archive-organizer.ts` | `tests/resource/scheduler.test.ts`、`baidu-download-runner.test.ts`、`archive-organizer.test.ts`、`mock-e2e.test.ts` |
 | Resource Worker 客户端与窄任务 | `src/resource/inference-client.ts`、`title-worker.ts`、`content-worker.ts`、`naming.ts` | `tests/resource/inference-client.test.ts`、`title-worker.test.ts`、`content-worker.test.ts`、`worker-production-gap.test.ts` |
 
@@ -71,7 +71,7 @@ Resource Job、Scheduler、文件处理和 Web 工具台集中在 `src/resource/
 
 Worker 只允许通过 `src/resource/contracts.ts` 中已定义的结构化任务扩展。修改时必须同时检查 Host 装配、Worker Profile 选择、请求/响应上限、事实一致性校验、规则优先级和失败降级。不得让 Worker 直接读取文件、执行 Tool、持有会话或调用 primary Profile 兜底。
 
-Web 命名需要保持区分：`src/web/` 是主 Agent 的联网访问能力；`src/resource/web-ui.ts` 是 Resource 工具台页面。当前没有可承载主对话的 Web UI，不能把 Resource 页面当作通用前端入口。
+Web 命名需要保持区分：`src/web/` 是主 Agent 的联网访问能力；`resource-ui/` 是 Resource 工具台前端。当前没有可承载主对话的 Web UI，不能把 Resource 页面当作通用前端入口。
 
 ## 常见同步清单
 

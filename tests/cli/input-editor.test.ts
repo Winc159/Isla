@@ -37,7 +37,8 @@ describe('interactive input editor', () => {
 
     await expect(reading).resolves.toEqual({ type: 'submit', value: '第一行\n第二行' });
     expect(input.rawModes).toEqual([true, false]);
-    expect(target.read()).toContain('you> 第一行\n第二行\n');
+    expect(target.read()).toContain('user> 第一行');
+    expect(target.read()).toContain('第二行');
   });
 
   it('inserts a newline with Alt+Enter as a fallback', async () => {
@@ -63,8 +64,10 @@ describe('interactive input editor', () => {
     input.write('/s\t\r');
 
     await expect(reading).resolves.toEqual({ type: 'submit', value: '/sessions' });
-    expect(target.read()).toContain('you> /\n  /new  开启新会话\n  /sessions  选择历史会话\n  /exit  退出 Isla');
-    expect(target.read()).toContain('you> /s\n  /sessions  选择历史会话');
+    expect(target.read()).toContain('user> /');
+    expect(target.read()).toContain('/new  开启新会话');
+    expect(target.read()).toContain('/sessions  选择历史会话');
+    expect(target.read()).toContain('/exit  退出 Isla');
     expect(target.read()).toContain('/sessions');
   });
 

@@ -54,7 +54,8 @@ textarea.correction {
 .file-toolbar { display: grid; grid-template-columns: minmax(140px, .7fr) minmax(180px, 2fr) auto; gap: 8px; margin-top: 16px; }
 .file-toolbar input, .file-toolbar select { width: 100%; border: 1px solid var(--line); border-radius: 9px; padding: 10px 11px; background: #fbfcfe; color: var(--ink); }
 .file-list { display: grid; gap: 6px; max-height: 260px; overflow: auto; margin-top: 12px; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: #f7f9fc; }
-.file-entry { display: flex; justify-content: space-between; gap: 12px; width: 100%; border: 0; border-radius: 7px; padding: 8px 10px; background: transparent; text-align: left; }
+.file-entry { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; border: 0; border-radius: 7px; padding: 8px 10px; background: transparent; text-align: left; }
+.file-entry > button:first-child { display: flex; flex: 1; justify-content: space-between; gap: 12px; border: 0; background: transparent; text-align: left; }
 .file-entry:hover { background: var(--blue-soft); }
 .file-entry small, .password-row span { color: var(--muted); }
 .password-add { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseConfirmResourceJobRequestV1, parseCreateResourceJobRequestV1, parseResourceContentInputV1, parseResourceContentResultV1, parseResourceParseResultV1, parseResourceTitleInputV1, parseResourceTitleResultV1, parseStructuredInferenceRequestV1, RESOURCE_API_PREFIX, STRUCTURED_INFERENCE_ERROR_CODES } from "../../src/resource/contracts.js";
+import { parseConfirmResourceJobRequestV1, parseCreateResourceJobRequestV1, parseResourceContentInputV1, parseResourceContentResultV1, parseResourceParseResultV1, parseResourceTitleInputV1, parseResourceTitleResultV1, parseStructuredInferenceRequestV1, RESOURCE_API_PREFIX, RESOURCE_EVENT_TYPES, STRUCTURED_INFERENCE_ERROR_CODES } from "../../src/resource/contracts.js";
 import { loadOrCreateResourceConfig, parseResourceConfig } from "../../src/resource/config.js";
 import { RESOURCE_CASE_FIXTURES } from "../fixtures/resource-cases.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -21,6 +21,10 @@ describe("Resource v1 contracts", () => {
   it("freezes the API prefix and stable inference errors", () => {
     expect(RESOURCE_API_PREFIX).toBe("/api/v1/resource");
     expect(STRUCTURED_INFERENCE_ERROR_CODES).toContain("TASK_SCHEMA_MISMATCH");
+  });
+
+  it("declares the Resource processing events emitted by the service", () => {
+    expect(RESOURCE_EVENT_TYPES).toEqual(expect.arrayContaining(["job.recovered_stale", "resource.inspecting", "resource.volume_group_extracted", "resource.recursive_archive_extracted", "resource.published", "resource.intermediates_removed"]));
   });
 
   it("validates structured task and schema pairs", () => {

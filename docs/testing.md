@@ -36,7 +36,7 @@ npm run pack:check
 git diff --check
 ```
 
-- `npm run verify`：依次执行 TypeScript 类型检查、完整 Vitest 离线套件和构建。
+- `npm run verify`：依次执行清理、TypeScript 类型检查、Runtime 构建、默认 Vitest 离线套件和 Resource UI 构建；真实 PTY 由 `npm run test:pty` 独立执行，避免与高并发默认测试争用 Windows ConPTY。
 - `npm run check`：执行 `typecheck` 和 `test`，不单独构建。
 - `npm run pack:check`：执行 `npm pack --dry-run`，核对发布白名单；当前包只应包含 `dist`、`README.md`、`LICENSE` 和 npm 元数据。
 - `git diff --check`：检查空白错误，不改变 Git 状态。

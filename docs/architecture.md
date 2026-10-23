@@ -1,6 +1,6 @@
 # Isla 当前架构
 
-本文以 `0.5.1` 源码和测试为事实源，描述主 Agent Runtime 与独立 Resource 工具子系统的当前稳定边界。
+本文以 `0.5.7` 源码和测试为事实源，描述主 Agent Runtime 与独立 Resource 工具子系统的当前稳定边界。
 
 ## 产品定位与原则
 
@@ -72,7 +72,7 @@ Resource 是独立工具子系统，不是主 Agent Runtime 的第二套实现�
 | `src/resource/scheduler.ts` | 下载、检查、解压和推理的独立并发池、租约与取消收敛。 |
 | `src/resource/inference.ts` | Host 侧专用提示、模型调用和三类结构化结果校验。 |
 | `src/resource/inference-client.ts` | Resource 到 Resident Host 的窄 HTTP 客户端；不接触 Provider SDK 或凭据。 |
-| `src/resource/web-ui.ts` | Resource 工具台的内嵌前端，不是主 Agent Web 界面。 |
+| `resource-ui/src/main.tsx` | React Resource 工具台入口，不是主 Agent Web 界面。 |
 
 ## 用户请求完整链路
 
@@ -163,7 +163,7 @@ Resource Service 使用独立配置、SQLite Job、Scheduler 和受管目录边�
 
 所有输入和输出都经过有界 schema 校验。规则事实优先于模型建议；Worker 建议仍需名称清理、路径与事实一致性检查以及必要的人工确认。Worker 未配置、不可用、超时或输出非法时，不回退占用 primary 模型，也不使已有规则路径失效。
 
-`src/web/` 与 Resource Web UI 是两个不同概念：前者是主 Agent 可使用的联网搜索、抓取、传输与网络策略能力；`src/resource/web-ui.ts` 只是 Resource Service 提供的本地操作页面。当前没有主 Agent 聊天 Web UI。
+`src/web/` 与 Resource Web UI 是两个不同概念：前者是主 Agent 可使用的联网搜索、抓取、传输与网络策略能力；`resource-ui/` 构建的是 Resource Service 提供的本地操作页面。当前没有主 Agent 聊天 Web UI。Resource Service 不再保留内嵌旧页面；静态产物缺失时会返回明确诊断。
 
 ## 安全与审批
 

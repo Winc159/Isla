@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ResourceService } from "../../src/resource/service.js";
@@ -11,10 +11,11 @@ let directory: string | undefined;
 afterEach(async () => { await service?.close(); service = undefined; if (directory) rmSync(directory, { recursive: true, force: true }); directory = undefined; });
 
 describe("Resource service skeleton", () => {
-  it("serves the two-tool WebUI with an HttpOnly same-origin session", async () => {
+  it("serves the built React UI or an explicit build diagnostic", async () => {
     directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); service = new ResourceService({ config: makeConfig(directory), token: "resource-token" }); const address = await service.start();
     const page = await fetch(`http://${address.host}:${address.port}/resource`); const html = await page.text(); const cookie = page.headers.get("set-cookie");
-    expect(page.status).toBe(200); expect(page.headers.get("content-type")).toContain("text/html"); expect(html).toContain("百度下载"); expect(html).toContain("文件解压 / 整理"); expect(html).not.toContain("resource-token"); expect(cookie).toContain("HttpOnly"); expect(cookie).toContain("SameSite=Strict");
+    expect(html).not.toContain("resource-token"); expect(cookie).toContain("HttpOnly"); expect(cookie).toContain("SameSite=Strict");
+    if (page.status === 200) { expect(page.headers.get("content-type")).toContain("text/html"); expect(html).toContain("Isla Resource"); expect(html).toContain("/resource/assets/"); } else { expect(page.status).toBe(503); expect(JSON.parse(html)).toMatchObject({ error: { code: "RESOURCE_UI_NOT_BUILT" } }); }
     const config = await fetch(`http://${address.host}:${address.port}/api/v1/resource/config/public`, { headers: { cookie: cookie!.split(";")[0]! } });
     expect(config.status).toBe(200); expect(await config.json()).toMatchObject({ tools: [{ id: "baidu-download" }, { id: "archive-organizer" }] });
   });
@@ -76,7 +77,7 @@ describe("Resource service skeleton", () => {
   });
 
   it("runs an approved archive-organizer job to completion without a worker model", async () => {
-    directory = mkdtempSync(join(tmpdir(), "isla-resource-service-"));
+    directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); mkdirSync(join(directory, "library"), { recursive: true }); writeFileSync(join(directory, "library", "fixture.pkg"), "fixture");
     const archiveOrganizer = { organize: async (_request: unknown) => ({ inspection: { path: "fixture.pkg", format: "zip" as const, isArchive: true, likelyMedia: false, normalizedName: "fixture.zip", confidence: "high" as const }, outputPath: join(directory!, "library", "fixture"), files: [{ relativePath: "content.txt", size: 4 }], totalBytes: 4 }) };
     service = new ResourceService({ config: makeConfig(directory), token: "resource-token", archiveOrganizer }); const address = await service.start(); const headers = { authorization: "Bearer resource-token", "content-type": "application/json" };
     const created = await fetch(`http://${address.host}:${address.port}/api/v1/resource/jobs`, { method: "POST", headers, body: JSON.stringify({ tool: "archive-organizer", input: { kind: "managed-folder", managedRootId: "library", relativePath: "fixture.pkg" }, destinationRootId: "library" }) }); const job = (await created.json() as { job: { id: string; revision: number; pendingDecision: { id: string } } }).job;
@@ -95,7 +96,7 @@ describe("Resource service skeleton", () => {
   });
 
   it("lets a user retry a failed archive job from its safe stage", async () => {
-    directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); let attempts = 0;
+    directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); mkdirSync(join(directory, "library"), { recursive: true }); writeFileSync(join(directory, "library", "fixture.pkg"), "fixture"); let attempts = 0;
     const archiveOrganizer = { organize: async () => { attempts += 1; if (attempts === 1) throw new Error("PASSWORD_REQUIRED"); return { inspection: { path: "fixture.pkg", format: "zip" as const, isArchive: true, likelyMedia: false, normalizedName: "fixture.zip", confidence: "high" as const }, outputPath: join(directory!, "library", "fixture"), files: [{ relativePath: "content.txt", size: 4 }], totalBytes: 4 }; } };
     service = new ResourceService({ config: makeConfig(directory), token: "resource-token", archiveOrganizer }); const address = await service.start(); const headers = { authorization: "Bearer resource-token", "content-type": "application/json" };
     const created = await fetch(`http://${address.host}:${address.port}/api/v1/resource/jobs`, { method: "POST", headers, body: JSON.stringify({ tool: "archive-organizer", input: { kind: "managed-folder", managedRootId: "library", relativePath: "fixture.pkg" }, destinationRootId: "library" }) }); const job = (await created.json() as { job: { id: string; revision: number; pendingDecision: { id: string } } }).job;
@@ -125,7 +126,7 @@ describe("Resource service skeleton", () => {
   });
 
   it("asks for a missing archive password, resumes the same job, then reuses the successful password", async () => {
-    directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); const requests: Array<{ passwordCandidates?: readonly string[] }> = [];
+    directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); mkdirSync(join(directory, "library"), { recursive: true }); writeFileSync(join(directory, "library", "protected-one.pkg"), "fixture"); writeFileSync(join(directory, "library", "protected-two.pkg"), "fixture"); const requests: Array<{ passwordCandidates?: readonly string[] }> = [];
     const archiveOrganizer = { organize: async (request: { passwordCandidates?: readonly string[] }) => { requests.push(request); const index = request.passwordCandidates?.indexOf("frequent-secret") ?? -1; if (index < 0) throw new Error("ARCHIVE_PASSWORD_REQUIRED"); return { inspection: { path: "protected.pkg", format: "zip" as const, isArchive: true, likelyMedia: false, normalizedName: "protected.zip", confidence: "high" as const }, outputPath: join(directory!, "library", `protected-${requests.length}`), files: [{ relativePath: "secret.txt", size: 4 }], totalBytes: 4, successfulPasswordIndex: index }; } };
     service = new ResourceService({ config: makeConfig(directory), token: "resource-token", archiveOrganizer }); const address = await service.start(); const headers = { authorization: "Bearer resource-token", "content-type": "application/json" };
     const create = async (name: string) => { const response = await fetch(`http://${address.host}:${address.port}/api/v1/resource/jobs`, { method: "POST", headers, body: JSON.stringify({ tool: "archive-organizer", input: { kind: "managed-folder", managedRootId: "library", relativePath: name }, destinationRootId: "library" }) }); return (await response.json() as { job: { id: string; revision: number; pendingDecision: { id: string } } }).job; };
@@ -138,7 +139,52 @@ describe("Resource service skeleton", () => {
   it("browses managed folders without exposing absolute paths", async () => {
     directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); mkdirSync(join(directory, "library", "incoming", "series"), { recursive: true }); service = new ResourceService({ config: makeConfig(directory), token: "resource-token" }); const address = await service.start(); const headers = { authorization: "Bearer resource-token" };
     const response = await fetch(`http://${address.host}:${address.port}/api/v1/resource/local/tree?rootId=library&path=incoming`, { headers }); const body = await response.json() as { entries: Array<{ name: string; path: string }> };
-    expect(response.status).toBe(200); expect(body.entries).toEqual([{ name: "series", path: "incoming/series", type: "directory" }]); expect(JSON.stringify(body)).not.toContain(directory);
+    expect(response.status).toBe(200); expect(body.entries).toMatchObject([{ name: "series", path: "incoming/series", type: "directory" }]); expect(JSON.stringify(body)).not.toContain(directory);
+  });
+
+  it("renames, moves, trashes and restores managed files without exposing the trash directory", async () => {
+    directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); const library = join(directory, "library"); mkdirSync(join(library, "incoming"), { recursive: true }); mkdirSync(join(library, "sorted"), { recursive: true }); writeFileSync(join(library, "incoming", "fixture.zip"), "fixture");
+    service = new ResourceService({ config: makeConfig(directory), token: "resource-token" }); const address = await service.start(); const headers = { authorization: "Bearer resource-token", "content-type": "application/json" }; const endpoint = `http://${address.host}:${address.port}/api/v1/resource`;
+    let response = await fetch(`${endpoint}/files/rename`, { method: "POST", headers, body: JSON.stringify({ rootId: "library", path: "incoming/fixture.zip", name: "renamed.zip" }) }); expect(await response.json()).toEqual({ path: "incoming/renamed.zip" });
+    response = await fetch(`${endpoint}/files/move`, { method: "POST", headers, body: JSON.stringify({ rootId: "library", path: "incoming/renamed.zip", destinationPath: "sorted" }) }); expect(await response.json()).toEqual({ path: "sorted/renamed.zip" });
+    response = await fetch(`${endpoint}/files/trash`, { method: "POST", headers, body: JSON.stringify({ rootId: "library", path: "sorted/renamed.zip" }) }); const trashed = await response.json() as { id: string }; expect(existsSync(join(library, "sorted", "renamed.zip"))).toBe(false);
+    const tree = await fetch(`${endpoint}/local/tree?rootId=library&path=.`, { headers }); expect(JSON.stringify(await tree.json())).not.toContain(".isla-trash");
+    response = await fetch(`${endpoint}/files/restore`, { method: "POST", headers, body: JSON.stringify({ id: trashed.id }) }); expect(await response.json()).toEqual({ restored: "sorted/renamed.zip" }); expect(readFileSync(join(library, "sorted", "renamed.zip"), "utf8")).toBe("fixture");
+  });
+
+  it("manages archive passwords without returning them in errors", async () => {
+    directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); service = new ResourceService({ config: makeConfig(directory), token: "resource-token" }); const address = await service.start(); const headers = { authorization: "Bearer resource-token", "content-type": "application/json" }; const endpoint = `http://${address.host}:${address.port}/api/v1/resource/settings/passwords`;
+    let response = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify({ passwords: [" secret-one ", "secret-one", "", "秘密二"] }) }); let body = await response.json() as { passwords: Array<{ password: string }> }; expect(body.passwords.map(item => item.password).sort()).toEqual(["secret-one", "秘密二"].sort());
+    response = await fetch(endpoint, { method: "DELETE", headers, body: JSON.stringify({ passwords: ["secret-one"] }) }); expect(await response.json()).toEqual({ deleted: 1 });
+    response = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify({ passwords: "secret-must-not-leak" }) }); expect(JSON.stringify(await response.json())).not.toContain("secret-must-not-leak");
+  });
+
+  it("passes a Baidu authorization code only to the login runner", async () => {
+    directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); const received: string[] = []; const baiduBrowser = { list: async () => ({ code: 0, stdout: "[]", stderr: "" }), loginUrl: async () => ({ code: 0, stdout: "https://example.test/oauth", stderr: "" }), loginCode: async (code: string) => { received.push(code); return { code: 0, stdout: "{}", stderr: "" }; } };
+    service = new ResourceService({ config: makeConfig(directory), token: "resource-token", baiduBrowser }); const address = await service.start(); const headers = { authorization: "Bearer resource-token", "content-type": "application/json" }; const endpoint = `http://${address.host}:${address.port}/api/v1/resource/baidu/login`;
+    expect(await (await fetch(`${endpoint}/start`, { method: "POST", headers, body: "{}" })).json()).toEqual({ authorization: "https://example.test/oauth" });
+    expect(await (await fetch(`${endpoint}/complete`, { method: "POST", headers, body: JSON.stringify({ code: "private-code" }) })).json()).toEqual({ status: "signed_in" }); expect(received).toEqual(["private-code"]);
+  });
+
+  it("blocks file operations while a Resource job owns the path", async () => {
+    directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); const library = join(directory, "library"); mkdirSync(library, { recursive: true }); writeFileSync(join(library, "busy.zip"), "busy");
+    service = new ResourceService({ config: makeConfig(directory), token: "resource-token" }); const address = await service.start(); const headers = { authorization: "Bearer resource-token", "content-type": "application/json" }; const endpoint = `http://${address.host}:${address.port}/api/v1/resource`;
+    const created = await fetch(`${endpoint}/jobs`, { method: "POST", headers, body: JSON.stringify({ tool: "archive-organizer", input: { kind: "managed-file", managedRootId: "library", relativePath: "busy.zip" }, destinationRootId: "library" }) }); const job = (await created.json() as { job: { id: string } }).job;
+    let response = await fetch(`${endpoint}/files/trash`, { method: "POST", headers, body: JSON.stringify({ rootId: "library", path: "busy.zip" }) }); const blocked = await response.json() as { error: { code: string; details: { jobId: string } } }; expect(response.status).toBe(400); expect(blocked).toMatchObject({ error: { code: "FILE_IN_USE", details: { jobId: job.id } } });
+    await fetch(`${endpoint}/jobs/${job.id}/cancel`, { method: "POST", headers, body: "{}" }); response = await fetch(`${endpoint}/files/trash`, { method: "POST", headers, body: JSON.stringify({ rootId: "library", path: "busy.zip" }) }); expect(response.status).toBe(200);
+  });
+
+  it("removes the oldest trash entries when the configured capacity is exceeded", async () => {
+    directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); const library = join(directory, "library"); mkdirSync(library, { recursive: true }); writeFileSync(join(library, "first.bin"), "1234"); writeFileSync(join(library, "second.bin"), "5678");
+    service = new ResourceService({ config: makeConfig(directory), token: "resource-token", trashPolicy: { retentionMs: 30 * 24 * 60 * 60 * 1000, maxBytes: 5 } }); const address = await service.start(); const headers = { authorization: "Bearer resource-token", "content-type": "application/json" }; const endpoint = `http://${address.host}:${address.port}/api/v1/resource`;
+    await fetch(`${endpoint}/files/trash`, { method: "POST", headers, body: JSON.stringify({ rootId: "library", path: "first.bin" }) }); await new Promise(resolve => setTimeout(resolve, 5)); await fetch(`${endpoint}/files/trash`, { method: "POST", headers, body: JSON.stringify({ rootId: "library", path: "second.bin" }) });
+    const body = await (await fetch(`${endpoint}/files/trash`, { headers })).json() as { entries: Array<{ originalPath: string }> }; expect(body.entries).toEqual([expect.objectContaining({ originalPath: "second.bin" })]);
+  });
+
+  it("removes expired trash entries according to the configured retention", async () => {
+    directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); const library = join(directory, "library"); mkdirSync(library, { recursive: true }); writeFileSync(join(library, "expired.bin"), "expired");
+    service = new ResourceService({ config: makeConfig(directory), token: "resource-token", trashPolicy: { retentionMs: 0, maxBytes: 100 } }); const address = await service.start(); const headers = { authorization: "Bearer resource-token", "content-type": "application/json" }; const endpoint = `http://${address.host}:${address.port}/api/v1/resource`;
+    await fetch(`${endpoint}/files/trash`, { method: "POST", headers, body: JSON.stringify({ rootId: "library", path: "expired.bin" }) }); const body = await (await fetch(`${endpoint}/files/trash`, { headers })).json() as { entries: unknown[] }; expect(body.entries).toEqual([]);
   });
 
   it("automatically downloads an authenticated-drive path, can repeat it, and clears terminal records", async () => {

@@ -14,6 +14,12 @@ export const RESOURCE_JOB_STATUSES = [
 export const RESOURCE_EVENT_TYPES = [
   "job.created", "job.stage_changed", "job.progress", "job.waiting_user", "job.resumed",
   "job.completed", "job.failed", "job.cancelled", "artifact.discovered", "artifact.verified",
+  "job.recovered_stale", "resource.inspecting", "resource.archives_found",
+  "resource.embedded_archives_found", "resource.directory_publishing",
+  "resource.nested_extract_started", "resource.nested_extract_completed", "resource.nested_extract_failed",
+  "resource.volume_group_detected", "resource.volume_group_extracted",
+  "resource.recursive_archives_found", "resource.recursive_archive_extracted", "resource.recursive_archive_failed",
+  "resource.published", "resource.intermediates_removed", "resource.organize_retry_started",
 ] as const;
 
 export const STRUCTURED_INFERENCE_ERROR_CODES = [
