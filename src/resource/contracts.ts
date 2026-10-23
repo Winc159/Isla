@@ -120,7 +120,7 @@ export interface StructuredInferenceSuccessV1<T> {
 
 export interface CreateResourceJobRequestV1 {
   readonly tool: "baidu-download" | "archive-organizer";
-  readonly input: { readonly kind: "share-text"; readonly text: string } | { readonly kind: "baidu-path"; readonly path: string } | { readonly kind: "managed-folder"; readonly managedRootId: string; readonly relativePath: string };
+  readonly input: { readonly kind: "share-text"; readonly text: string } | { readonly kind: "baidu-path"; readonly path: string } | { readonly kind: "managed-folder" | "managed-file"; readonly managedRootId: string; readonly relativePath: string };
   readonly destinationRootId: string;
   readonly startMode?: "after-preview" | "automatic";
 }
@@ -194,7 +194,7 @@ export function parseCreateResourceJobRequestV1(value: unknown): CreateResourceJ
   const tool = enumValue(item.tool, ["baidu-download", "archive-organizer"] as const, "tool");
   const input = record(item.input, "input");
   if (tool === "baidu-download") { if (input.kind === "share-text") nonEmptyString(input.text, "input.text", 20_000); else if (input.kind === "baidu-path") { const path = nonEmptyString(input.path, "input.path", 4_096); if (!path.startsWith("/") || path.includes("..")) throw new Error("input.path must be a safe remote path"); } else throw new Error("input.kind must be share-text or baidu-path"); }
-  else { if (input.kind !== "managed-folder") throw new Error("input.kind must be managed-folder"); nonEmptyString(input.managedRootId, "input.managedRootId", 128); const relativePath = nonEmptyString(input.relativePath, "input.relativePath", 4_096); if (relativePath.includes("..") || /^[\\/]/u.test(relativePath)) throw new Error("input.relativePath must stay inside managed root"); }
+  else { if (input.kind !== "managed-folder" && input.kind !== "managed-file") throw new Error("input.kind must be managed-folder or managed-file"); nonEmptyString(input.managedRootId, "input.managedRootId", 128); const relativePath = nonEmptyString(input.relativePath, "input.relativePath", 4_096); if (relativePath.includes("..") || /^[\\/]/u.test(relativePath)) throw new Error("input.relativePath must stay inside managed root"); }
   nonEmptyString(item.destinationRootId, "destinationRootId", 128);
   if (item.startMode !== undefined) enumValue(item.startMode, ["after-preview", "automatic"] as const, "startMode");
   return item as unknown as CreateResourceJobRequestV1;

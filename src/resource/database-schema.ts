@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const RESOURCE_DATABASE_VERSION = 3;
+export const RESOURCE_DATABASE_VERSION = 5;
 
 export function migrateResourceDatabase(db: DatabaseSync): void {
   db.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE;");
@@ -10,6 +10,8 @@ export function migrateResourceDatabase(db: DatabaseSync): void {
     if (row.user_version < 1) migrateToVersion1(db);
     if (row.user_version < 2) migrateToVersion2(db);
     if (row.user_version < 3) migrateToVersion3(db);
+    if (row.user_version < 4) migrateToVersion4(db);
+    if (row.user_version < 5) migrateToVersion5(db);
     db.exec(`PRAGMA user_version = ${RESOURCE_DATABASE_VERSION}; COMMIT;`);
   } catch (error) {
     db.exec("ROLLBACK;");
@@ -33,6 +35,25 @@ function migrateToVersion3(db: DatabaseSync): void {
       last_succeeded_at TEXT NOT NULL
     );
   `);
+}
+
+function migrateToVersion4(db: DatabaseSync): void {
+  db.exec(`
+    ALTER TABLE resource_archive_passwords RENAME TO resource_archive_passwords_v3;
+    CREATE TABLE resource_archive_passwords (
+      password TEXT PRIMARY KEY,
+      success_count INTEGER NOT NULL CHECK(success_count >= 0),
+      first_succeeded_at TEXT NOT NULL,
+      last_succeeded_at TEXT NOT NULL
+    );
+    INSERT INTO resource_archive_passwords (password, success_count, first_succeeded_at, last_succeeded_at)
+      SELECT password, success_count, first_succeeded_at, last_succeeded_at FROM resource_archive_passwords_v3;
+    DROP TABLE resource_archive_passwords_v3;
+  `);
+}
+
+function migrateToVersion5(db: DatabaseSync): void {
+  db.exec(`CREATE TABLE resource_trash_entries (id TEXT PRIMARY KEY, managed_root_id TEXT NOT NULL, original_path TEXT NOT NULL, trash_path TEXT NOT NULL, size_bytes INTEGER NOT NULL, deleted_at TEXT NOT NULL, UNIQUE(managed_root_id, original_path));`);
 }
 
 function migrateToVersion2(db: DatabaseSync): void {

@@ -2,6 +2,21 @@
 
 ## 日常使用
 
+Resource 的处理链路、数据库表、任务 API 和故障排查见 [resource.md](./resource.md)。
+
+## 首次安装与依赖检查
+
+首次拉取项目后可以直接运行：
+
+```bash
+npm install
+npm run install:all
+npm run doctor
+npm run build
+```
+
+`install:all` 会安装 Playwright Chromium，并在 Windows x64 上下载并校验 Isla 管理的 7-Zip；Windows 还会尝试安装 bdpan。Linux/macOS 不把 7-Zip 或 unrar 二进制打进 npm 包，而是使用系统包管理器提供的 `7zz/7z`，避免平台 ABI、许可证和包体积问题。`npm run doctor` 会在启动前检查必需和可选依赖。
+
 ```bash
 isla                         # 连接常驻 Host，进入交互对话
 isla 帮我总结今天的任务      # 恢复当前 workspace 最近会话，回答后退出

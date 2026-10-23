@@ -17,6 +17,7 @@ const runtimeConfig = await loadOrCreateLocalRuntimeConfig();
 const config = await loadOrCreateResourceConfig(configPath, runtimeConfig);
 const inferenceClient = new ResourceInferenceClient({ endpoint: config.isla.endpoint, token: config.isla.token, timeoutMs: 15_000 });
 const sevenZip = resolveSevenZip();
+process.env.ISLA_7Z_PATH ??= sevenZip;
 const unrar = resolveUnrar();
 const bdpan = resolveBdpan();
 const service = new ResourceService({

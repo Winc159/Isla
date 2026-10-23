@@ -19,10 +19,12 @@
   "scripts": {
     "dev": "tsx --env-file-if-exists=.env src/entrypoints/cli.ts",
     "clean": "node scripts/clean.mjs",
-    "build": "npm run clean && tsc -p tsconfig.json && node scripts/mark-entrypoints-executable.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json && node node_modules/vite/bin/vite.js build --config resource-ui/vite.config.ts && node scripts/mark-entrypoints-executable.mjs",
+    "resource:ui:build": "node node_modules/vite/bin/vite.js build --config resource-ui/vite.config.ts",
     "install:browser": "node scripts/install-browser.mjs",
     "install:deps": "node scripts/install-dependencies.mjs",
     "install:all": "node scripts/install-all.mjs",
+    "doctor": "node scripts/doctor.mjs",
     "install:bdpan": "node scripts/install-bdpan.mjs",
     "resource:bdpan": "node scripts/bdpan-runner.mjs",
     "resource:start": "node dist/entrypoints/resource.js",
@@ -46,10 +48,13 @@
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
+    "@tanstack/react-query": "^5.104.5",
     "@vscode/ripgrep": "^1.18.0",
     "ipaddr.js": "^2.5.0",
     "openai": "^5.12.2",
     "playwright": "^1.63.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2",
     "undici": "^8.10.2"
@@ -60,7 +65,8 @@
     "msw": "^2.10.2",
     "tsx": "^4.20.3",
     "typescript": "^5.9.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "vite": "^8.3.0"
   },
   "optionalDependencies": {
     "node-pty": "^1.1.0"

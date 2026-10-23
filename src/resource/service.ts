@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { closeSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, renameSync, rmSync, rmdirSync, statSync, writeSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { closeSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, rmdirSync, statSync, writeSync } from "node:fs";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ResourceConfigV1 } from "./config.js";
 import { migrateResourceDatabase } from "./database-schema.js";
 import { parseConfirmResourceJobRequestV1, parseCreateResourceJobRequestV1, type ResourceJobSnapshotV1 } from "./contracts.js";
@@ -19,13 +20,14 @@ import { inspectArchive } from "./archive.js";
 import type { ResourceInferenceClient } from "./inference-client.js";
 import type { ResourceWorkerSettings } from "./worker-settings.js";
 import type { ResourceSettingsStore } from "./settings.js";
+import { probeResourceExternalTools, type ExternalToolReport } from "./external-tools.js";
 
 export interface ResourceServiceOptions {
   readonly config: ResourceConfigV1;
   readonly token?: string;
   readonly archiveOrganizer?: { organize(request: ArchiveOrganizeRequest, signal?: AbortSignal): Promise<ArchiveOrganizeResult> };
   readonly baiduDownloader?: { download(request: BaiduDownloadRequest, context: BdpanContext, signal?: AbortSignal): Promise<BaiduDownloadResult> };
-  readonly baiduBrowser?: { list(path: string, context: BdpanContext, signal?: AbortSignal): Promise<{ code: number; stdout: string; stderr: string }> };
+  readonly baiduBrowser?: { list(path: string, context: BdpanContext, signal?: AbortSignal): Promise<{ code: number; stdout: string; stderr: string }>; run?(operation: "whoami", args: readonly string[], context: BdpanContext, signal?: AbortSignal): Promise<{ code: number; stdout: string; stderr: string }>; loginUrl?(context: BdpanContext): Promise<{ code: number; stdout: string; stderr: string }>; loginCode?(code: string, context: BdpanContext): Promise<{ code: number; stdout: string; stderr: string }> };
   readonly inferenceClient?: ResourceInferenceClient;
   readonly workerSettings?: ResourceWorkerSettings;
   readonly resourceSettings?: ResourceSettingsStore;
@@ -44,6 +46,7 @@ export class ResourceService {
   private closed = false;
   private readonly scheduler: ResourceScheduler;
   private scanTimer?: NodeJS.Timeout;
+  private externalTools: readonly ExternalToolReport[] = [];
 
   constructor(private readonly options: ResourceServiceOptions) {
     mkdirSync(dirname(options.config.databasePath), { recursive: true });
@@ -59,6 +62,8 @@ export class ResourceService {
     const address = this.server.address();
     if (!address || typeof address === "string") throw new Error("RESOURCE_SERVICE_ADDRESS_UNAVAILABLE");
     this.recoverQueuedJobs();
+    this.cleanupTrash();
+    this.externalTools = await probeResourceExternalTools();
     this.scanTimer = setInterval(() => { void this.scanSavedFolders(false); this.cleanupExpiredStaging(); }, this.options.config.scanning.intervalMs);
     this.scanTimer.unref();
     return { host: this.options.config.listen.host, port: address.port, token: this.token };
@@ -77,7 +82,15 @@ export class ResourceService {
     if (request.method === "GET" && request.url === "/resource") {
       if (!this.originAllowed(request)) { this.send(response, 403, { error: { code: "ORIGIN_FORBIDDEN", message: "请求来源不被允许。", retryable: false } }); return; }
       response.setHeader("set-cookie", `isla_resource=${this.token}; HttpOnly; SameSite=Strict; Path=/api/v1/resource`);
-      this.sendHtml(response, RESOURCE_WEB_UI);
+      this.sendHtml(response, this.reactWebUi() ?? RESOURCE_WEB_UI);
+      return;
+    }
+    if (request.method === "GET" && request.url?.startsWith("/resource/assets/")) {
+      const asset = request.url.slice("/resource/".length);
+      const path = resolve(dirname(fileURLToPath(import.meta.url)), "../../dist/resource-ui", asset);
+      if (!existsSync(path)) { response.statusCode = 404; response.end("Not found"); return; }
+      response.setHeader("content-type", extname(path) === ".js" ? "text/javascript; charset=utf-8" : extname(path) === ".css" ? "text/css; charset=utf-8" : "application/octet-stream");
+      response.setHeader("cache-control", "public, max-age=31536000, immutable"); response.end(readFileSync(path));
       return;
     }
     if (!this.authorized(request)) { this.send(response, 401, { error: { code: "UNAUTHORIZED", message: "认证失败。", retryable: false } }); return; }
@@ -91,7 +104,18 @@ export class ResourceService {
       if (request.method === "GET" && url.pathname === "/api/v1/resource/settings/directories") { if (!this.options.resourceSettings) throw new Error("RESOURCE_SETTINGS_UNAVAILABLE"); this.send(response, 200, await this.options.resourceSettings.read()); return; }
       if (request.method === "PUT" && url.pathname === "/api/v1/resource/settings/directories") { if (!this.options.resourceSettings) throw new Error("RESOURCE_SETTINGS_UNAVAILABLE"); this.send(response, 200, { ...(await this.options.resourceSettings.update(await this.readBody(request))), restartRequired: true }); return; }
       if (request.method === "GET" && url.pathname === "/api/v1/resource/baidu/tree") { this.send(response, 200, await this.listBaiduTree(url.searchParams.get("path") ?? "/")); return; }
+      if (request.method === "GET" && url.pathname === "/api/v1/resource/baidu/status") { this.send(response, 200, await this.baiduStatus()); return; }
+      if (request.method === "POST" && url.pathname === "/api/v1/resource/baidu/login/start") { this.send(response, 200, await this.baiduLoginStart()); return; }
+      if (request.method === "POST" && url.pathname === "/api/v1/resource/baidu/login/complete") { this.send(response, 200, await this.baiduLoginComplete(await this.readBody(request))); return; }
       if (request.method === "GET" && url.pathname === "/api/v1/resource/local/tree") { this.send(response, 200, this.listLocalTree(url.searchParams.get("rootId") ?? "", url.searchParams.get("path") ?? ".")); return; }
+      if (request.method === "POST" && url.pathname === "/api/v1/resource/files/rename") { this.send(response, 200, this.renameManagedPath(await this.readBody(request))); return; }
+      if (request.method === "POST" && url.pathname === "/api/v1/resource/files/move") { this.send(response, 200, this.moveManagedPath(await this.readBody(request))); return; }
+      if (request.method === "POST" && url.pathname === "/api/v1/resource/files/trash") { this.send(response, 200, this.trashManagedPath(await this.readBody(request))); return; }
+      if (request.method === "GET" && url.pathname === "/api/v1/resource/files/trash") { this.send(response, 200, { entries: this.listTrash() }); return; }
+      if (request.method === "POST" && url.pathname === "/api/v1/resource/files/restore") { this.send(response, 200, this.restoreTrash(await this.readBody(request))); return; }
+      if (request.method === "GET" && url.pathname === "/api/v1/resource/settings/passwords") { this.send(response, 200, { passwords: this.listArchivePasswords() }); return; }
+      if (request.method === "POST" && url.pathname === "/api/v1/resource/settings/passwords") { this.send(response, 201, { passwords: this.addArchivePasswords(await this.readBody(request)) }); return; }
+      if (request.method === "DELETE" && url.pathname === "/api/v1/resource/settings/passwords") { this.send(response, 200, { deleted: this.deleteArchivePasswords(await this.readBody(request)) }); return; }
       if (request.method === "POST" && url.pathname === "/api/v1/resource/scans") { this.send(response, 202, this.scanFolder(await this.readBody(request), true)); return; }
       if (request.method === "POST" && url.pathname === "/api/v1/resource/jobs/batch") { this.send(response, 201, { jobs: this.createBatchJobs(await this.readBody(request)) }); return; }
       if (request.method === "POST" && url.pathname === "/api/v1/resource/jobs") { this.send(response, 201, { job: this.createJob(await this.readBody(request)) }); return; }
@@ -121,6 +145,9 @@ export class ResourceService {
     if (result.code !== 0 || (payload && typeof payload === "object" && "code" in payload && Number((payload as { code?: unknown }).code) !== 0)) throw new Error("BDPAN_LIST_FAILED");
     return { path, entries: payload };
   }
+  private async baiduStatus(): Promise<Record<string, unknown>> { if (!this.options.baiduBrowser?.run) return { status: "unavailable", message: "bdpan runner 未配置。" }; const context: BdpanContext = { agentName: "isla", sessionInput: "whoami", sessionId: `whoami-${Date.now()}` }; try { const result = await this.options.baiduBrowser.run("whoami", [], context); if (result.code !== 0) return { status: "signed_out", message: "百度网盘尚未登录。" }; let payload: unknown; try { payload = JSON.parse(result.stdout); } catch { payload = undefined; } const data = payload && typeof payload === "object" ? payload as Record<string, unknown> : {}; return { status: "signed_in", account: typeof data.account === "string" ? data.account : typeof data.username === "string" ? data.username : undefined }; } catch { return { status: "unavailable", message: "无法执行 bdpan，请运行 npm run doctor。" }; } }
+  private async baiduLoginStart(): Promise<Record<string, unknown>> { if (!this.options.baiduBrowser?.loginUrl) throw new Error("BDPAN_LOGIN_UNAVAILABLE"); const result = await this.options.baiduBrowser.loginUrl({ agentName: "isla", sessionInput: "login", sessionId: `login-${Date.now()}` }); if (result.code !== 0) throw new Error("BDPAN_LOGIN_URL_FAILED"); return { authorization: result.stdout.trim() }; }
+  private async baiduLoginComplete(value: unknown): Promise<Record<string, unknown>> { if (!this.options.baiduBrowser?.loginCode || !value || typeof value !== "object" || typeof (value as { code?: unknown }).code !== "string") throw new Error("BDPAN_LOGIN_CODE_INVALID"); const result = await this.options.baiduBrowser.loginCode((value as { code: string }).code, { agentName: "isla", sessionInput: "login", sessionId: `login-${Date.now()}` }); if (result.code !== 0) throw new Error("BDPAN_LOGIN_FAILED"); return { status: "signed_in" }; }
 
   private listLocalTree(rootId: string, relativePath: string): Record<string, unknown> {
     const root = this.options.config.managedRoots.find(item => item.id === rootId);
@@ -130,11 +157,38 @@ export class ResourceService {
     const relativeTarget = relative(root.path, target);
     if (relativeTarget.startsWith("..") || relativeTarget.includes(`..${process.platform === "win32" ? "\\" : "/"}`)) throw new Error("SCAN_PATH_INVALID");
     if (!existsSync(target) || !statSync(target).isDirectory()) throw new Error("LOCAL_DIRECTORY_NOT_FOUND");
-    const entries = readdirSync(target, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => ({ name: entry.name, path: relativePath === "." ? entry.name : join(relativePath, entry.name).replaceAll("\\", "/"), type: "directory" }));
+    const entries = readdirSync(target, { withFileTypes: true }).map(entry => { const entryPath = relativePath === "." ? entry.name : join(relativePath, entry.name).replaceAll("\\", "/"); const fullPath = join(target, entry.name); const info = lstatSync(fullPath); return { name: entry.name, path: entryPath, type: entry.isDirectory() ? "directory" : "file", size: entry.isDirectory() ? undefined : info.size, modifiedAt: info.mtime.toISOString() }; });
     return { rootId, path: relativePath, entries };
   }
 
-  private health(): Record<string, unknown> { return { ok: true, service: "resource", database: "ready", isla: { configured: true }, queue: { queued: this.count("queued"), running: this.count("running") } }; }
+  private managedTarget(value: unknown, key = "path"): { root: ResourceConfigV1["managedRoots"][number]; path: string; absolute: string } {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("FILE_REQUEST_INVALID"); const input = value as Record<string, unknown>; const rootId = input.rootId; const path = input[key]; if (typeof rootId !== "string" || typeof path !== "string" || !path || path.includes("..") || /^[\\/]/u.test(path)) throw new Error("FILE_PATH_INVALID"); const root = this.options.config.managedRoots.find(item => item.id === rootId); if (!root) throw new Error("MANAGED_ROOT_INVALID"); const absolute = resolve(root.path, path); const rel = relative(root.path, absolute); if (rel.startsWith("..") || /^[\\/]/u.test(rel) || rel === ".isla-trash" || rel.startsWith(`.isla-trash${process.platform === "win32" ? "\\" : "/"}`)) throw new Error("FILE_PATH_RESERVED"); return { root, path, absolute }; }
+  private renameManagedPath(value: unknown): Record<string, unknown> { const target = this.managedTarget(value); const name = value as { name?: unknown }; if (typeof name.name !== "string" || !name.name.trim() || name.name.includes("\\") || name.name.includes("/")) throw new Error("FILE_NAME_INVALID"); if (!existsSync(target.absolute)) throw new Error("FILE_NOT_FOUND"); const destination = join(dirname(target.absolute), name.name.trim()); if (existsSync(destination)) throw new Error("FILE_DESTINATION_EXISTS"); renameSync(target.absolute, destination); return { path: relative(target.root.path, destination).replaceAll("\\", "/") }; }
+  private moveManagedPath(value: unknown): Record<string, unknown> { const source = this.managedTarget(value); const input = value as { destinationPath?: unknown }; if (typeof input.destinationPath !== "string") throw new Error("FILE_DESTINATION_INVALID"); const destination = this.managedTarget({ rootId: source.root.id, path: input.destinationPath }); if (!existsSync(source.absolute) || !existsSync(destination.absolute) || !statSync(destination.absolute).isDirectory()) throw new Error("FILE_DESTINATION_INVALID"); const target = join(destination.absolute, basename(source.absolute)); if (existsSync(target)) throw new Error("FILE_DESTINATION_EXISTS"); renameSync(source.absolute, target); return { path: relative(source.root.path, target).replaceAll("\\", "/") }; }
+  private trashManagedPath(value: unknown): Record<string, unknown> { const source = this.managedTarget(value); if (!existsSync(source.absolute)) throw new Error("FILE_NOT_FOUND"); const trashRoot = join(source.root.path, ".isla-trash"); mkdirSync(trashRoot, { recursive: true }); const id = randomUUID(); const trashPath = join(trashRoot, id); renameSync(source.absolute, trashPath); const size = this.pathSize(trashPath); const now = new Date().toISOString(); this.db.prepare("INSERT INTO resource_trash_entries (id, managed_root_id, original_path, trash_path, size_bytes, deleted_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, source.root.id, source.path, trashPath, size, now); this.cleanupTrash(); return { id, originalPath: source.path, sizeBytes: size }; }
+  private listTrash(): readonly Record<string, unknown>[] { return this.db.prepare("SELECT id, managed_root_id AS managedRootId, original_path AS originalPath, size_bytes AS sizeBytes, deleted_at AS deletedAt FROM resource_trash_entries ORDER BY deleted_at DESC").all() as unknown as Array<Record<string, unknown>>; }
+  private restoreTrash(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value) || typeof (value as { id?: unknown }).id !== "string") throw new Error("TRASH_REQUEST_INVALID"); const row = this.db.prepare("SELECT * FROM resource_trash_entries WHERE id = ?").get((value as { id: string }).id) as { id: string; managed_root_id: string; original_path: string; trash_path: string } | undefined; if (!row) throw new Error("TRASH_ENTRY_NOT_FOUND"); const root = this.options.config.managedRoots.find(item => item.id === row.managed_root_id); if (!root || !existsSync(row.trash_path)) throw new Error("TRASH_ENTRY_NOT_FOUND"); const target = resolve(root.path, row.original_path); if (existsSync(target)) throw new Error("FILE_DESTINATION_EXISTS"); mkdirSync(dirname(target), { recursive: true }); renameSync(row.trash_path, target); this.db.prepare("DELETE FROM resource_trash_entries WHERE id = ?").run(row.id); return { restored: row.original_path }; }
+  private pathSize(path: string): number { const info = lstatSync(path); if (info.isFile()) return info.size; return readdirSync(path).reduce((sum, entry) => sum + this.pathSize(join(path, entry)), 0); }
+  private cleanupTrash(): void { const max = 100 * 1024 * 1024 * 1024; const expiry = Date.now() - 30 * 24 * 60 * 60 * 1000; const rows = this.db.prepare("SELECT * FROM resource_trash_entries ORDER BY deleted_at ASC").all() as unknown as Array<{ id: string; trash_path: string; size_bytes: number; deleted_at: string }>; let total = rows.reduce((sum, row) => sum + row.size_bytes, 0); for (const row of rows) { if (total <= max && Date.parse(row.deleted_at) >= expiry) continue; if (existsSync(row.trash_path)) rmSync(row.trash_path, { recursive: true, force: true }); this.db.prepare("DELETE FROM resource_trash_entries WHERE id = ?").run(row.id); total -= row.size_bytes; } }
+
+  private listArchivePasswords(): readonly Record<string, unknown>[] { return (this.db.prepare("SELECT password, success_count AS successCount, first_succeeded_at AS firstSucceededAt, last_succeeded_at AS lastSucceededAt FROM resource_archive_passwords ORDER BY success_count DESC, last_succeeded_at DESC").all() as unknown as Array<Record<string, unknown>>); }
+  private addArchivePasswords(value: unknown): readonly Record<string, unknown>[] {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("PASSWORDS_REQUEST_INVALID");
+    const raw = (value as { passwords?: unknown }).passwords;
+    if (!Array.isArray(raw)) throw new Error("PASSWORDS_REQUEST_INVALID");
+    const passwords = [...new Set(raw.filter((item): item is string => typeof item === "string").map(item => item.trim()).filter(item => item.length > 0 && item.length <= 256))].slice(0, 500);
+    const now = new Date().toISOString(); const insert = this.db.prepare("INSERT INTO resource_archive_passwords (password, success_count, first_succeeded_at, last_succeeded_at) VALUES (?, 0, ?, ?) ON CONFLICT(password) DO NOTHING"); for (const password of passwords) insert.run(password, now, now);
+    return this.listArchivePasswords();
+  }
+  private deleteArchivePasswords(value: unknown): number {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("PASSWORDS_REQUEST_INVALID");
+    const raw = (value as { passwords?: unknown }).passwords;
+    if (!Array.isArray(raw)) throw new Error("PASSWORDS_REQUEST_INVALID");
+    const passwords = raw.filter((item): item is string => typeof item === "string" && item.length <= 256);
+    const remove = this.db.prepare("DELETE FROM resource_archive_passwords WHERE password = ?"); let deleted = 0; for (const password of passwords) deleted += Number(remove.run(password).changes ?? 0); return deleted;
+  }
+
+  private health(): Record<string, unknown> { return { ok: true, service: "resource", database: "ready", isla: { configured: true }, queue: { queued: this.count("queued"), running: this.count("running") }, externalTools: this.externalTools }; }
   private publicConfig(): Record<string, unknown> { return { version: 1, tools: RESOURCE_TOOLBOX, managedRoots: this.options.config.managedRoots.map(root => ({ id: root.id, label: root.label, scanEnabled: root.scanEnabled, outputEnabled: root.outputEnabled })), defaultDestinationRootId: this.options.config.defaultDestinationRootId, concurrency: this.options.config.concurrency, scanning: this.options.config.scanning }; }
   private createBatchJobs(value: unknown): readonly ResourceJobSnapshotV1[] {
     const input = parseCreateResourceJobRequestV1(value);
@@ -363,10 +417,10 @@ export class ResourceService {
   }
   private startArchiveJob(id: string, inputJson: string): void {
     if (!this.options.archiveOrganizer) throw new Error("ARCHIVE_ORGANIZER_NOT_CONFIGURED");
-    const input = parseCreateResourceJobRequestV1(JSON.parse(inputJson) as unknown); if (input.tool !== "archive-organizer" || input.input.kind !== "managed-folder") throw new Error("ARCHIVE_INPUT_INVALID"); const archiveInput = input.input;
+    const input = parseCreateResourceJobRequestV1(JSON.parse(inputJson) as unknown); if (input.tool !== "archive-organizer" || (input.input.kind !== "managed-folder" && input.input.kind !== "managed-file")) throw new Error("ARCHIVE_INPUT_INVALID"); const archiveInput = input.input;
     const sourceRoot = this.options.config.managedRoots.find(root => root.id === archiveInput.managedRootId); const destinationRoot = this.options.config.managedRoots.find(root => root.id === input.destinationRootId && root.outputEnabled);
     if (!sourceRoot || !destinationRoot) throw new Error("MANAGED_ROOT_INVALID");
-    const archivePath = resolve(sourceRoot.path, archiveInput.relativePath); if (relative(sourceRoot.path, archivePath).startsWith("..") || archivePath === sourceRoot.path) throw new Error("ARCHIVE_PATH_OUTSIDE_ROOT");
+    const archivePath = resolve(sourceRoot.path, archiveInput.relativePath); if (relative(sourceRoot.path, archivePath).startsWith("..") || archivePath === sourceRoot.path || !existsSync(archivePath) || !statSync(archivePath).isFile()) throw new Error("ARCHIVE_PATH_OUTSIDE_ROOT");
     const decision = chooseResourceName({ downloadedNames: [archiveOutputStem(basename(archivePath))], completedAt: new Date() }); const outputPath = availableOutputPath(destinationRoot.path, decision.name); const stagingPath = join(this.options.config.stagingPath, id, "extracted"); const now = new Date().toISOString();
     this.db.prepare("UPDATE resource_jobs SET status = 'queued', stage = 'inspecting', revision = revision + 1, pending_decision_json = NULL, failure_json = NULL, updated_at = ? WHERE id = ?").run(now, id);
     const passwordCandidates = this.passwordCandidates(id);
@@ -594,6 +648,7 @@ export class ResourceService {
   private async readBody(request: IncomingMessage): Promise<unknown> { let text = ""; for await (const chunk of request) { text += chunk.toString(); if (text.length > this.options.config.limits.maxInputChars) throw new Error("REQUEST_TOO_LARGE"); } return JSON.parse(text || "{}"); }
   private send(response: ServerResponse, status: number, body: unknown): void { response.statusCode = status; response.setHeader("content-type", "application/json; charset=utf-8"); response.end(JSON.stringify(body)); }
   private sendHtml(response: ServerResponse, body: string): void { response.statusCode = 200; response.setHeader("content-type", "text/html; charset=utf-8"); response.setHeader("cache-control", "no-store"); response.end(body); }
+  private reactWebUi(): string | undefined { const path = resolve(dirname(fileURLToPath(import.meta.url)), "../../dist/resource-ui/index.html"); return existsSync(path) ? readFileSync(path, "utf8") : undefined; }
 }
 
 interface JobRow { id: string; revision: number; source: string; status: string; stage: string; destination_root_id: string; input_json: string; parse_result_json: string | null; progress_json: string; model_snapshot_json: string | null; pending_decision_json: string | null; failure_json: string | null; created_at: string; updated_at: string; }

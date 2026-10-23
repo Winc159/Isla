@@ -30,6 +30,9 @@ export class BdpanRunner {
     if (!path.startsWith("/")) throw new Error("BDPAN_REMOTE_PATH_INVALID");
     return this.run("ls", [path, "--limit", "1000"], context, signal);
   }
+  async loginUrl(context: BdpanContext): Promise<BdpanCommandResult> { return this.runLogin(["login", "--get-auth-url"], context); }
+  async loginCode(code: string, context: BdpanContext): Promise<BdpanCommandResult> { if (!code.trim() || code.length > 1024) throw new Error("BDPAN_AUTH_CODE_INVALID"); return this.runLogin(["login", "--set-code-stdin"], context, code.trim()); }
+  private runLogin(args: readonly string[], context: BdpanContext, stdin?: string): Promise<BdpanCommandResult> { const argv = this.configPath ? ["--config-path", this.configPath, ...args, "--json", "--agentname", context.agentName, "--session-input", context.sessionInput, "--session-id", context.sessionId] : [...args, "--json", "--agentname", context.agentName, "--session-input", context.sessionInput, "--session-id", context.sessionId]; return new Promise((resolve, reject) => { const child = spawn(this.command, argv, { shell: false, stdio: [stdin ? "pipe" : "ignore", "pipe", "pipe"] }); if (stdin) { child.stdin?.end(`${stdin}\n`); } let stdout = ""; let stderr = ""; child.stdout!.on("data", chunk => { stdout += chunk.toString(); }); child.stderr!.on("data", chunk => { stderr += chunk.toString(); }); child.once("error", reject); child.once("close", code => resolve({ code: code ?? 1, stdout, stderr: sanitizeStderr(stderr) })); }); }
 }
 
 function sanitizeStderr(value: string): string { return value.replaceAll(/(?:access[_-]?token|cookie|authorization|token)\s*[:=]\s*[^\s,;]+/giu, "$1=[REDACTED]").slice(0, 8_192); }
