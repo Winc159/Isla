@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, statSync, writeSync } from "node:fs";
+import { closeSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, renameSync, rmSync, rmdirSync, statSync, writeSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import type { ResourceConfigV1 } from "./config.js";
 import { migrateResourceDatabase } from "./database-schema.js";
@@ -58,7 +58,8 @@ export class ResourceService {
     await new Promise<void>((resolve, reject) => { this.server.once("error", reject); this.server.listen(this.options.config.listen.port, this.options.config.listen.host, resolve); });
     const address = this.server.address();
     if (!address || typeof address === "string") throw new Error("RESOURCE_SERVICE_ADDRESS_UNAVAILABLE");
-    this.scanTimer = setInterval(() => { void this.scanSavedFolders(false); }, this.options.config.scanning.intervalMs);
+    this.recoverQueuedJobs();
+    this.scanTimer = setInterval(() => { void this.scanSavedFolders(false); this.cleanupExpiredStaging(); }, this.options.config.scanning.intervalMs);
     this.scanTimer.unref();
     return { host: this.options.config.listen.host, port: address.port, token: this.token };
   }
@@ -95,10 +96,12 @@ export class ResourceService {
       if (request.method === "POST" && url.pathname === "/api/v1/resource/jobs/batch") { this.send(response, 201, { jobs: this.createBatchJobs(await this.readBody(request)) }); return; }
       if (request.method === "POST" && url.pathname === "/api/v1/resource/jobs") { this.send(response, 201, { job: this.createJob(await this.readBody(request)) }); return; }
       if (request.method === "GET" && url.pathname === "/api/v1/resource/jobs") { this.send(response, 200, { jobs: this.listJobs() }); return; }
-      const match = url.pathname.match(/^\/api\/v1\/resource\/jobs\/([^/]+)(?:\/(cancel|confirm|retry|repeat))?$/u);
+      const match = url.pathname.match(/^\/api\/v1\/resource\/jobs\/([^/]+)(?:\/(cancel|confirm|retry|repeat|events|tree))?$/u);
       if (!match) { this.send(response, 404, { error: { code: "NOT_FOUND", message: "资源不存在。", retryable: false } }); return; }
       const id = decodeURIComponent(match[1]!);
       if (request.method === "GET" && !match[2]) { const job = this.getJob(id); if (!job) { this.send(response, 404, { error: { code: "JOB_NOT_FOUND", message: "任务不存在。", retryable: false } }); return; } this.send(response, 200, { job }); return; }
+      if (request.method === "GET" && match[2] === "events") { this.send(response, 200, { events: this.listJobEvents(id) }); return; }
+      if (request.method === "GET" && match[2] === "tree") { this.send(response, 200, { tree: this.listArtifactTree(id) }); return; }
       if (request.method === "DELETE" && !match[2]) { this.send(response, 200, { deleted: this.deleteTerminalJob(id) }); return; }
       if (request.method === "POST" && match[2] === "cancel") { this.send(response, 200, { accepted: this.cancelJob(id) }); return; }
       if (request.method === "POST" && match[2] === "confirm") { this.send(response, 202, { accepted: this.confirmJob(id, await this.readBody(request)) }); return; }
@@ -212,7 +215,7 @@ export class ResourceService {
     }
     return { watchId, jobs };
   }
-  private findArchives(folder: string): readonly string[] {
+  private findArchives(folder: string, includeVolumes = false): readonly string[] {
     const archives: string[] = []; const queue = [folder];
     while (queue.length) {
       const current = queue.pop()!;
@@ -222,7 +225,7 @@ export class ResourceService {
         if (entry.isDirectory()) { queue.push(path); continue; }
         if (!entry.isFile()) continue;
         const fd = openSync(path, "r");
-        try { const header = Buffer.alloc(1024 * 1024); const length = readSync(fd, header, 0, header.length, 0); const inspected = inspectArchive(path, header.subarray(0, length), lstatSync(path).size); if (inspected.isArchive && (!inspected.part || inspected.part.role === "first")) archives.push(path); } finally { closeSync(fd); }
+        try { const header = Buffer.alloc(1024 * 1024); const length = readSync(fd, header, 0, header.length, 0); const inspected = inspectArchive(path, header.subarray(0, length), lstatSync(path).size); if (inspected.isArchive && (includeVolumes || !inspected.part || inspected.part.role === "first")) archives.push(path); } finally { closeSync(fd); }
       }
     }
     return archives.sort((a, b) => a.localeCompare(b));
@@ -243,19 +246,86 @@ export class ResourceService {
     return media.sort((a, b) => a.localeCompare(b));
   }
   private findEmbeddedArchives(folder: string): readonly { path: string; offset: number }[] {
-    const results: { path: string; offset: number }[] = []; const queue = [folder]; const signatures = [Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from("Rar!\x1a\x07\x00", "binary"), Buffer.from("Rar!\x1a\x07\x01\x00", "binary"), Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])];
-    while (queue.length) { const current = queue.pop()!; for (const entry of readdirSync(current, { withFileTypes: true })) { const path = join(current, entry.name); if (entry.isSymbolicLink()) continue; if (entry.isDirectory()) { queue.push(path); continue; } if (!entry.isFile()) continue; const fd = openSync(path, "r"); try { const size = lstatSync(path).size; const chunkSize = 16 * 1024 * 1024; const overlap = 8; let offset = 0; let tail = Buffer.alloc(0); while (offset < size) { const buffer = Buffer.alloc(Math.min(chunkSize, size - offset)); const length = readSync(fd, buffer, 0, buffer.length, offset); if (!length) break; const data = Buffer.concat([tail, buffer.subarray(0, length)]); const base = offset - tail.length; const found = signatures.map(signature => data.indexOf(signature)).filter(index => index >= 0).sort((a, b) => a - b)[0]; if (found !== undefined && base + found > 0) { results.push({ path, offset: base + found }); break; } tail = data.subarray(Math.max(0, data.length - overlap)); offset += length; } } finally { closeSync(fd); } } }
+    const results: { path: string; offset: number }[] = [];
+    const queue = [folder];
+    const signatures = [Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from("Rar!\x1a\x07\x00", "binary"), Buffer.from("Rar!\x1a\x07\x01\x00", "binary"), Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])];
+    while (queue.length) {
+      const current = queue.pop()!;
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        const path = join(current, entry.name);
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isDirectory()) { queue.push(path); continue; }
+        if (!entry.isFile() || /^(?:embedded-|archive-probe|embedded\.)/u.test(entry.name)) continue;
+        const fd = openSync(path, "r");
+        try {
+          const size = lstatSync(path).size;
+          const chunkSize = 16 * 1024 * 1024;
+          const overlap = 8;
+          let offset = 0;
+          let tail = Buffer.alloc(0);
+          while (offset < size) {
+            const buffer = Buffer.alloc(Math.min(chunkSize, size - offset));
+            const length = readSync(fd, buffer, 0, buffer.length, offset);
+            if (!length) break;
+            const data = Buffer.concat([tail, buffer.subarray(0, length)]);
+            const base = offset - tail.length;
+            const found = signatures.map(signature => data.indexOf(signature)).filter(index => index >= 0).sort((a, b) => a - b)[0];
+            if (found !== undefined && base + found > 0) {
+              const absolute = base + found;
+              const signature = signatures.find(item => data.indexOf(item) === found);
+              if (signature?.equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) && !this.hasZipEndMarker(fd, size, absolute)) { tail = data.subarray(Math.max(0, data.length - overlap)); offset += length; continue; }
+              results.push({ path, offset: absolute }); break;
+            }
+            tail = data.subarray(Math.max(0, data.length - overlap));
+            offset += length;
+          }
+        } finally { closeSync(fd); }
+      }
+    }
     return results.sort((a, b) => a.path.localeCompare(b.path) || a.offset - b.offset);
   }
+  private hasZipEndMarker(fd: number, size: number, offset: number): boolean {
+    const tailSize = Math.min(8 * 1024 * 1024, size - offset); const buffer = Buffer.alloc(tailSize); const length = readSync(fd, buffer, 0, tailSize, size - tailSize); if (!length) return false;
+    const base = size - tailSize; return [Buffer.from([0x50, 0x4b, 0x05, 0x06]), Buffer.from([0x50, 0x4b, 0x06, 0x06])].some(marker => { const position = buffer.indexOf(marker); return position >= 0 && base + position > offset; });
+  }
   private materializeEmbeddedArchive(source: { path: string; offset: number }, directory: string): string {
-    const output = join(directory, `embedded-${basename(source.path)}-${source.offset}.zip`); const input = openSync(source.path, "r"); const out = openSync(output, "w"); try { const size = statSync(source.path).size; const buffer = Buffer.alloc(16 * 1024 * 1024); let position = source.offset; while (position < size) { const length = readSync(input, buffer, 0, Math.min(buffer.length, size - position), position); if (!length) break; writeSync(out, buffer, 0, length); position += length; } } finally { closeSync(input); closeSync(out); } return output;
+    mkdirSync(directory, { recursive: true }); const output = join(directory, `embedded-${basename(source.path)}-${source.offset}.zip`); const input = openSync(source.path, "r"); const out = openSync(output, "w"); try { const size = statSync(source.path).size; const buffer = Buffer.alloc(16 * 1024 * 1024); let position = source.offset; while (position < size) { const length = readSync(input, buffer, 0, Math.min(buffer.length, size - position), position); if (!length) break; writeSync(out, buffer, 0, length); position += length; } } finally { closeSync(input); closeSync(out); } return output;
   }
   private async scanSavedFolders(force: boolean): Promise<void> {
     const watches = this.db.prepare("SELECT managed_root_id, relative_path, destination_root_id FROM resource_folder_watches WHERE enabled = 1").all() as unknown as Array<{ managed_root_id: string; relative_path: string; destination_root_id: string }>;
     for (const watch of watches) { try { this.scanFolder({ managedRootId: watch.managed_root_id, relativePath: watch.relative_path, destinationRootId: watch.destination_root_id }, force); } catch { /* 单个目录不可用不阻塞其他 watch，下次周期继续 */ } }
   }
   private listJobs(): readonly ResourceJobSnapshotV1[] { return (this.db.prepare("SELECT * FROM resource_jobs ORDER BY updated_at DESC").all() as unknown as JobRow[]).map(row => this.toJob(row)); }
+  private recoverQueuedJobs(): void {
+    const rows = this.db.prepare("SELECT id, source, status, stage, input_json, parse_result_json FROM resource_jobs WHERE status IN ('queued','running') ORDER BY updated_at ASC").all() as unknown as Array<{ id: string; source: string; status: string; stage: ResourceJobSnapshotV1["stage"]; input_json: string; parse_result_json: string | null }>;
+    for (const row of rows) {
+      try {
+        const lease = this.db.prepare("SELECT 1 FROM resource_leases WHERE job_id = ? LIMIT 1").get(row.id);
+        if (!lease && row.status === "running") {
+          const now = new Date().toISOString();
+          this.db.prepare("UPDATE resource_jobs SET status = 'failed', revision = revision + 1, failure_json = ?, updated_at = ? WHERE id = ? AND status IN ('queued','running')").run(JSON.stringify({ code: "TASK_RECOVERY_REQUIRED", message: "服务恢复时发现任务没有活动执行租约，已停止假运行状态；可以从安全阶段重试。", retryable: true, resumeStage: row.stage === "queued_download" ? "queued_download" : "inspecting" }), now, row.id);
+          this.appendJobEvent(row.id, "job.recovered_stale", { previousStage: row.stage });
+          continue;
+        }
+        if (row.source === "baidu" && row.stage === "queued_download") this.startBaiduJob(row.id, row.input_json, row.parse_result_json);
+        else if (row.source === "baidu" && ["inspecting", "grouping_volumes", "testing_archive", "extracting", "verifying", "publishing"].includes(row.stage)) void this.startBaiduExtraction(row.id, row.input_json, row.parse_result_json).catch(error => this.handleJobError(row.id, error, "inspecting"));
+      } catch (error) { this.handleJobError(row.id, error, row.stage === "queued_download" ? "queued_download" : "inspecting"); }
+    }
+  }
   private getJob(id: string): ResourceJobSnapshotV1 | undefined { const row = this.db.prepare("SELECT * FROM resource_jobs WHERE id = ?").get(id) as unknown as JobRow | undefined; return row ? this.toJob(row) : undefined; }
+  private listJobEvents(id: string): readonly Record<string, unknown>[] { return (this.db.prepare("SELECT sequence, type, data_json, occurred_at FROM resource_events WHERE job_id = ? ORDER BY sequence").all(id) as unknown as Array<{ sequence: number; type: string; data_json: string; occurred_at: string }>).map(row => ({ sequence: row.sequence, type: row.type, data: JSON.parse(row.data_json), occurredAt: row.occurred_at })); }
+  private listArtifactTree(id: string): readonly Record<string, unknown>[] {
+    return (this.db.prepare("SELECT id, kind, relative_path, size_bytes, verification_status, source_artifact_id, metadata_json, created_at, updated_at FROM resource_artifacts WHERE job_id = ? ORDER BY relative_path").all(id) as unknown as Array<{ id: string; kind: string; relative_path: string; size_bytes: number | null; verification_status: string; source_artifact_id: string | null; metadata_json: string; created_at: string; updated_at: string }>).map(row => ({ id: row.id, kind: row.kind, path: row.relative_path, sizeBytes: row.size_bytes, status: row.verification_status, parentId: row.source_artifact_id, metadata: JSON.parse(row.metadata_json), createdAt: row.created_at, updatedAt: row.updated_at }));
+  }
+  private recordArtifact(id: string, path: string, kind: string, status: string, parentId?: string, metadata: Record<string, unknown> = {}): string {
+    const now = new Date().toISOString();
+    const existing = this.db.prepare("SELECT id FROM resource_artifacts WHERE job_id = ? AND relative_path = ?").get(id, path) as { id?: string } | undefined;
+    const artifactId = existing?.id ?? randomUUID();
+    const size = existsSync(path) && lstatSync(path).isFile() ? lstatSync(path).size : null;
+    this.db.prepare("INSERT INTO resource_artifacts (id, job_id, kind, relative_path, size_bytes, verification_status, source_artifact_id, metadata_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(job_id, relative_path) DO UPDATE SET kind=excluded.kind, size_bytes=excluded.size_bytes, verification_status=excluded.verification_status, source_artifact_id=excluded.source_artifact_id, metadata_json=excluded.metadata_json, updated_at=excluded.updated_at").run(artifactId, id, kind, path, size, status, parentId ?? null, JSON.stringify(metadata), now, now);
+    return artifactId;
+  }
+  private appendJobEvent(id: string, type: string, data: Record<string, unknown>): void { const now = new Date().toISOString(); this.db.prepare("INSERT INTO resource_events (id, job_id, sequence, type, data_json, occurred_at) SELECT ?, id, COALESCE((SELECT MAX(sequence) + 1 FROM resource_events WHERE job_id = resource_jobs.id), 1), ?, ?, ? FROM resource_jobs WHERE id = ?").run(randomUUID(), type, JSON.stringify(data), now, id); }
   private confirmJob(id: string, value: unknown): boolean {
     const decision = parseConfirmResourceJobRequestV1(value);
     const row = this.db.prepare("SELECT revision, source, input_json, parse_result_json, pending_decision_json FROM resource_jobs WHERE id = ?").get(id) as { revision: number; source: string; input_json: string; parse_result_json: string | null; pending_decision_json: string | null } | undefined;
@@ -328,13 +398,16 @@ export class ResourceService {
     const parsed = parseResultJson ? JSON.parse(parseResultJson) as { archivePasswordCandidates?: string[]; titleCandidates?: string[] } : {};
     const destinationRoot = this.options.config.managedRoots.find(root => root.id === input.destinationRootId && root.outputEnabled); if (!destinationRoot) throw new Error("DESTINATION_ROOT_INVALID");
     const downloadDirectory = join(this.options.config.stagingPath, id, "download"); const assumedDownloadPath = join(downloadDirectory, "downloaded.bin");
-    this.setStage(id, "inspecting", "queued"); const discovered = this.findArchives(downloadDirectory);
+    this.db.prepare("UPDATE resource_jobs SET pending_decision_json = NULL, failure_json = NULL WHERE id = ?").run(id);
+    this.setStage(id, "inspecting", "running"); this.appendJobEvent(id, "resource.inspecting", { directory: downloadDirectory }); const discovered = this.findArchives(downloadDirectory); this.appendJobEvent(id, "resource.archives_found", { count: discovered.length, paths: discovered.slice(0, 20).map(path => basename(path)) });
     // bdpan may create a directory at the requested destination. Scan its
     // contents before deciding that the download is not an archive; this also
     // catches archives whose names were deliberately changed to .mp4/.bin.
     let downloadPath = discovered[0];
-    if (!downloadPath) {
-      const embedded = this.findEmbeddedArchives(downloadDirectory);
+    const downloadedTree = join(downloadDirectory, "downloaded.bin");
+    const publishDownloadedTree = existsSync(downloadedTree) && lstatSync(downloadedTree).isDirectory();
+    if (!downloadPath && !publishDownloadedTree) {
+      const embedded = this.findEmbeddedArchives(downloadDirectory); this.appendJobEvent(id, "resource.embedded_archives_found", { count: embedded.length, offsets: embedded.slice(0, 20).map(item => item.offset), paths: embedded.slice(0, 20).map(item => basename(item.path)) });
       if (embedded.length > 0) downloadPath = this.materializeEmbeddedArchive(embedded[0]!, downloadDirectory);
       const media = embedded.length > 0 ? [] : this.findLikelyMedia(downloadDirectory);
       if (media.length === 0 && !downloadPath) throw new Error("DOWNLOADED_ARCHIVE_NOT_FOUND");
@@ -346,12 +419,110 @@ export class ResourceService {
       copyFileSync(media[0]!, downloadPath);
       }
     }
-    const name = await chooseResourceNameWithWorker(this.options.inferenceClient, { ...(parsed.titleCandidates ? { titleCandidates: parsed.titleCandidates } : {}), downloadedNames: [basename(downloadPath)], completedAt: new Date() }); const outputPath = availableOutputPath(destinationRoot.path, name.name); const stagingPath = join(this.options.config.stagingPath, id, "extracted");
+    downloadPath ??= downloadedTree;
+    const name = await chooseResourceNameWithWorker(this.options.inferenceClient, { ...(parsed.titleCandidates ? { titleCandidates: parsed.titleCandidates } : {}), downloadedNames: [basename(downloadPath)], completedAt: new Date() }); const outputPath = availableOutputPath(destinationRoot.path, name.name); const stagingPath = join(this.options.config.stagingPath, id, "extracted"); const embeddedArchive = basename(downloadPath).startsWith("embedded-");
     const passwordCandidates = this.passwordCandidates(id, parsed.archivePasswordCandidates ?? []);
-    const extraction = this.scheduler.enqueue(id, "extraction", signal => { this.setStage(id, "extracting", "running"); return this.options.archiveOrganizer!.organize({ archivePath: downloadPath, stagingPath, outputPath, passwordCandidates }, signal); });
+    const extraction = this.scheduler.enqueue(id, "extraction", async signal => {
+      this.setStage(id, "extracting", "running");
+      if (publishDownloadedTree) {
+        this.appendJobEvent(id, "resource.directory_publishing", { source: downloadedTree });
+        mkdirSync(outputPath, { recursive: true });
+        cpSync(downloadedTree, outputPath, { recursive: true, errorOnExist: true });
+        const embedded = this.findEmbeddedArchives(downloadDirectory);
+        const nestedRoot = join(outputPath, "嵌套压缩包");
+        const nestedResults: ArchiveOrganizeResult[] = [];
+        let finalOutputPath: string | undefined;
+        for (let index = 0; index < embedded.length; index += 1) {
+          const candidate = embedded[index]!;
+          const candidatePath = this.materializeEmbeddedArchive(candidate, join(stagingPath, "embedded", String(index + 1)));
+          const candidateArtifact = this.recordArtifact(id, relative(downloadDirectory, candidatePath), "archive", "validated", undefined, { source: candidate.path, offset: candidate.offset });
+          const nestedOutput = join(nestedRoot, String(index + 1).padStart(2, "0"));
+          this.appendJobEvent(id, "resource.nested_extract_started", { index: index + 1, source: basename(candidate.path), offset: candidate.offset });
+          try {
+            const result = await this.options.archiveOrganizer!.organize({ archivePath: candidatePath, stagingPath: join(stagingPath, "nested", String(index + 1)), outputPath: nestedOutput, passwordCandidates }, signal);
+            this.recordArtifact(id, relative(downloadDirectory, nestedOutput), "extracted", "completed", candidateArtifact, { fileCount: result.files.length, totalBytes: result.totalBytes });
+            nestedResults.push(result);
+            this.appendJobEvent(id, "resource.nested_extract_completed", { index: index + 1, outputPath: nestedOutput, fileCount: result.files.length, totalBytes: result.totalBytes });
+            const innerArchives = this.findArchives(nestedOutput, true);
+            if (innerArchives.length > 0) {
+              const firstVolume = innerArchives[0]!; const normalizedFirst = /\.rar$/iu.test(firstVolume) ? firstVolume : `${firstVolume.replace(/\.[^.]+$/u, "")}.rar`; if (normalizedFirst !== firstVolume) renameSync(firstVolume, normalizedFirst);
+              const innerOutput = join(nestedOutput, "解压内容");
+              this.appendJobEvent(id, "resource.volume_group_detected", { index: index + 1, firstVolume: basename(innerArchives[0]!), count: innerArchives.length });
+              const innerResult = await this.options.archiveOrganizer!.organize({ archivePath: normalizedFirst, stagingPath: join(stagingPath, "volumes", String(index + 1)), outputPath: innerOutput, passwordCandidates }, signal);
+              const volumeArtifact = this.recordArtifact(id, relative(downloadDirectory, normalizedFirst), "volume-group", "validated", candidateArtifact, { count: innerArchives.length });
+              this.recordArtifact(id, relative(downloadDirectory, innerOutput), "extracted", "completed", volumeArtifact, { fileCount: innerResult.files.length, totalBytes: innerResult.totalBytes });
+              nestedResults.push(innerResult);
+              this.appendJobEvent(id, "resource.volume_group_extracted", { index: index + 1, outputPath: innerOutput, fileCount: innerResult.files.length, totalBytes: innerResult.totalBytes });
+              let recursiveRoot = innerOutput;
+              for (let depth = 1; depth <= 3; depth += 1) {
+                // Prefer files that are already complete archives. Scanning their
+                // bytes for signatures creates false positives (notably RAR5
+                // payloads containing a random PK marker).
+                const directArchives = this.findArchives(recursiveRoot, true);
+                const recursive = directArchives.length > 0
+                  ? directArchives.map(path => ({ path, offset: 0 }))
+                  : this.findEmbeddedArchives(recursiveRoot);
+                if (!recursive.length) break;
+                this.appendJobEvent(id, "resource.recursive_archives_found", { depth, count: recursive.length, offsets: recursive.slice(0, 20).map(item => item.offset) });
+                const recursiveRootNext = join(recursiveRoot, `递归解压-${depth}`); mkdirSync(recursiveRootNext, { recursive: true });
+                for (let recursiveIndex = 0; recursiveIndex < recursive.length; recursiveIndex += 1) {
+                  const item = recursive[recursiveIndex]!; const extractedArchive = item.offset === 0 ? item.path : this.materializeEmbeddedArchive(item, join(stagingPath, "recursive", String(index + 1), String(depth), String(recursiveIndex + 1)));
+                  const recursiveOutput = join(recursiveRootNext, String(recursiveIndex + 1).padStart(2, "0"));
+                  try {
+                    const recursiveArtifact = this.recordArtifact(id, relative(downloadDirectory, extractedArchive), "archive", "validated", volumeArtifact, { depth, embedded: item.offset !== 0, offset: item.offset });
+                    const recursiveResult = await this.options.archiveOrganizer!.organize({ archivePath: extractedArchive, stagingPath: join(stagingPath, "recursive-output", String(index + 1), String(depth), String(recursiveIndex + 1)), outputPath: recursiveOutput, passwordCandidates }, signal);
+                    this.recordArtifact(id, relative(downloadDirectory, recursiveOutput), "extracted", "completed", recursiveArtifact, { fileCount: recursiveResult.files.length, totalBytes: recursiveResult.totalBytes });
+                    finalOutputPath = recursiveOutput;
+                    nestedResults.push(recursiveResult); this.appendJobEvent(id, "resource.recursive_archive_extracted", { depth, index: recursiveIndex + 1, outputPath: recursiveOutput, fileCount: recursiveResult.files.length, totalBytes: recursiveResult.totalBytes });
+                  } catch (error) { this.appendJobEvent(id, "resource.recursive_archive_failed", { depth, index: recursiveIndex + 1, code: error instanceof Error ? error.message : "RESOURCE_JOB_FAILED" }); }
+                }
+                recursiveRoot = recursiveRootNext;
+              }
+            }
+          } catch (error) {
+            this.appendJobEvent(id, "resource.nested_extract_failed", { index: index + 1, code: error instanceof Error ? error.message : "RESOURCE_JOB_FAILED" });
+          }
+        }
+        // The selected destination is the user-facing result. Keep the
+        // original downloaded tree there, but move only the deepest extracted
+        // payload into a clean final folder and remove bulky intermediates.
+        const finalSource = finalOutputPath;
+        if (finalSource && existsSync(finalSource)) {
+          const finalPath = join(outputPath, "最终内容");
+          mkdirSync(finalPath, { recursive: true });
+          cpSync(finalSource, finalPath, { recursive: true });
+        }
+        rmSync(nestedRoot, { recursive: true, force: true });
+        this.removeEmptyDirectories(outputPath);
+        const files = listPublishedFiles(outputPath); const totalBytes = files.reduce((sum, file) => sum + file.size, 0); this.appendJobEvent(id, "resource.published", { outputPath, fileCount: files.length, totalBytes, nestedArchives: nestedResults.length, intermediatesRemoved: true });
+        return { inspection: inspectArchive(downloadPath, Buffer.alloc(0)), outputPath, files, totalBytes };
+      }
+      if (!embeddedArchive) return this.options.archiveOrganizer!.organize({ archivePath: downloadPath, stagingPath, outputPath, passwordCandidates }, signal);
+      const outerOutput = join(stagingPath, "outer");
+      await this.options.archiveOrganizer!.organize({ archivePath: downloadPath, stagingPath: join(stagingPath, "outer-stage"), outputPath: outerOutput, passwordCandidates }, signal);
+      const nested = this.findArchives(outerOutput)[0];
+      if (!nested) throw new Error("NESTED_ARCHIVE_NOT_FOUND");
+      this.setStage(id, "extracting", "running");
+      return this.options.archiveOrganizer!.organize({ archivePath: nested, stagingPath: join(stagingPath, "inner-stage"), outputPath, passwordCandidates }, signal);
+    });
     void extraction.promise.then(extracted => { if (extracted.successfulPasswordIndex !== undefined) this.recordSuccessfulPassword(passwordCandidates[extracted.successfulPasswordIndex]); this.completeJob(id, extracted.totalBytes); }).catch(error => this.handleJobError(id, error, "inspecting"));
   }
-  private completeJob(id: string, totalBytes: number): void { const now = new Date().toISOString(); this.db.prepare("UPDATE resource_jobs SET status = 'completed', stage = 'completed', revision = revision + 1, progress_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({ ratio: 1, completedBytes: totalBytes, totalBytes }), now, id); }
+  private completeJob(id: string, totalBytes: number): void { this.cleanupIntermediateStaging(id); const now = new Date().toISOString(); this.db.prepare("UPDATE resource_jobs SET status = 'completed', stage = 'completed', revision = revision + 1, progress_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({ ratio: 1, completedBytes: totalBytes, totalBytes }), now, id); }
+  private cleanupIntermediateStaging(id: string): void { rmSync(join(this.options.config.stagingPath, id, "extracted"), { recursive: true, force: true }); this.appendJobEvent(id, "resource.intermediates_removed", { path: "extracted" }); }
+  private cleanupExpiredStaging(): void {
+    if (!existsSync(this.options.config.stagingPath)) return;
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    for (const entry of readdirSync(this.options.config.stagingPath, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const taskPath = join(this.options.config.stagingPath, entry.name);
+      try { if (statSync(taskPath).mtimeMs < cutoff) rmSync(taskPath, { recursive: true, force: true }); } catch { /* another worker may be using it */ }
+    }
+  }
+  private removeEmptyDirectories(root: string, preserve = true): void {
+    if (!existsSync(root) || !lstatSync(root).isDirectory()) return;
+    for (const entry of readdirSync(root, { withFileTypes: true })) if (entry.isDirectory()) this.removeEmptyDirectories(join(root, entry.name), false);
+    try { if (!preserve && readdirSync(root).length === 0) rmdirSync(root); } catch { /* best effort */ }
+  }
   private failJob(id: string, error: unknown, resumeStage: ResourceJobSnapshotV1["stage"]): void { const now = new Date().toISOString(); const code = error instanceof Error ? error.message : "RESOURCE_JOB_FAILED"; const message = code === "DOWNLOADED_CONTENT_IS_MEDIA" ? "下载内容经文件头识别为媒体文件，未发现可解压的压缩包；为避免误信伪装文件，任务未继续。" : code === "DOWNLOADED_ARCHIVE_NOT_FOUND" ? "下载目录中未发现可识别的压缩包。" : "资源任务执行失败。"; this.db.prepare("UPDATE resource_jobs SET status = 'failed', revision = revision + 1, failure_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({ code, message, retryable: true, resumeStage }), now, id); }
   private handleJobError(id: string, error: unknown, resumeStage: ResourceJobSnapshotV1["stage"]): void {
     const code = error instanceof Error ? error.message : "RESOURCE_JOB_FAILED"; const now = new Date().toISOString();
@@ -376,20 +547,29 @@ export class ResourceService {
   private retryJob(id: string, value: unknown): boolean {
     if (!value || typeof value !== "object" || Array.isArray(value) || !Number.isSafeInteger((value as { revision?: unknown }).revision)) throw new Error("RETRY_REVISION_INVALID");
     const revision = (value as { revision: number }).revision;
+    const organizeOnly = (value as { mode?: unknown }).mode === "organize";
     const row = this.db.prepare("SELECT revision, status, source, input_json, parse_result_json, failure_json FROM resource_jobs WHERE id = ?").get(id) as { revision: number; status: string; source: string; input_json: string; parse_result_json: string | null; failure_json: string | null } | undefined;
+    if (!organizeOnly && row?.status === "running") throw new Error("JOB_ALREADY_RUNNING");
+    if (organizeOnly) {
+      if (!row || row.source !== "baidu" || !["completed", "failed"].includes(row.status)) throw new Error(row?.status === "running" ? "JOB_ALREADY_RUNNING" : "ORGANIZE_RETRY_UNAVAILABLE");
+      if (row.revision !== revision) throw new Error("DECISION_STALE");
+      this.setStage(id, "inspecting", "running"); this.appendJobEvent(id, "resource.organize_retry_started", {});
+      setImmediate(() => void this.startBaiduExtraction(id, row.input_json, row.parse_result_json).catch(error => this.handleJobError(id, error, "inspecting")));
+      return true;
+    }
     if (!row || row.status !== "failed" || !row.failure_json) throw new Error("JOB_NOT_RETRYABLE");
     if (row.revision !== revision) throw new Error("DECISION_STALE");
     const failure = JSON.parse(row.failure_json) as { retryable?: boolean; resumeStage?: ResourceJobSnapshotV1["stage"] };
     if (!failure.retryable) throw new Error("JOB_NOT_RETRYABLE");
     if (row.source === "baidu" && failure.resumeStage === "queued_download") this.startBaiduJob(id, row.input_json, row.parse_result_json);
-    else if (row.source === "baidu" && failure.resumeStage === "inspecting") void this.startBaiduExtraction(id, row.input_json, row.parse_result_json).catch(error => this.handleJobError(id, error, "inspecting"));
+    else if (row.source === "baidu" && failure.resumeStage === "inspecting") setImmediate(() => void this.startBaiduExtraction(id, row.input_json, row.parse_result_json).catch(error => this.handleJobError(id, error, "inspecting")));
     else if (row.source === "managed-folder" && failure.resumeStage === "inspecting") this.startArchiveJob(id, row.input_json);
     else throw new Error("RETRY_STAGE_UNSUPPORTED");
     return true;
   }
   private setStage(id: string, stage: ResourceJobSnapshotV1["stage"], status: ResourceJobSnapshotV1["status"]): void { this.db.prepare("UPDATE resource_jobs SET status = ?, stage = ?, revision = revision + 1, updated_at = ? WHERE id = ?").run(status, stage, new Date().toISOString(), id); }
   private cancelJob(id: string): boolean { const row = this.db.prepare("SELECT status, revision FROM resource_jobs WHERE id = ?").get(id) as { status?: string; revision?: number } | undefined; if (!row || row.status === "completed" || row.status === "failed" || row.status === "cancelled") return false; const now = new Date().toISOString(); this.db.prepare("UPDATE resource_jobs SET status = 'cancelled', revision = revision + 1, updated_at = ? WHERE id = ?").run(now, id); this.db.prepare("INSERT INTO resource_events (id, job_id, sequence, type, data_json, occurred_at) SELECT ?, id, COALESCE((SELECT MAX(sequence) + 1 FROM resource_events WHERE job_id = resource_jobs.id), 1), 'job.cancelled', '{}', ? FROM resource_jobs WHERE id = ?").run(randomUUID(), now, id); return true; }
-  private deleteTerminalJob(id: string): boolean { const row = this.db.prepare("SELECT status FROM resource_jobs WHERE id = ?").get(id) as { status?: string } | undefined; if (!row) return false; if (!['completed', 'failed', 'cancelled'].includes(row.status ?? '')) throw new Error("JOB_NOT_TERMINAL"); this.db.exec("BEGIN IMMEDIATE"); try { this.db.prepare("UPDATE resource_file_ledger SET job_id = NULL WHERE job_id = ?").run(id); this.db.prepare("DELETE FROM resource_jobs WHERE id = ?").run(id); this.db.exec("COMMIT"); return true; } catch (error) { this.db.exec("ROLLBACK"); throw error; } }
+  private deleteTerminalJob(id: string): boolean { const row = this.db.prepare("SELECT status FROM resource_jobs WHERE id = ?").get(id) as { status?: string } | undefined; if (!row) return false; if (!['completed', 'failed', 'cancelled'].includes(row.status ?? '')) throw new Error("JOB_NOT_TERMINAL"); this.db.exec("BEGIN IMMEDIATE"); try { this.db.prepare("UPDATE resource_file_ledger SET job_id = NULL WHERE job_id = ?").run(id); this.db.prepare("DELETE FROM resource_jobs WHERE id = ?").run(id); this.db.exec("COMMIT"); rmSync(join(this.options.config.stagingPath, id), { recursive: true, force: true }); return true; } catch (error) { this.db.exec("ROLLBACK"); throw error; } }
   private repeatJob(id: string): ResourceJobSnapshotV1 { const row = this.db.prepare("SELECT status, input_json FROM resource_jobs WHERE id = ?").get(id) as { status?: string; input_json?: string } | undefined; if (!row?.input_json || !['completed', 'failed', 'cancelled'].includes(row.status ?? '')) throw new Error("JOB_NOT_REPEATABLE"); const input = parseCreateResourceJobRequestV1(JSON.parse(row.input_json) as unknown); return this.createJob({ ...input, startMode: "automatic" }); }
   private toJob(row: JobRow): ResourceJobSnapshotV1 { return { version: 1, id: row.id, revision: row.revision, source: row.source as ResourceJobSnapshotV1["source"], status: row.status as ResourceJobSnapshotV1["status"], stage: row.stage as ResourceJobSnapshotV1["stage"], destinationRootId: row.destination_root_id, createdAt: row.created_at, updatedAt: row.updated_at, progress: JSON.parse(row.progress_json) as ResourceJobSnapshotV1["progress"], ...(row.model_snapshot_json ? { modelSnapshot: JSON.parse(row.model_snapshot_json) as NonNullable<ResourceJobSnapshotV1["modelSnapshot"]> } : {}), ...(row.pending_decision_json ? { pendingDecision: JSON.parse(row.pending_decision_json) as NonNullable<ResourceJobSnapshotV1["pendingDecision"]> } : {}), ...(row.failure_json ? { failure: JSON.parse(row.failure_json) as NonNullable<ResourceJobSnapshotV1["failure"]> } : {}) }; }
   private count(status: string): number { return Number((this.db.prepare("SELECT COUNT(*) AS count FROM resource_jobs WHERE status = ?").get(status) as { count: number }).count); }
@@ -427,6 +607,21 @@ function availableOutputPath(root: string, name: string): string {
   const direct = join(root, name); if (!existsSync(direct)) return direct;
   for (let index = 2; index <= 999; index += 1) { const candidate = join(root, `${name} (${index})`); if (!existsSync(candidate)) return candidate; }
   throw new Error("OUTPUT_NAME_EXHAUSTED");
+}
+
+function listPublishedFiles(root: string): { relativePath: string; size: number }[] {
+  const files: { relativePath: string; size: number }[] = [];
+  const queue = [root];
+  while (queue.length) {
+    const current = queue.pop()!;
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const path = join(current, entry.name);
+      if (entry.isSymbolicLink()) throw new Error("PUBLISHED_SYMLINK_FORBIDDEN");
+      if (entry.isDirectory()) queue.push(path);
+      else if (entry.isFile()) files.push({ relativePath: path.slice(root.length + 1), size: statSync(path).size });
+    }
+  }
+  return files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 }
 
 function classifyBaiduDownloadFailure(result: BaiduDownloadResult): string {

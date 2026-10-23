@@ -19,8 +19,17 @@ export class SevenZipTool {
   }
 }
 
+export class UnrarTool extends SevenZipTool {
+  run(args: readonly string[], signal?: AbortSignal): Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }> {
+    const mapped = [...args];
+    if (mapped[0] === "t" || mapped[0] === "l") mapped.splice(1, 0, "-idq");
+    if (mapped[0] === "x") { const outputIndex = mapped.findIndex(value => value.startsWith("-o") && value.length > 2); if (outputIndex >= 0) { const output = mapped[outputIndex]!.slice(2); mapped.splice(outputIndex, 1); mapped.push("-o+", output); } }
+    return super.run(mapped, signal);
+  }
+}
+
 export class ArchiveOrganizer {
-  constructor(private readonly tool: SevenZipTool, private readonly limits: ArchiveOrganizerLimits) {}
+  constructor(private readonly tool: SevenZipTool, private readonly limits: ArchiveOrganizerLimits, private readonly rarTool?: UnrarTool) {}
   async organize(request: ArchiveOrganizeRequest, signal?: AbortSignal): Promise<ArchiveOrganizeResult> {
     const archivePath = resolve(request.archivePath); const stagingPath = resolve(request.stagingPath); const outputPath = resolve(request.outputPath);
     if (!existsSync(archivePath) || !statSync(archivePath).isFile()) throw new Error("ARCHIVE_NOT_FOUND");
@@ -31,17 +40,18 @@ export class ArchiveOrganizer {
     // explicitly created a .rar probe, let 7-Zip inspect the bytes instead of
     // trusting the extension or the media hint.
     if (!inspection.isArchive && !/\.rar$/iu.test(archivePath)) throw new Error("ARCHIVE_FORMAT_UNSUPPORTED");
+    const activeTool = (inspection.format === "rar4" || inspection.format === "rar5") && this.rarTool ? this.rarTool : this.tool;
     const candidates = [...new Set([...(request.password ? [request.password] : []), ...(request.passwordCandidates ?? [])].map(value => value.trim()).filter(Boolean))].slice(0, 20);
-    const initial = await this.tool.run(["t", archivePath], signal); let successfulPasswordIndex: number | undefined; let passwordArgs: string[] = [];
+    const initial = await activeTool.run(["t", archivePath], signal); let successfulPasswordIndex: number | undefined; let passwordArgs: string[] = [];
     if (initial.code !== 0) {
       const passwordFailure = isPasswordFailure(`${initial.stdout}\n${initial.stderr}`);
-      for (let index = 0; index < candidates.length; index += 1) { const tested = await this.tool.run(["t", archivePath, `-p${candidates[index]!}`], signal); if (tested.code === 0) { successfulPasswordIndex = index; passwordArgs = [`-p${candidates[index]!}`]; break; } }
+      for (let index = 0; index < candidates.length; index += 1) { const tested = await activeTool.run(["t", archivePath, `-p${candidates[index]!}`], signal); if (tested.code === 0) { successfulPasswordIndex = index; passwordArgs = [`-p${candidates[index]!}`]; break; } }
       if (successfulPasswordIndex === undefined) { const detail = `${initial.stdout}\n${initial.stderr}`; throw new Error(passwordFailure ? "ARCHIVE_PASSWORD_REQUIRED" : isMissingVolumeFailure(detail) ? "ARCHIVE_VOLUME_INCOMPLETE" : "ARCHIVE_TEST_FAILED"); }
     }
-    const listed = await this.tool.run(["l", "-slt", archivePath, ...passwordArgs], signal); if (listed.code !== 0) throw new Error("ARCHIVE_LIST_FAILED");
-    validateListedPaths(parseListedPaths(listed.stdout));
+    const listed = await activeTool.run(activeTool instanceof UnrarTool ? ["l", archivePath, ...passwordArgs] : ["l", "-slt", archivePath, ...passwordArgs], signal); if (listed.code !== 0) throw new Error("ARCHIVE_LIST_FAILED");
+    if (!(activeTool instanceof UnrarTool)) validateListedPaths(parseListedPaths(listed.stdout));
     mkdirSync(stagingPath, { recursive: true });
-    const extracted = await this.tool.run(["x", archivePath, `-o${stagingPath}`, "-y", ...passwordArgs], signal); if (extracted.code !== 0) throw new Error("ARCHIVE_EXTRACT_FAILED");
+    const extracted = await activeTool.run(["x", archivePath, `-o${stagingPath}`, "-y", ...passwordArgs], signal); if (extracted.code !== 0) throw new Error("ARCHIVE_EXTRACT_FAILED");
     normalizeExtractedTree(stagingPath, archivePath);
     const files = walkFiles(stagingPath, this.limits); const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
     const archiveSize = Math.max(1, statSync(archivePath).size); if (totalBytes / archiveSize > this.limits.maxExpansionRatio) throw new Error("ARCHIVE_EXPANSION_RATIO_EXCEEDED");

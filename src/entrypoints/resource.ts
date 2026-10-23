@@ -1,6 +1,7 @@
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { ArchiveOrganizer, SevenZipTool } from "../resource/archive-organizer.js";
+import { ArchiveOrganizer, SevenZipTool, UnrarTool } from "../resource/archive-organizer.js";
 import { BaiduDownloadRunner } from "../resource/baidu-download-runner.js";
 import { BdpanRunner } from "../resource/bdpan-runner.js";
 import { loadOrCreateResourceConfig } from "../resource/config.js";
@@ -14,12 +15,13 @@ import { ResourceSettingsStore } from "../resource/settings.js";
 const configPath = resolve(process.argv[2] ?? process.env.ISLA_RESOURCE_CONFIG ?? join(homedir(), ".isla", "resource.json"));
 const runtimeConfig = await loadOrCreateLocalRuntimeConfig();
 const config = await loadOrCreateResourceConfig(configPath, runtimeConfig);
-const inferenceClient = new ResourceInferenceClient({ endpoint: config.isla.endpoint, token: config.isla.token });
+const inferenceClient = new ResourceInferenceClient({ endpoint: config.isla.endpoint, token: config.isla.token, timeoutMs: 15_000 });
 const sevenZip = resolveSevenZip();
+const unrar = resolveUnrar();
 const bdpan = resolveBdpan();
 const service = new ResourceService({
   config,
-  archiveOrganizer: new ArchiveOrganizer(new SevenZipTool(sevenZip), config.limits),
+  archiveOrganizer: new ArchiveOrganizer(new SevenZipTool(sevenZip), config.limits, unrar ? new UnrarTool(unrar) : undefined),
   baiduDownloader: new BaiduDownloadRunner(new BdpanRunner(bdpan, process.env.BDPAN_CONFIG_PATH)),
   baiduBrowser: new BdpanRunner(bdpan, process.env.BDPAN_CONFIG_PATH),
   inferenceClient,
@@ -38,7 +40,13 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => { 
 function resolveSevenZip(): string {
   if (process.env.ISLA_7Z_PATH) return process.env.ISLA_7Z_PATH;
   if (process.platform === "win32") return join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "Isla", "tools", "7zip", "26.00", "7z.exe");
-  return "7zz";
+  try { return execFileSync("sh", ["-lc", "command -v 7zz || command -v 7z"], { encoding: "utf8" }).trim() || "7z"; } catch { return "7z"; }
+}
+
+function resolveUnrar(): string | undefined {
+  if (process.env.ISLA_UNRAR_PATH) return process.env.ISLA_UNRAR_PATH;
+  if (process.platform === "win32") return undefined;
+  try { const path = execFileSync("sh", ["-lc", "command -v unrar || true"], { encoding: "utf8" }).trim(); return path || undefined; } catch { return undefined; }
 }
 
 function resolveBdpan(): string {

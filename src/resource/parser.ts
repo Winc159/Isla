@@ -9,14 +9,15 @@ export interface ResourceRuleParseResultV1 {
 const BAIDU_URL = /https?:\/\/pan\.baidu\.com\/(?:s\/[A-Za-z0-9_-]+|share\/init\?surl=[A-Za-z0-9_-]+)(?:[?&][A-Za-z0-9_=%-]*)*/giu;
 const SHARE_CODE = /(?:提取码|分享码|提取码为|分享码为|密码为|code)\s*[:：=]?\s*([A-Za-z0-9]{4})/giu;
 const PASSWORD = /(?:解压密码|压缩密码|密码|password|pass)\s*[:：=]?\s*([^\r\n]{1,256})/giu;
+const CHAT_META_LINE = /[:：]\s*\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?$/u;
 
 export function parseResourceShareText(text: string): ResourceRuleParseResultV1 {
   if (typeof text !== "string" || !text.trim()) throw new Error("RESOURCE_INPUT_REQUIRED");
   if (text.length > 20_000) throw new Error("REQUEST_TOO_LARGE");
   const shareUrls = unique([...text.matchAll(BAIDU_URL)].map(match => match[0]));
-  const shareCodeCandidates = unique([...text.matchAll(SHARE_CODE)].map(match => match[1]!));
+  const shareCodeCandidates = unique([...text.matchAll(SHARE_CODE)].map(match => match[1]!).concat(text.split(/\r?\n/u).map(line => line.trim()).filter(line => /^[A-Za-z0-9]{4}$/u.test(line))));
   const archivePasswordCandidates = unique([...text.matchAll(PASSWORD)].flatMap(match => match[1]!.split(/[\s,，;；|/]+/u)).filter(value => !shareCodeCandidates.includes(value)));
-  const titleCandidates = text.split(/\r?\n/u).map(line => line.trim()).filter(line => line.length >= 2 && line.length <= 256 && !/https?:\/\/pan\.baidu\.com\//iu.test(line) && !/^(?:提取码|分享码|解压密码|压缩密码|密码|password|pass)/iu.test(line)).slice(0, 8);
+  const titleCandidates = text.split(/\r?\n/u).map(line => line.trim()).filter(line => line.length >= 2 && line.length <= 256 && !CHAT_META_LINE.test(line) && !/https?:\/\/pan\.baidu\.com\//iu.test(line) && !/^(?:提取码|分享码|解压密码|压缩密码|密码|password|pass)/iu.test(line) && !/^[A-Za-z0-9]{4}$/u.test(line)).slice(0, 8);
   BAIDU_URL.lastIndex = 0;
   const warnings: string[] = [];
   if (shareUrls.length === 0) warnings.push("未识别到百度网盘分享链接");
