@@ -28,6 +28,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { McpHost } from '../mcp/host.js';
 import type { CapabilityPolicy } from '../capabilities/snapshot.js';
+import type { AgentRegistry } from '../core/service-kernel.js';
 import { spawn } from 'node:child_process';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -91,6 +92,7 @@ export async function runCli(
   maxContextTokens = 16000,
   maxOutputTokens = 2048,
   contextReserveTokens = 512,
+  agentRegistry?: AgentRegistry,
 ): Promise<void> {
   writeHeader(output, providerId, model, workspaceRoot, webFetch?.enabled === true, runtime.getProviderCapabilities(providerId)?.toolCalling === true);
   const currentWorkspaceKey = workspaceKey(workspaceRoot);
@@ -108,7 +110,7 @@ export async function runCli(
     );
   }
   const interactive = isInteractiveInput(input);
-  const inventoryFactory = createSessionFactory({ runtime, config: { provider: providerId, model, maxContextTurns, maxContextChars, contextRetainTurns, maxContextTokens, maxOutputTokens, contextReserveTokens, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}), ...(capabilityPolicy ? { capabilityPolicy } : {}) }, sessionStore, workspaceRoot });
+  const inventoryFactory = createSessionFactory({ runtime, config: { provider: providerId, model, maxContextTurns, maxContextChars, contextRetainTurns, maxContextTokens, maxOutputTokens, contextReserveTokens, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}), ...(capabilityPolicy ? { capabilityPolicy } : {}) }, sessionStore, workspaceRoot, ...(agentRegistry ? { agentRegistry } : {}) });
   let session: ChatSession;
   const history: string[] = [];
   let draft = '';
@@ -127,7 +129,7 @@ export async function runCli(
       if (streamState.sawDelta) output.write('\n');
     }
   };
-  session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => activeLoading?.pause(), () => activeLoading?.resume(), mcpHost, maxContextTokens, maxOutputTokens, contextReserveTokens);
+  session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => activeLoading?.pause(), () => activeLoading?.resume(), mcpHost, maxContextTokens, maxOutputTokens, contextReserveTokens, agentRegistry);
 
   const handleLine = async (line: string): Promise<'continue' | 'exit'> => {
     const command = findCliCommand(line);
@@ -162,8 +164,9 @@ export async function runCli(
         return 'exit';
       }
       if (result.type === 'switch-session') {
+        await session.close();
         storedSession = result.session;
-        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => activeLoading?.pause(), () => activeLoading?.resume(), mcpHost, maxContextTokens, maxOutputTokens, contextReserveTokens);
+        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => activeLoading?.pause(), () => activeLoading?.resume(), mcpHost, maxContextTokens, maxOutputTokens, contextReserveTokens, agentRegistry);
         output.write('\x1b[2J\x1b[3J\x1b[H');
         writeHeader(output, providerId, model, workspaceRoot);
         if (result.replayHistory) writeSessionHistory(output, storedSession);
@@ -277,10 +280,11 @@ export interface CliAdapterOptions {
   readonly webSearch?: import('../config/schema.js').WebSearchConfig;
   readonly mcpHost?: McpHost;
   readonly capabilityPolicy?: CapabilityPolicy;
+  readonly agentRegistry?: AgentRegistry;
 }
 
 export async function runCliAdapter(options: CliAdapterOptions): Promise<void> {
-  return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics, options.webFetch, options.webSearch, options.mcpHost, options.capabilityPolicy, options.maxContextTokens, options.maxOutputTokens, options.contextReserveTokens);
+  return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics, options.webFetch, options.webSearch, options.mcpHost, options.capabilityPolicy, options.maxContextTokens, options.maxOutputTokens, options.contextReserveTokens, options.agentRegistry);
 }
 
 function writeSessionHistory(output: Writable, session: StoredSession): void {
@@ -377,8 +381,9 @@ function createPersistentSession(
   maxContextTokens = 16000,
   maxOutputTokens = 2048,
   contextReserveTokens = 512,
+  agentRegistry?: AgentRegistry,
 ) {
-  const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, maxContextTokens, maxOutputTokens, contextReserveTokens, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}) });
+  const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, maxContextTokens, maxOutputTokens, contextReserveTokens, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}), ...(agentRegistry ? { agentRegistry } : {}) });
   return factory.create({ stored: storedSession, input, output, interactive, ...(interactive ? { approvalService: new CliApprovalService(input, output, onInteractionStart, onInteractionEnd), userQuestionService: new CliUserQuestionService(input, output, onInteractionStart, onInteractionEnd) } : {}), ...(onModelStepEvent ? { onModelStepEvent } : {}) });
 }
 if (isCliEntry(import.meta.url, process.argv[1]) && process.argv[2] === 'install') {
@@ -427,7 +432,7 @@ if (isCliEntry(import.meta.url, process.argv[1]) && process.argv[2] === 'install
       const protocol = startup.protocol;
       if (protocol !== 'ndjson') throw new Error('Unsupported protocol');
       const protocolStore = application.sessions;
-      const sessionFactory = createSessionFactory({ runtime, config: { ...config, ...(mcpHost ? { mcpHost } : {}) }, sessionStore: protocolStore, memoryRuntime, workspaceRoot: config.workspaceRoot ?? process.cwd(), diagnostics: event => application.diagnostics.emit(event) });
+      const sessionFactory = createSessionFactory({ runtime, config: { ...config, ...(mcpHost ? { mcpHost } : {}) }, sessionStore: protocolStore, memoryRuntime, workspaceRoot: config.workspaceRoot ?? process.cwd(), diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents });
       const currentWorkspaceKey = workspaceKey(config.workspaceRoot ?? process.cwd());
       let protocolStored = await protocolStore.loadLatest(config.provider, config.model, currentWorkspaceKey);
       if (!protocolStored) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : [], currentWorkspaceKey);
@@ -449,6 +454,7 @@ if (isCliEntry(import.meta.url, process.argv[1]) && process.argv[2] === 'install
           return activeProtocolSession.sendWithSkill({ name, ...(text ? { userInput: text } : {}), content: definition.content });
         },
         createSession: async (approvalService, events, questionService) => {
+          if (activeProtocolSession) await sessionFactory.dispose(activeProtocolSession);
           if (!useExistingProtocolSession) protocolStored = selectedProtocolSession;
           useExistingProtocolSession = false;
           const activeStored = protocolStored;
@@ -473,8 +479,7 @@ if (isCliEntry(import.meta.url, process.argv[1]) && process.argv[2] === 'install
         ...(config.provider === 'bailian' ? { listModels: query => listBailianModels(config.baseURL, config.apiKey, query ? { search: query } : {}), useModel: async nextModel => { const models = await listBailianModels(config.baseURL, config.apiKey); if (!models.some(entry => entry.id === nextModel)) throw new Error('模型不在当前目录中'); const store = new ConfigStore(startup.configPath ?? defaultConfigPath()); const loaded = await store.load(); const name = startup.profileName ?? (loaded.status === 'ready' ? loaded.config.defaultProfile : undefined); if (loaded.status !== 'ready' || !name || loaded.config.profiles[name]?.provider !== 'bailian') throw new Error('Bailian Profile 不可用'); await store.save({ ...loaded.config, profiles: { ...loaded.config.profiles, [name]: { ...loaded.config.profiles[name]!, model: nextModel } } }, loaded.revision); } } : config.provider === 'deepseek' ? { listModels: query => listDeepSeekModels(config.apiKey).then(models => query ? models.filter(entry => entry.id.toLowerCase().includes(query.toLowerCase())) : models), useModel: async nextModel => { const models = await listDeepSeekModels(config.apiKey); if (!models.some(entry => entry.id === nextModel)) throw new Error('模型不在当前目录中'); const store = new ConfigStore(startup.configPath ?? defaultConfigPath()); const loaded = await store.load(); const name = startup.profileName ?? (loaded.status === 'ready' ? loaded.config.defaultProfile : undefined); if (loaded.status !== 'ready' || !name || loaded.config.profiles[name]?.provider !== 'deepseek') throw new Error('DeepSeek Profile 不可用'); await store.save({ ...loaded.config, profiles: { ...loaded.config.profiles, [name]: { ...loaded.config.profiles[name]!, model: nextModel } } }, loaded.revision); } } : {}),
       });
       await closeBrowserConsole(consoleWorkspace);
-      application.close();
-      process.exit(0);
+      await application.dispose();
     } else await runCliAdapter({
       input: process.stdin,
       output: process.stdout,
@@ -503,8 +508,9 @@ if (isCliEntry(import.meta.url, process.argv[1]) && process.argv[2] === 'install
       maxOutputTokens: config.maxOutputTokens,
       contextReserveTokens: config.contextReserveTokens,
       diagnostics: event => application.diagnostics.emit(event),
+      agentRegistry: application.agents,
     });
-    } finally { await closeBrowserConsole(consoleWorkspace); application.close(); }
+    } finally { await closeBrowserConsole(consoleWorkspace); await application.dispose(); }
   } catch (error) {
     process.stderr.write(
       `Error: ${error instanceof Error ? error.message : 'Unknown error'}\n`,

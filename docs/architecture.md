@@ -4,7 +4,7 @@
 
 ## 产品定位与原则
 
-Isla 是面向个人使用的 TypeScript/Node.js Agent Runtime。无参数 CLI 与一次性 prompt CLI 默认作为 Resident Host 客户端；`--local` 保留进程内故障恢复入口。Host 只监听 loopback，并持有 Session、Memory、Approval 和 User Question；Resource 则以独立进程提供下载、解压、整理和专用 Web 工具台。Isla 不是通用 Agent 平台：能力只在现实需求出现后扩展，Provider、模型和部署方式不会渗透进 Runtime Core。
+Isla 是面向个人使用的 TypeScript/Node.js Agent Runtime。无参数 CLI 与一次性 prompt CLI 默认作为 Resident Host 客户端；`--local` 保留进程内故障恢复入口。Host 只监听 loopback，并持有 Session、Memory、Approval 和 User Question；Resource 则以独立进程提供下载、解压、整理和专用 Web 工具台。个人定位决定默认策略、隐私与产品体验，但完整 Agent 基础服务按 [Agent Platform 基线](./agent-platform-baseline.md) 演进，不再以当前规模为由省略长期必需的核心契约。
 
 核心原则：
 
@@ -186,16 +186,18 @@ Resource Service 使用独立配置、SQLite Job、Scheduler 和受管目录边�
 
 原生 Node.js、容器、systemd 或 launchd 只负责进程托管。Runtime Core 不感知部署环境。Resident Host 仅绑定 loopback、使用 Bearer token、限制并发回合并在关闭时取消和收敛活动会话；Resource Service 也保持独立进程和本地受控入口。两者都不是公网或多用户服务。
 
-## 当前明确不支持
+## 当前尚未实现但已进入架构基线
 
-- 主 Agent 聊天 Web UI、公网 Host 和多用户；
+- 主 Agent 聊天 Web UI；
 - 运行期间动态切换 Provider/Model；
 - 在线插件安装、任意代码动态加载和热更新；
-- MCP 远程 transport、OAuth、resources、prompts 和 tasks；
+- MCP 远程 transport、OAuth、resources、prompts 和 elicitation；
 - Embedding 或独立模型驱动的能力路由；
-- 并行 Tool、通用 Subagent 和 Workflow 框架；
+- 并行 Tool、一层受限 Subagent 和通用持久 Job；
 - Worker Session、Memory、Tool、文件系统权限或开放式 Agent Loop；
-- 自动修改、部署或演化自身。
+- Service/Scope/Effect 插件内核、Event Session、可恢复 App Server、Plan/Act、长进程和 Workspace Checkpoint。
+
+公网多用户、无边界 Agent Team、任意递归和自主演化仍不属于个人 Agent 基线。
 
 ## 架构修改约束
 

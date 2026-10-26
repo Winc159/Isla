@@ -16,6 +16,7 @@ import { resolveWorkspace } from '../config/workspace.js';
 import { measureContextBudget, DEFAULT_CONTEXT_RETAIN_TURNS, DEFAULT_MAX_CONTEXT_CHARS } from '../core/context.js';
 import { estimateRequestTokens } from '../core/token-budget.js';
 import { DEFAULT_MAX_CONTEXT_TURNS } from '../core/session.js';
+import type { AgentRegistry } from '../core/service-kernel.js';
 
 export interface ResidentHostOptions {
   readonly host?: string;
@@ -26,6 +27,7 @@ export interface ResidentHostOptions {
   readonly sessionStore: SessionStore;
   readonly createSession: (stored: StoredSession, workspaceRoot?: string, events?: HostTurnObservers) => ChatSession;
   readonly capabilitySnapshot?: () => CapabilitySnapshot;
+  readonly agentRegistry?: AgentRegistry;
   readonly maxActiveTurns?: number;
   readonly lockPath?: string;
   readonly structuredInference?: (request: StructuredInferenceRequestV1, signal: AbortSignal) => Promise<StructuredInferenceSuccessV1<unknown>>;
@@ -169,6 +171,7 @@ export class ResidentHost {
     } finally {
       request?.off('aborted', cancelForDisconnect);
       response.off('close', cancelForDisconnect);
+      await this.options.agentRegistry?.disposeSession(stored.id);
       if (this.active.get(stored.id) === active) this.active.delete(stored.id);
       interactions.close();
       if (stream && !response.writableEnded) response.end();

@@ -166,3 +166,13 @@
 - 幂等：Host 从 Session、Turn 和 Tool Call 身份派生 SHA-256 键；Resource 在 SQLite 事务内同时写入 Job 与幂等响应。记录随 Resource 数据库保留，不自动过期。
 - 秘密边界：分享码、压缩包密码和登录验证码不经过 Agent Tool 参数，因为模型 Tool Call 会持久化到 Session；对应决定继续由 Resource UI 的秘密输入路径完成。
 - 重新评估：存在无需把秘密交给模型的受控用户输入通道，且实测 Resource Job 查询/重试语义稳定后，才考虑扩展远程秘密决定协议或幂等记录清理策略。
+
+## D20 完整 Agent 基础设施是个人 Agent 的产品基线
+
+- 背景：Isla 已经拥有 Session、Memory、Capability、Approval、MCP、Browser、Host 和 Resource，但生命周期与协议分散；继续按“当前未使用”推迟 Web UI、Plan/Act、事件化 Session、执行环境和扩展生命周期，会让每个新能力重复改造组合根。
+- 决策：采用 [Agent Platform 基线](./agent-platform-baseline.md)。先建设 Service/Scope/Effect Runtime Kernel，再演进 Event Session、App Server、Policy/Execution、Plan/Act、主 Agent Web UI、完整 MCP、Job 与受限 Subagent。
+- 参考：采用 DeepSeek Harness/Cordis 的服务图和作用域思想、Codex 的 App Server/Approval/Sandbox 分层、OpenHands 的多界面 Runtime 与会话恢复、Cline 的 Plan/Act 权限模式、SWE-agent 的环境和工具安装边界；不复制其源码或项目目录。
+- 理由：个人产品仍需要成熟 Agent 的基础服务；这些契约越晚补，Session、UI、工具、插件和后台任务的迁移成本越高。
+- 代价：短期增加基础设施和迁移工作；必须通过兼容层避免一次性重写。
+- 边界：不扩展为公网多租户 SaaS，不允许无边界递归 Agent、自主演化或未经批准的在线代码执行。
+- 重新评估：仅当公开协议或成熟依赖能完整替代某层时，考虑直接采用依赖而不是维护自有实现。

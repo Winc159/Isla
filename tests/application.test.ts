@@ -14,6 +14,21 @@ describe("ApplicationContext resources", () => {
     expect(app.memory.enabled).toBe(false);
     expect(() => { app.close(); app.close(); }).not.toThrow();
   });
+
+  it("owns the agent registry and awaits scoped cleanup during disposal", async () => {
+    const app = createApplication({
+      provider: "local", model: "fixture", baseURL: "http://127.0.0.1:1/v1", apiKey: "fixture", timeoutMs: 1000,
+      debug: false, maxContextTurns: 2, maxContextChars: 1000, contextRetainTurns: 1, modelRetries: 0,
+      memoryEnabled: false, logLevel: "quiet", workspaceRoot: process.cwd(),
+    }, new IslaRuntime());
+    const events: string[] = [];
+    const child = app.scope.child("session", "test-session");
+    child.defer(() => { events.push("child-effect"); });
+    expect(app.agents.list()).toEqual([]);
+    await app.dispose();
+    await app.dispose();
+    expect(events).toEqual(["child-effect"]);
+  });
 });
 
 describe("diagnostic sink", () => {

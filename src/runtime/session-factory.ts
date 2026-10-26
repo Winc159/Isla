@@ -27,6 +27,8 @@ import { CapabilityCatalog, createCapabilityProvider } from '../capabilities/cat
 import { CapabilityActivator, composeCapabilityStepSnapshot, createCapabilityRoutingTools } from '../capabilities/routing.js';
 import { ResourceBridgeClient } from '../resource/bridge-client.js';
 import { createResourceCapability } from '../tools/resource.js';
+import { randomUUID } from 'node:crypto';
+import type { AgentRegistry } from '../core/service-kernel.js';
 
 export interface SessionFactoryOptions {
   readonly runtime: IslaRuntime;
@@ -37,6 +39,7 @@ export interface SessionFactoryOptions {
   readonly diagnostics?: (event: import('./application.js').DiagnosticEvent) => void;
   readonly browserRuntime?: BrowserRuntime;
   readonly resourceBridge?: ResourceBridgeClient;
+  readonly agentRegistry?: AgentRegistry;
 }
 export interface SessionFactoryConfig {
   readonly provider: string;
@@ -119,7 +122,8 @@ export function projectStoredSession(storedSession: StoredSession): {
 }
 
 export function createSessionFactory(options: SessionFactoryOptions) {
-  const { runtime, config, sessionStore, memoryRuntime, workspaceRoot, diagnostics, browserRuntime, resourceBridge } = options;
+  const { runtime, config, sessionStore, memoryRuntime, workspaceRoot, diagnostics, browserRuntime, resourceBridge, agentRegistry } = options;
+  const agentIds = new WeakMap<import('../core/session.js').ChatSession, string>();
   const effectiveBrowserRuntime = browserRuntime ?? hostBrowserRuntime(workspaceRoot);
   const browserConsoleUrl = browserConsoles.get(workspaceRoot)?.url;
   const browserConsoleToken = browserConsoles.get(workspaceRoot)?.token;
@@ -147,6 +151,11 @@ export function createSessionFactory(options: SessionFactoryOptions) {
   return {
     capabilitySnapshot,
     capabilityCatalog,
+    async dispose(session: import('../core/session.js').ChatSession): Promise<void> {
+      const id = agentIds.get(session);
+      if (id && agentRegistry) { await agentRegistry.dispose(id); agentIds.delete(session); }
+      else await session.close();
+    },
     create(entry: SessionEntryOptions) {
       let current = entry.stored;
         const composed = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, contextMessages: () => current.messages, skillCatalog, ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(resourceEnabled && resourceBridge?.isAvailable ? [createResourceCapability(resourceBridge, current.id, entry.resourceTurnId ?? `session-${current.id}`)] : []), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime, entry.userQuestionService, browserConsoleUrl, browserConsoleToken, browserVault)] : []), ...(config.mcpHost?.capabilities() ?? [])];
@@ -158,7 +167,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
       const snapshot = composeCapabilitySnapshot(withRouting, skillCatalog.listSync().entries, config.capabilityPolicy);
       const visible = new Set(snapshot.toolDefinitions.map(tool => tool.name));
       const filtered = withRouting.map(capability => ({ ...capability, tools: capability.tools.filter(tool => visible.has(tool.definition.name)) })).filter(capability => capability.tools.length > 0);
-      return runtime.createSession({
+      const session = runtime.createSession({
         providerId: config.provider,
         ...projectStoredSession(current),
         maxContextTurns: config.maxContextTurns,
@@ -205,6 +214,12 @@ export function createSessionFactory(options: SessionFactoryOptions) {
           if (memoryRuntime?.enabled) await memoryRuntime.captureExplicitMemory(current.id, state.messages, workspaceRoot);
         },
       });
+      if (agentRegistry) {
+        const id = `agent-${randomUUID()}`;
+        agentRegistry.register({ id, sessionId: current.id, close: () => session.close() });
+        agentIds.set(session, id);
+      }
+      return session;
     },
   };
 }

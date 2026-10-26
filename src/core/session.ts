@@ -186,6 +186,7 @@ export class ChatSession {
   private readonly userQuestionService: UserQuestionService | undefined;
   private readonly agentLoopTimeoutMs: number;
   private activeTurn: { readonly controller: AbortController; readonly promise: Promise<ModelResponse> } | undefined;
+  private closed = false;
   private readonly retrievedProjectSources = new Set<string>();
   private readonly projectSourceReferences = new Map<string, ProjectSourceReference>();
   private task: TaskBrief | TaskStateV1 | undefined;
@@ -211,6 +212,7 @@ export class ChatSession {
   }
 
   async send(input: string): Promise<ModelResponse> {
+    if (this.closed) throw new RuntimeError({ code: "UNKNOWN", recoverable: false, message: "当前 Agent 已关闭。" });
     if (this.activeTurn) throw new RuntimeError({ code: "UNKNOWN", recoverable: true, message: "当前回合仍在执行。" });
     const controller = new AbortController();
     const promise = this.runTurn(input, controller.signal).finally(() => {
@@ -221,6 +223,7 @@ export class ChatSession {
   }
 
   async sendWithSkill(input: { readonly name: string; readonly userInput?: string; readonly content: string }): Promise<ModelResponse> {
+    if (this.closed) throw new RuntimeError({ code: "UNKNOWN", recoverable: false, message: "当前 Agent 已关闭。" });
     if (this.activeTurn) throw new RuntimeError({ code: "UNKNOWN", recoverable: true, message: "当前回合仍在执行。" });
     const controller = new AbortController();
     const promise = this.runTurn(input.userInput?.trim() || `请使用 Skill ${input.name} 处理当前请求。`, controller.signal, input).finally(() => {
@@ -241,6 +244,13 @@ export class ChatSession {
     const active = this.activeTurn;
     if (!active) return;
     await active.promise.catch(() => undefined);
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.cancelActiveTurn({ kind: "shutdown" });
+    await this.whenIdle();
   }
 
   private async generateWithAvailableTools(request: { readonly messages: readonly Message[] }, signal: AbortSignal, requiredTool?: string): Promise<ModelResponse> {

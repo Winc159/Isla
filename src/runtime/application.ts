@@ -4,6 +4,7 @@ import { MemoryRuntime } from '../memory/runtime.js';
 import { LocalEmbeddingProvider, OpenAIEmbeddingProvider } from '../memory/embeddings.js';
 import type { AppConfig } from '../config/schema.js';
 import type { McpHost } from '../mcp/host.js';
+import { AgentRegistry, RuntimeScope } from '../core/service-kernel.js';
 
 export interface DiagnosticSink { emit(event: DiagnosticEvent): void; }
 export interface DiagnosticEvent { readonly code: string; readonly component: string; readonly severity?: 'warning' | 'error' | 'debug'; readonly detail?: string; readonly domain?: import('../core/errors.js').RuntimeErrorDomain; }
@@ -20,6 +21,9 @@ export interface IslaApplication {
   readonly memory: MemoryRuntime;
   readonly diagnostics: DiagnosticSink;
   close(): void;
+  dispose(): Promise<void>;
+  readonly scope: RuntimeScope;
+  readonly agents: AgentRegistry;
 }
 
 export function createApplication(config: AppConfig, runtime: IslaRuntime, options: { readonly sessionStore?: SessionStore; readonly diagnostics?: DiagnosticSink; readonly mcpHost?: McpHost } = {}): IslaApplication {
@@ -36,11 +40,25 @@ export function createApplication(config: AppConfig, runtime: IslaRuntime, optio
     onWarning: message => diagnostics.emit({ code: 'MEMORY_UNAVAILABLE', component: 'memory', severity: 'warning', detail: message }),
   });
   let closed = false;
+  const scope = new RuntimeScope('host', 'isla-application');
+  const agents = new AgentRegistry(scope);
+  scope.defer(() => memory.close());
+  if (options.mcpHost) scope.defer(() => options.mcpHost!.close());
+  scope.defer(() => agents.close());
+  let disposal: Promise<void> | undefined;
   return {
     runtime,
     sessions: options.sessionStore ?? new JsonSessionStore(config.sessionDirectory),
     memory,
     diagnostics,
-    close: () => { if (closed) return; closed = true; memory.close(); void options.mcpHost?.close(); },
+    scope,
+    agents,
+    close: () => { if (closed) return; closed = true; void scope.close(); },
+    dispose: () => {
+      if (disposal) return disposal;
+      closed = true;
+      disposal = scope.close();
+      return disposal;
+    },
   };
 }

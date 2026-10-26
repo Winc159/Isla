@@ -16,6 +16,13 @@ beforeEach(async () => {
 });
 afterEach(async () => { await rm(sessionRoot, { recursive: true, force: true }); });
 describe("session", () => {
+  it("closes idempotently and rejects new turns after shutdown", async () => {
+    const session = new ChatSession(new FakeProvider([{ text: "响应" }]));
+    await session.close();
+    await session.close();
+    await expect(session.send("已关闭后仍发送")).rejects.toMatchObject({ code: "UNKNOWN", recoverable: false });
+  });
+
   it("settles an explicit submit proposal in the Host and ignores model terminal fields", async () => {
     class SubmitProvider extends FakeProvider {
       async generateWithTools(request: ModelRequest): Promise<ToolResponse> {

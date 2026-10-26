@@ -157,6 +157,7 @@ export interface ProtocolSessionEvents {
       }
     })().finally(() => { active = undefined; activeId = undefined; });
   }
+  rl.close();
   await writer.flush();
 }
 

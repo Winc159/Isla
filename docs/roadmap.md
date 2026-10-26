@@ -1,6 +1,6 @@
 # Isla Roadmap
 
-Isla 的目标是成为长期运行、贴合个人习惯的 Agent Runtime，不是通用 Agent 平台。Roadmap 只记录仍有意义的方向，不再为每个小版本复制设计、实施和测试模板。
+Isla 的目标是成为长期运行、贴合个人习惯的完整 Agent 产品。个人定位不等于削减 Agent 基础设施；Web UI、Plan/Act、审批、MCP、后台任务、受管执行环境和可恢复协议属于产品基线。长期架构见 [agent-platform-baseline.md](./agent-platform-baseline.md)。
 
 ## 当前能力
 
@@ -16,20 +16,22 @@ Isla 的目标是成为长期运行、贴合个人习惯的 Agent Runtime，不�
 
 ## 近期
 
-1. 在 Linux x64/N100 实机验证安装、systemd、linger、重启恢复和日志。
-2. 验证 Host 与 Resource 长期运行时的资源占用、数据库恢复和失败降级。
-3. 验证 Resource Bridge 幂等创建、Session 切换与 Host/CLI 重启后的 Job 连续性。
-4. 建立公开 npm 发布前的版本、打包和跨平台门禁。
+1. v0.7.0：Runtime Kernel，建立 Service/Scope/Effect 和 Agent 生命周期。
+2. v0.7.1：Event Session 与可恢复 App Server 协议。
+3. v0.7.2：分类审批、长命令、受管依赖和执行环境。
+4. v0.7.3：真正的 Plan/Act 与 Workspace Checkpoint。
+5. v0.8.0：主 Agent Web UI。
 
 ## 中期
 
-- 根据真实个人使用场景扩展长期任务、提醒和后台执行，而不是预建通用 Workflow 平台。
-- 改进 Memory 的个人偏好提取、修订、来源和可解释检索。
-- 完成 macOS ARM64 常驻服务与跨设备配置迁移验证。
+- MCP HTTP/OAuth/resources/prompts/elicitation 和热重载。
+- 通用持久 Job、一层受限 Subagent、通知订阅和后台执行。
+- Memory 的个人偏好提取、修订、来源和可解释检索。
+- Windows、macOS ARM64、Linux x64 的执行环境和发布门禁。
 
 ## 暂缓
 
 - 多租户、公网 Host、通用 SaaS 控制台。
-- Subagent/Agent Team、复杂 Workflow、插件市场和在线代码安装。
-- Session 内无边界动态切换 Provider/模型。
-- 在没有真实瓶颈前引入事件溯源、分布式调度或多包 monorepo。
+- 无边界 Agent Team、任意递归 Subagent、公共插件市场。
+- Session 内未经记录的隐式 Provider/模型切换。
+- 分布式多租户调度和公共 SaaS 控制面。
