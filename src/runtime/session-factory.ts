@@ -29,6 +29,7 @@ import { ResourceBridgeClient } from '../resource/bridge-client.js';
 import { createResourceCapability } from '../tools/resource.js';
 import { randomUUID } from 'node:crypto';
 import type { AgentRegistry } from '../core/service-kernel.js';
+import type { FileEventStore } from '../core/event-store.js';
 
 export interface SessionFactoryOptions {
   readonly runtime: IslaRuntime;
@@ -40,6 +41,7 @@ export interface SessionFactoryOptions {
   readonly browserRuntime?: BrowserRuntime;
   readonly resourceBridge?: ResourceBridgeClient;
   readonly agentRegistry?: AgentRegistry;
+  readonly eventStore?: FileEventStore;
 }
 export interface SessionFactoryConfig {
   readonly provider: string;
@@ -122,7 +124,7 @@ export function projectStoredSession(storedSession: StoredSession): {
 }
 
 export function createSessionFactory(options: SessionFactoryOptions) {
-  const { runtime, config, sessionStore, memoryRuntime, workspaceRoot, diagnostics, browserRuntime, resourceBridge, agentRegistry } = options;
+  const { runtime, config, sessionStore, memoryRuntime, workspaceRoot, diagnostics, browserRuntime, resourceBridge, agentRegistry, eventStore } = options;
   const agentIds = new WeakMap<import('../core/session.js').ChatSession, string>();
   const effectiveBrowserRuntime = browserRuntime ?? hostBrowserRuntime(workspaceRoot);
   const browserConsoleUrl = browserConsoles.get(workspaceRoot)?.url;
@@ -213,6 +215,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
           current = await sessionStore.save(current, state);
           if (memoryRuntime?.enabled) await memoryRuntime.captureExplicitMemory(current.id, state.messages, workspaceRoot);
         },
+        ...(eventStore ? { onSessionEvent: event => eventStore.append(current.id, event).then(() => undefined) } : {}),
       });
       if (agentRegistry) {
         const id = `agent-${randomUUID()}`;

@@ -15,7 +15,7 @@ const local = await loadOrCreateLocalRuntimeConfig(runtimePath);
 const resourceHost = local.resource.host === '0.0.0.0' ? '127.0.0.1' : local.resource.host;
 const resourceBridge = new ResourceBridgeClient(`http://${resourceHost}:${local.resource.port}`, local.resource.token);
 if (loaded.config.capabilityPolicy?.resourceEnabled !== false) await resourceBridge.health();
-const factory = createSessionFactory({ runtime: loaded.runtime, config: { ...loaded.config, ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}) }, sessionStore: application.sessions, memoryRuntime: application.memory, resourceBridge, workspaceRoot, diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents });
+const factory = createSessionFactory({ runtime: loaded.runtime, config: { ...loaded.config, ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}) }, sessionStore: application.sessions, memoryRuntime: application.memory, resourceBridge, workspaceRoot, diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents, eventStore: application.events });
 const host = new ResidentHost({
   host: local.host.host,
   port: local.host.port,
@@ -32,6 +32,7 @@ const host = new ResidentHost({
   ...(loaded.config.systemPrompt ? { initialMessages: [{ role: 'system' as const, content: loaded.config.systemPrompt }] } : {}),
   capabilitySnapshot: factory.capabilitySnapshot,
   agentRegistry: application.agents,
+  eventStore: application.events,
   ...(loaded.worker ? { structuredInference: loaded.worker.inference } : {}),
 });
 

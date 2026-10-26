@@ -5,6 +5,7 @@ import { LocalEmbeddingProvider, OpenAIEmbeddingProvider } from '../memory/embed
 import type { AppConfig } from '../config/schema.js';
 import type { McpHost } from '../mcp/host.js';
 import { AgentRegistry, RuntimeScope } from '../core/service-kernel.js';
+import { FileEventStore } from '../core/event-store.js';
 
 export interface DiagnosticSink { emit(event: DiagnosticEvent): void; }
 export interface DiagnosticEvent { readonly code: string; readonly component: string; readonly severity?: 'warning' | 'error' | 'debug'; readonly detail?: string; readonly domain?: import('../core/errors.js').RuntimeErrorDomain; }
@@ -24,6 +25,7 @@ export interface IslaApplication {
   dispose(): Promise<void>;
   readonly scope: RuntimeScope;
   readonly agents: AgentRegistry;
+  readonly events: FileEventStore;
 }
 
 export function createApplication(config: AppConfig, runtime: IslaRuntime, options: { readonly sessionStore?: SessionStore; readonly diagnostics?: DiagnosticSink; readonly mcpHost?: McpHost } = {}): IslaApplication {
@@ -42,6 +44,7 @@ export function createApplication(config: AppConfig, runtime: IslaRuntime, optio
   let closed = false;
   const scope = new RuntimeScope('host', 'isla-application');
   const agents = new AgentRegistry(scope);
+  const events = new FileEventStore(`${config.sessionDirectory}/events`);
   scope.defer(() => memory.close());
   if (options.mcpHost) scope.defer(() => options.mcpHost!.close());
   scope.defer(() => agents.close());
@@ -53,6 +56,7 @@ export function createApplication(config: AppConfig, runtime: IslaRuntime, optio
     diagnostics,
     scope,
     agents,
+    events,
     close: () => { if (closed) return; closed = true; void scope.close(); },
     dispose: () => {
       if (disposal) return disposal;

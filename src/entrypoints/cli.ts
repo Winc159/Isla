@@ -432,7 +432,7 @@ if (isCliEntry(import.meta.url, process.argv[1]) && process.argv[2] === 'install
       const protocol = startup.protocol;
       if (protocol !== 'ndjson') throw new Error('Unsupported protocol');
       const protocolStore = application.sessions;
-      const sessionFactory = createSessionFactory({ runtime, config: { ...config, ...(mcpHost ? { mcpHost } : {}) }, sessionStore: protocolStore, memoryRuntime, workspaceRoot: config.workspaceRoot ?? process.cwd(), diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents });
+      const sessionFactory = createSessionFactory({ runtime, config: { ...config, ...(mcpHost ? { mcpHost } : {}) }, sessionStore: protocolStore, memoryRuntime, workspaceRoot: config.workspaceRoot ?? process.cwd(), diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents, eventStore: application.events });
       const currentWorkspaceKey = workspaceKey(config.workspaceRoot ?? process.cwd());
       let protocolStored = await protocolStore.loadLatest(config.provider, config.model, currentWorkspaceKey);
       if (!protocolStored) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : [], currentWorkspaceKey);
