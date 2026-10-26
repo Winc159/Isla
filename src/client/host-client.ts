@@ -13,15 +13,26 @@ export class ResidentHostClient {
   constructor(private readonly baseURL: string, private readonly token: string) {}
   async health(): Promise<unknown> { return this.request('/health', false); }
   async capabilities(): Promise<unknown> { return this.request('/capabilities'); }
-  async sessions(): Promise<unknown> { return this.request('/sessions'); }
-  async createSession(prompt?: string): Promise<unknown> { return this.request('/sessions', true, prompt === undefined ? {} : { prompt }); }
+  async sessions(workspaceKey?: string): Promise<{ readonly sessions: readonly { readonly sessionId: string; readonly provider: string; readonly model: string; readonly updatedAt: string }[] }> { return this.request(`/sessions${workspaceKey ? `?workspaceKey=${encodeURIComponent(workspaceKey)}` : ''}`) as Promise<{ readonly sessions: readonly { readonly sessionId: string; readonly provider: string; readonly model: string; readonly updatedAt: string }[] }>; }
+  async createSession(workspaceKey: string): Promise<{ readonly sessionId: string }> { return this.request('/sessions', true, { workspaceKey }) as Promise<{ readonly sessionId: string }>; }
   async quickPrompt(text: string, workspaceKey: string, workspaceRoot: string, newSession = false): Promise<{ readonly sessionId: string; readonly text: string }> { return this.request('/quick', true, { text, workspaceKey, workspaceRoot, newSession }) as Promise<{ readonly sessionId: string; readonly text: string }>; }
   async quickPromptStream(options: QuickPromptStreamOptions): Promise<Extract<HostTurnEvent, { readonly type: 'turn_completed' }>> {
-    const response = await fetch(`${this.baseURL}/quick`, {
+    return this.stream('/quick', { text: options.text, workspaceKey: options.workspaceKey, workspaceRoot: options.workspaceRoot, newSession: options.newSession ?? false }, options.onEvent, options.signal);
+  }
+  async promptStream(sessionId: string, text: string, workspaceRoot: string, onEvent: (event: HostTurnEvent) => void, signal?: AbortSignal): Promise<Extract<HostTurnEvent, { readonly type: 'turn_completed' }>> {
+    return this.stream(`/sessions/${encodeURIComponent(sessionId)}/prompt`, { text, workspaceRoot }, onEvent, signal);
+  }
+  async respond(sessionId: string, interactionId: string, turnId: string, response: Record<string, unknown>): Promise<{ readonly accepted: boolean }> { return this.request(`/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}`, true, { ...response, turnId }) as Promise<{ readonly accepted: boolean }>; }
+  async history(sessionId: string, offset = 0, limit = 50): Promise<{ readonly messages: readonly { role: string; content: string }[]; readonly total: number; readonly offset: number }> { return this.request(`/sessions/${encodeURIComponent(sessionId)}/history?offset=${offset}&limit=${limit}`) as Promise<{ readonly messages: readonly { role: string; content: string }[]; readonly total: number; readonly offset: number }>; }
+  async sessionView(sessionId: string, view: 'trace' | 'context'): Promise<unknown> { return this.request(`/sessions/${encodeURIComponent(sessionId)}/${view}`); }
+  async memory(action = 'list', id?: string): Promise<unknown> { return this.request(`/memory?action=${encodeURIComponent(action)}${id ? `&id=${encodeURIComponent(id)}` : ''}`); }
+  async disableMemory(id: string, expectedRevision: number): Promise<unknown> { return this.request(`/memory/${encodeURIComponent(id)}`, true, { expectedRevision }); }
+  private async stream(path: string, body: unknown, onEvent: (event: HostTurnEvent) => void, signal?: AbortSignal): Promise<Extract<HostTurnEvent, { readonly type: 'turn_completed' }>> {
+    const response = await fetch(`${this.baseURL}${path}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json', accept: 'application/x-ndjson' },
-      body: JSON.stringify({ text: options.text, workspaceKey: options.workspaceKey, workspaceRoot: options.workspaceRoot, newSession: options.newSession ?? false }),
-      ...(options.signal ? { signal: options.signal } : {}),
+      body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     });
     if (!response.ok) throw new Error(`HOST_HTTP_${response.status}`);
     if (!response.body) throw new Error('HOST_STREAM_UNAVAILABLE');
@@ -39,7 +50,7 @@ export class ResidentHostClient {
           pending = pending.slice(newline + 1);
           if (line) {
             const event = parseHostTurnEvent(line);
-            options.onEvent(event);
+            onEvent(event);
             if (event.type === 'turn_completed') terminal = event;
             if (event.type === 'turn_failed') throw new Error(event.code);
             if (event.type === 'turn_cancelled') throw new Error('TURN_CANCELLED');
@@ -51,7 +62,7 @@ export class ResidentHostClient {
     } finally { reader.releaseLock(); }
     if (pending.trim()) {
       const event = parseHostTurnEvent(pending);
-      options.onEvent(event);
+      onEvent(event);
       if (event.type === 'turn_completed') terminal = event;
       if (event.type === 'turn_failed') throw new Error(event.code);
       if (event.type === 'turn_cancelled') throw new Error('TURN_CANCELLED');
@@ -70,6 +81,6 @@ function parseHostTurnEvent(line: string): HostTurnEvent {
   try { value = JSON.parse(line); } catch { throw new Error('HOST_STREAM_INVALID_EVENT'); }
   if (!value || typeof value !== 'object' || !('type' in value) || typeof value.type !== 'string') throw new Error('HOST_STREAM_INVALID_EVENT');
   const type = value.type;
-  if (!['turn_start', 'model_step_start', 'model_delta', 'model_step_end', 'tool_start', 'tool_end', 'turn_completed', 'turn_failed', 'turn_cancelled'].includes(type)) throw new Error('HOST_STREAM_UNKNOWN_EVENT');
+  if (!['turn_start', 'model_step_start', 'model_delta', 'model_step_end', 'tool_start', 'tool_end', 'approval_requested', 'question_requested', 'turn_completed', 'turn_failed', 'turn_cancelled'].includes(type)) throw new Error('HOST_STREAM_UNKNOWN_EVENT');
   return value as HostTurnEvent;
 }

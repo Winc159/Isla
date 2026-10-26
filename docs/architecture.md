@@ -1,10 +1,10 @@
 # Isla 当前架构
 
-本文以 `0.5.8` 源码和测试为事实源，描述主 Agent Runtime 与独立 Resource 工具子系统的当前稳定边界。
+本文以 `0.5.9` 源码和测试为事实源，描述主 Agent Runtime 与独立 Resource 工具子系统的当前稳定边界。
 
 ## 产品定位与原则
 
-Isla 是面向个人使用的 TypeScript/Node.js Agent Runtime。主 Agent 当前主要入口是 CLI，同时提供 NDJSON 协议和只监听 loopback 的 Resident Host；Resource 则以独立进程提供下载、解压、整理和专用 Web 工具台。Isla 不是通用 Agent 平台：能力只在现实需求出现后扩展，Provider、模型和部署方式不会渗透进 Runtime Core。
+Isla 是面向个人使用的 TypeScript/Node.js Agent Runtime。无参数 CLI 与一次性 prompt CLI 默认作为 Resident Host 客户端；`--local` 保留进程内故障恢复入口。Host 只监听 loopback，并持有 Session、Memory、Approval 和 User Question；Resource 则以独立进程提供下载、解压、整理和专用 Web 工具台。Isla 不是通用 Agent 平台：能力只在现实需求出现后扩展，Provider、模型和部署方式不会渗透进 Runtime Core。
 
 核心原则：
 
