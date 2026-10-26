@@ -25,7 +25,7 @@ describe('Bailian provider contract', () => {
       return HttpResponse.json({ model: 'qwen-plus', choices: [{ message: { role: 'assistant', content: '你好' } }], usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } });
     }));
     await expect(session().send('你好')).resolves.toMatchObject({ text: '你好' });
-    expect(body).toEqual({ model: 'qwen-plus', messages: [{ role: 'user', content: '你好' }], stream: false, max_completion_tokens: 2048 });
+    expect(body).toEqual({ model: 'qwen-plus', messages: [{ role: 'user', content: '你好' }], stream: false, thinking: { type: 'disabled' }, max_completion_tokens: 2048 });
   });
 
   it('reports conservative capabilities and rejects empty responses', async () => {
@@ -53,7 +53,7 @@ describe('Bailian provider contract', () => {
     runtime.use(createBailianPlugin({ provider: 'bailian', model: 'deepseek-r1-distill-qwen-7b', toolCalling: false, apiKey: 'test-only-key', baseURL: 'https://workspace.example/compatible-mode/v1', timeoutMs: 1000, debug: false, maxContextTurns: 20, maxContextChars: 60000, contextRetainTurns: 6, modelRetries: 0, memoryEnabled: false }));
 
     await expect(runtime.createSession({ providerId: 'bailian', enableTools: true, projectRoot: process.cwd() }).send('你好')).resolves.toMatchObject({ text: '文本回答' });
-    expect(body).toEqual({ model: 'deepseek-r1-distill-qwen-7b', messages: [{ role: 'user', content: '你好' }], stream: false, max_completion_tokens: 2048 });
+    expect(body).toEqual({ model: 'deepseek-r1-distill-qwen-7b', messages: [{ role: 'user', content: '你好' }], stream: false, thinking: { type: 'disabled' }, max_completion_tokens: 2048 });
   });
 
   it('maps structured tool calls and preserves the follow-up message shape', async () => {

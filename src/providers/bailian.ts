@@ -30,9 +30,13 @@ class BailianProvider implements ModelProvider {
         model: this.model,
         messages: request.messages.map(message => ({ role: message.role, content: message.content })) as never,
         stream: false,
+        // Qwen reasoning models may spend the whole bounded completion on
+        // reasoning_content and return an empty user-visible content. Final
+        // no-tool synthesis must always leave room for an answer.
+        thinking: { type: 'disabled' as const },
         ...(request.responseFormat ? { response_format: request.responseFormat } : {}),
         ...(request.maxCompletionTokens ? { max_completion_tokens: request.maxCompletionTokens } : {}),
-      }, options?.signal ? { signal: options.signal } : undefined);
+      } as never, options?.signal ? { signal: options.signal } : undefined);
       const text = response.choices[0]?.message.content;
       if (!text?.trim()) throw new RuntimeError({ code: 'PROVIDER_EMPTY_RESPONSE', recoverable: false, message: '百炼模型返回了空回答。' });
       return {
@@ -51,6 +55,7 @@ class BailianProvider implements ModelProvider {
         model: this.model,
         messages: request.messages.map(message => toChatMessage(message)) as never,
         ...(request.tools ? { tools: request.tools.map(toChatTool) } : {}),
+        ...(request.tools?.length ? {} : { thinking: { type: 'disabled' as const } }),
         ...(request.toolChoice ? { tool_choice: request.toolChoice === 'auto' || request.toolChoice === 'required' ? request.toolChoice : { type: 'function', function: { name: request.toolChoice.name } } } : {}),
         stream: false,
         ...(request.maxCompletionTokens ? { max_completion_tokens: request.maxCompletionTokens } : {}),
