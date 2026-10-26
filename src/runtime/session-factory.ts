@@ -25,6 +25,8 @@ import { BrowserConsoleServer } from '../browser/console-server.js';
 import { CredentialVault } from '../browser/vault.js';
 import { CapabilityCatalog, createCapabilityProvider } from '../capabilities/catalog.js';
 import { CapabilityActivator, composeCapabilityStepSnapshot, createCapabilityRoutingTools } from '../capabilities/routing.js';
+import { ResourceBridgeClient } from '../resource/bridge-client.js';
+import { createResourceCapability } from '../tools/resource.js';
 
 export interface SessionFactoryOptions {
   readonly runtime: IslaRuntime;
@@ -34,6 +36,7 @@ export interface SessionFactoryOptions {
   readonly workspaceRoot: string;
   readonly diagnostics?: (event: import('./application.js').DiagnosticEvent) => void;
   readonly browserRuntime?: BrowserRuntime;
+  readonly resourceBridge?: ResourceBridgeClient;
 }
 export interface SessionFactoryConfig {
   readonly provider: string;
@@ -83,6 +86,7 @@ export async function closeBrowserConsole(workspaceRoot: string): Promise<void> 
 
 export interface SessionEntryOptions {
   readonly stored: StoredSession;
+  readonly resourceTurnId?: string;
   readonly input?: Readable;
   readonly output?: Writable;
   readonly interactive: boolean;
@@ -115,24 +119,29 @@ export function projectStoredSession(storedSession: StoredSession): {
 }
 
 export function createSessionFactory(options: SessionFactoryOptions) {
-  const { runtime, config, sessionStore, memoryRuntime, workspaceRoot, diagnostics, browserRuntime } = options;
+  const { runtime, config, sessionStore, memoryRuntime, workspaceRoot, diagnostics, browserRuntime, resourceBridge } = options;
   const effectiveBrowserRuntime = browserRuntime ?? hostBrowserRuntime(workspaceRoot);
   const browserConsoleUrl = browserConsoles.get(workspaceRoot)?.url;
   const browserConsoleToken = browserConsoles.get(workspaceRoot)?.token;
   const browserVault = browserConsoles.get(workspaceRoot)?.vault;
   const sessionQuery = new SessionQuery(sessionStore);
   const personalSkillsRoot = join(homedir(), '.isla', 'skills');
+  const resourceEnabled = config.capabilityPolicy?.resourceEnabled !== false;
   const skillCatalog = new SkillCatalog({ workspaceRoot: personalSkillsRoot, personalRoot: personalSkillsRoot });
   const capabilitySnapshot = (): CapabilitySnapshot => {
-    const capabilities = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => 'inventory', skillCatalog, ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime)] : []), ...(config.mcpHost?.capabilities() ?? [])];
-    return composeCapabilitySnapshot(capabilities, skillCatalog.listSync().entries, config.capabilityPolicy);
+    const capabilities = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => 'inventory', skillCatalog, ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(resourceEnabled && resourceBridge?.isAvailable ? [createResourceCapability(resourceBridge, 'inventory', 'inventory')] : []), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime)] : []), ...(config.mcpHost?.capabilities() ?? [])];
+    const snapshot = composeCapabilitySnapshot(capabilities, skillCatalog.listSync().entries, config.capabilityPolicy);
+    if (resourceEnabled && resourceBridge && !resourceBridge.isAvailable) return { ...snapshot, entries: [...snapshot.entries, { id: 'resource', kind: 'builtin-tool', origin: 'resource', available: false, modelVisible: false, userInvocable: true, diagnosticCode: resourceBridge.unavailableReason }] };
+    if (!resourceEnabled) return { ...snapshot, entries: [...snapshot.entries, { id: 'resource', kind: 'builtin-tool', origin: 'resource', available: false, modelVisible: false, userInvocable: false, diagnosticCode: 'CAPABILITY_DENIED' }] };
+    return snapshot;
   };
-  const capabilityCatalog = (): CapabilityCatalog => {
+  const capabilityCatalog = (sessionId = 'inventory', turnId = 'inventory'): CapabilityCatalog => {
     const catalog = new CapabilityCatalog();
     const capabilities = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => 'inventory', skillCatalog, ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime)] : []), ...(config.mcpHost?.capabilities() ?? [])];
     for (const capability of capabilities) {
       catalog.register(createCapabilityProvider(capability, { ...(config.capabilityPolicy ? { policy: config.capabilityPolicy } : {}), keywords: [capability.id, ...capability.tools.map(tool => tool.definition.name)] }));
     }
+    if (resourceEnabled && resourceBridge?.isAvailable) catalog.register(createCapabilityProvider(createResourceCapability(resourceBridge, sessionId, turnId), { id: 'builtin.resource', risk: 'external-side-effect', activation: 'eager', lifetime: 'session', keywords: ['resource job download archive artifact'] }));
     return catalog;
   };
   return {
@@ -140,8 +149,8 @@ export function createSessionFactory(options: SessionFactoryOptions) {
     capabilityCatalog,
     create(entry: SessionEntryOptions) {
       let current = entry.stored;
-        const composed = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, contextMessages: () => current.messages, skillCatalog, ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime, entry.userQuestionService, browserConsoleUrl, browserConsoleToken, browserVault)] : []), ...(config.mcpHost?.capabilities() ?? [])];
-      const catalog = capabilityCatalog();
+        const composed = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, contextMessages: () => current.messages, skillCatalog, ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(resourceEnabled && resourceBridge?.isAvailable ? [createResourceCapability(resourceBridge, current.id, entry.resourceTurnId ?? `session-${current.id}`)] : []), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime, entry.userQuestionService, browserConsoleUrl, browserConsoleToken, browserVault)] : []), ...(config.mcpHost?.capabilities() ?? [])];
+      const catalog = capabilityCatalog(current.id, entry.resourceTurnId ?? `session-${current.id}`);
       const activator = new CapabilityActivator(catalog, ('capabilityActivation' in current && current.capabilityActivation) ? current.capabilityActivation : undefined);
       const routingTools = createCapabilityRoutingTools(catalog, activator, () => 0);
       const routingCapability = { id: 'capability-routing', tools: routingTools } as import('../tools/types.js').ToolCapability;

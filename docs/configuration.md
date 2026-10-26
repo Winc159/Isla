@@ -6,4 +6,6 @@ Isla 的正常配置事实源是 `~/.isla/config.json`。它保存主 Profile、
 
 `~/.isla/resource.json` 只保存受管资源目录。数据库、staging、并发、扫描周期和解压限制由 Resource 使用安全默认值派生。
 
+Resource Bridge 在 Resource 健康且 Host 已连接时向主 Agent 提供受限 Job Tools。若当前 Profile 不需要 Agent 管理 Resource，可设置 `capabilities.resourceEnabled: false`；缺省值为启用。该开关不会影响 Resource Web 工具台。
+
 API Key 是本地明文凭据，文件权限会尽量限制为当前用户。CLI 和 Resource Web 只显示“已配置/未配置”，不会回显密钥。配置更新使用 revision 检查和原子替换。

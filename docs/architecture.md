@@ -1,6 +1,6 @@
 # Isla 当前架构
 
-本文以 `0.5.9` 源码和测试为事实源，描述主 Agent Runtime 与独立 Resource 工具子系统的当前稳定边界。
+本文以 `0.6.0` 源码和测试为事实源，描述主 Agent Runtime 与独立 Resource 工具子系统的当前稳定边界。
 
 ## 产品定位与原则
 
@@ -32,7 +32,7 @@ flowchart TD
 
 依赖方向由入口向核心和端口适配器流动。`src/core/` 不拥有 CLI、HTTP、Playwright 或具体 Provider 的生命周期；装配集中在 `src/entrypoints/` 与 `src/runtime/`。
 
-Resource 位于主 Agent Runtime 之外：
+Resource 位于主 Agent Runtime 之外。v0.6.0 仅由 Resident Host 装配 `ResourceBridgeClient`，经 `runtime.json` 中的 loopback 地址和进程间令牌调用 Resource API；CLI、本地模式和主 Agent 不直接打开 Resource SQLite 或 Scheduler。Resource 健康失败只隐藏/降级该 Capability，不阻止普通对话。
 
 ```mermaid
 flowchart LR
@@ -42,7 +42,11 @@ flowchart LR
   R -->|"Bearer + bounded JSON"| H["Resident Host structured inference"]
   H --> W["独立 resource-worker Provider"]
   W --> R
+  S["ChatSession Tool Runtime"] -->|"六个受限 Tool / Bearer / 幂等键"| B["Host Resource Bridge"]
+  B -->|"有界 HTTP JSON"| R
 ```
+
+Agent Job 创建在 Resource SQLite 的幂等事务中写入稳定 Job 引用；Agent Tool 只接收安全 Job 快照和 Artifact 元数据。Resource SQLite 仍是 Job 状态事实源，Session 不是后台任务日志。密码、分享码与验证码不通过 Agent Tool 传递，继续使用 Resource UI 的秘密输入路径。
 
 Resource 是独立工具子系统，不是主 Agent Runtime 的第二套实现。它可以在 Worker 不可用时继续走规则或人工路径；Worker 不拥有 Session、Memory、Tool、Capability、文件系统权限或多轮 Agent Loop。
 

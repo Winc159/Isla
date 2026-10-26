@@ -22,6 +22,7 @@ export interface CapabilityInventoryEntry {
 }
 
 export interface CapabilityPolicy {
+  readonly resourceEnabled?: boolean;
   readonly skillAllow?: readonly string[];
   readonly skillDeny?: readonly string[];
   readonly mcpServerAllow?: readonly string[];

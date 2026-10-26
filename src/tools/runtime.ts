@@ -10,7 +10,7 @@ export class ToolRuntime {
     private readonly registry: ToolRegistry,
     private readonly options: { readonly approvalPolicy?: ApprovalPolicy | undefined; readonly approvalService?: ApprovalService | undefined; readonly permissionPreset?: PermissionPreset | undefined; readonly onApproved?: ((toolName: string) => void) | undefined } = {},
   ) {}
-  async execute(call: ToolCall, options: { readonly signal?: AbortSignal; readonly webFetchAllowedUrls?: readonly string[] } = {}): Promise<ToolExecutionResult> {
+  async execute(call: ToolCall, options: { readonly signal?: AbortSignal; readonly webFetchAllowedUrls?: readonly string[]; readonly toolCallId?: string } = {}): Promise<ToolExecutionResult> {
     if (options.signal?.aborted) return cancelledResult();
     const tool = this.registry.get(call.name);
     if (!tool) return { ok: false, code: "UNKNOWN_TOOL", message: `Unknown tool: ${call.name}` };
@@ -36,7 +36,7 @@ export class ToolRuntime {
     if (options.signal?.aborted) return cancelledResult();
     this.options.onApproved?.(call.name);
     try {
-      const result = await tool.execute(call.arguments, options);
+      const result = await tool.execute(call.arguments, { ...options, toolCallId: call.id });
       if (options.signal?.aborted) return cancelledResult();
       return normalizeToolSuccess(result);
     } catch (error) {

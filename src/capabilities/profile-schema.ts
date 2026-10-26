@@ -4,7 +4,8 @@ export function parseCapabilityProfileSettings(name: string, value: unknown, war
   if (!isRecord(value)) throw new Error(`Isla profile ${name}.capabilities must be an object`);
   const arrays = ['skillAllow', 'skillDeny', 'mcpServerAllow', 'mcpServerDeny', 'mcpToolAllow', 'mcpToolDeny'] as const;
   const result: Record<string, unknown> = {};
-  warnUnknown(value, [...arrays, 'maxTools', 'maxSchemaBytes', 'maxSkillDescriptionChars', 'maxSkillCatalogChars'], `profile ${name}.capabilities`);
+  warnUnknown(value, [...arrays, 'resourceEnabled', 'maxTools', 'maxSchemaBytes', 'maxSkillDescriptionChars', 'maxSkillCatalogChars'], `profile ${name}.capabilities`);
+  if (value.resourceEnabled !== undefined) { if (typeof value.resourceEnabled !== 'boolean') throw new Error(`Isla profile ${name}.capabilities.resourceEnabled must be boolean`); result.resourceEnabled = value.resourceEnabled; }
   for (const key of arrays) {
     if (value[key] === undefined) continue;
     if (!Array.isArray(value[key]) || (value[key] as unknown[]).some(item => typeof item !== 'string' || !item.trim())) throw new Error(`Isla profile ${name}.capabilities.${key} must be an array of strings`);

@@ -6,7 +6,7 @@ export interface Tool {
   readonly definition: ToolDefinition;
   readonly permission?: ToolPermission;
   describe?(argumentsJson: string, options?: { readonly signal?: AbortSignal; readonly webFetchAllowedUrls?: readonly string[] }): string | Promise<string>;
-  execute(argumentsJson: string, options?: { readonly signal?: AbortSignal; readonly webFetchAllowedUrls?: readonly string[] }): Promise<string | ToolOutput>;
+  execute(argumentsJson: string, options?: { readonly signal?: AbortSignal; readonly webFetchAllowedUrls?: readonly string[]; readonly toolCallId?: string }): Promise<string | ToolOutput>;
 }
 
 export interface ProjectSearchToolSource { readonly id: string; readonly path: string; readonly startLine: number; readonly endLine: number; }

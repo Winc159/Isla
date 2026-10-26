@@ -1,6 +1,6 @@
 # Isla
 
-Isla 是一个使用 TypeScript 开发的个人 Agent Runtime。目前通过 CLI 提供连续对话，并提供独立 Resource Web 工具台；支持 OpenAI、DeepSeek、阿里云百炼和兼容 OpenAI 接口的本地模型服务。当前工作区版本为 `0.5.9`，无参数 CLI 默认连接 Resident Host，支持远程交互、Session 历史与只读运行诊断。
+Isla 是一个使用 TypeScript 开发的个人 Agent Runtime。目前通过 CLI 提供连续对话，并提供独立 Resource Web 工具台；支持 OpenAI、DeepSeek、阿里云百炼和兼容 OpenAI 接口的本地模型服务。当前工作区版本为 `0.6.0`，无参数 CLI 默认连接 Resident Host；主 Agent 可通过受限 Resource Bridge 查询和管理长期 Job。
 
 Isla 由常驻 Resident Host、Resource Service 和轻量 CLI 客户端组成。Host 持有 Session、Memory、Provider 和 Agent Runtime；关闭 CLI 不会结束后台服务或 Resource 任务。
 
@@ -29,13 +29,13 @@ npm pack
 以上命令会在项目根目录生成当前版本的 Isla npm tarball。将该文件复制到目标主机后全局安装：
 
 ```bash
-npm install --global ./winc159-isla-0.5.9.tgz
+npm install --global ./winc159-isla-0.6.0.tgz
 isla
 ```
 
 ### Resource 归档工具
 
-v0.5 Resource 工具箱拆成两个可独立维护、可单独运行的工具：
+Resource 工具箱拆成两个可独立维护、可单独运行的工具：
 
 - `百度下载`：一次粘贴一段或多段分享信息，或浏览已登录账号的 `/apps/bdpan` 目录并多选文件；每个资源会成为独立 Job 并自动进入并发下载，只有无效或歧义输入才等待人工修正；
 - `文件解压/整理`：选择需要长期整理的受管文件夹和输出目录，立即扫描并周期发现新增归档；识别改后缀/分卷归档，解压后按确定性规则命名和发布。
@@ -90,7 +90,7 @@ npm run test:archive:fixtures
 也可以不全局安装，直接执行：
 
 ```bash
-npx --package ./winc159-isla-0.5.9.tgz isla
+npx --package ./winc159-isla-0.6.0.tgz isla
 ```
 
 安装包不包含 API Key、Profile、Session、Memory、测试文件或本地评估资料。首次运行会在当前用户目录创建 `~/.isla/`。不要把 Windows 上的 `~/.isla/` 私人配置和会话打入安装包后传到其他主机。
@@ -192,7 +192,7 @@ Linux x64 和 macOS ARM64 的完成验收必须在对应目标系统上执行，
 
 ```bash
 node --version
-npm install --global ./winc159-isla-0.5.9.tgz
+npm install --global ./winc159-isla-0.6.0.tgz
 isla
 printf '{"type":"exit"}\n' | isla --protocol ndjson
 ```

@@ -63,9 +63,9 @@ describe('config file v1', () => {
     expect(profileToAppConfig(file.profiles.main)).toMatchObject({ webFetch: { enabled: false, allowedHosts: [] } });
   });
   it('parses capability composition policy and projects it to AppConfig', () => {
-    const file = parseConfigFile(JSON.stringify({ version: 1, profiles: { main: { provider: 'deepseek', model: 'deepseek-chat', apiKey: 'test-only-key', capabilities: { skillDeny: ['unsafe'], mcpServerAllow: ['research'], maxTools: 8 } } } }));
-    expect(file.profiles.main?.capabilities).toEqual({ skillDeny: ['unsafe'], mcpServerAllow: ['research'], maxTools: 8 });
-    expect(profileToAppConfig(file.profiles.main!)).toMatchObject({ capabilityPolicy: { skillDeny: ['unsafe'], mcpServerAllow: ['research'], maxTools: 8 } });
+    const file = parseConfigFile(JSON.stringify({ version: 1, profiles: { main: { provider: 'deepseek', model: 'deepseek-chat', apiKey: 'test-only-key', capabilities: { resourceEnabled: false, skillDeny: ['unsafe'], mcpServerAllow: ['research'], maxTools: 8 } } } }));
+    expect(file.profiles.main?.capabilities).toEqual({ resourceEnabled: false, skillDeny: ['unsafe'], mcpServerAllow: ['research'], maxTools: 8 });
+    expect(profileToAppConfig(file.profiles.main!)).toMatchObject({ capabilityPolicy: { resourceEnabled: false, skillDeny: ['unsafe'], mcpServerAllow: ['research'], maxTools: 8 } });
   });
 
   it('normalizes and freezes an enabled web fetch allowlist', () => {

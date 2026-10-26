@@ -157,3 +157,12 @@
 - 安全与兼容：实时事件不包含 Tool 原始参数、Tool 结果正文或 Provider 原始错误；旧 JSON `/quick` 在迁移期继续可用。
 - 代价：实时输出仅在当前连接中可见；客户端断开后不能续看。
 - 重新评估：完整交互 CLI 需要远程审批/提问时增加绑定当前 Turn 的请求/响应事件；只有出现跨重连恢复需求时才评估持久事件游标。
+
+## D19 Resource Job Bridge 保持为受限 Host Capability
+
+- 背景：主 Agent 需要创建和检查跨 Session 生命周期的 Resource Job，但 Resource Service 已拥有可靠的 SQLite、Scheduler、Approval 和人工决定状态机。
+- 决策：只在 Resident Host 装配六个 Job/Artifact Tool，经 loopback HTTP 调用 Resource；不把 SQLite、Scheduler、Worker 或任意文件路径注入 Agent。Profile 可用 `capabilities.resourceEnabled: false` 关闭这组工具。
+- 理由：Resource SQLite 继续作为 Job 事实源；Session 只保存 Tool 引用和当前结论，Host/CLI 退出不影响 Job。
+- 幂等：Host 从 Session、Turn 和 Tool Call 身份派生 SHA-256 键；Resource 在 SQLite 事务内同时写入 Job 与幂等响应。记录随 Resource 数据库保留，不自动过期。
+- 秘密边界：分享码、压缩包密码和登录验证码不经过 Agent Tool 参数，因为模型 Tool Call 会持久化到 Session；对应决定继续由 Resource UI 的秘密输入路径完成。
+- 重新评估：存在无需把秘密交给模型的受控用户输入通道，且实测 Resource Job 查询/重试语义稳定后，才考虑扩展远程秘密决定协议或幂等记录清理策略。

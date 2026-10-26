@@ -35,6 +35,7 @@ export interface ResidentHostOptions {
 }
 
 export type HostTurnObservers = {
+  readonly turnId: string;
   readonly onModelStepEvent: (event: ModelStepEvent) => void;
   readonly onToolStarted: (tool: string, callId: string) => void;
   readonly onToolFinished: (tool: string, callId: string, result: ToolExecutionResult) => void;
@@ -123,13 +124,13 @@ export class ResidentHost {
       if (request.method === 'GET' && match[2] === 'context') { const limits = this.options.contextLimits ?? { maxContextTurns: DEFAULT_MAX_CONTEXT_TURNS, maxContextChars: DEFAULT_MAX_CONTEXT_CHARS, maxContextTokens: 0, maxOutputTokens: 0, contextReserveTokens: 0, contextRetainTurns: DEFAULT_CONTEXT_RETAIN_TURNS }; const checkpoint = 'context' in session ? session.context?.checkpoint : undefined; const report = measureContextBudget(session.messages, { maxTurns: limits.maxContextTurns, maxChars: limits.maxContextChars }, checkpoint); const estimatedTokens = estimateRequestTokens({ messages: session.messages }); this.send(response, 200, { ...report, estimatedTokens, maxContextTokens: limits.maxContextTokens, maxOutputTokens: limits.maxOutputTokens, contextReserveTokens: limits.contextReserveTokens, retainTurns: limits.contextRetainTurns }); return; }
       if (request.method === 'GET' && match[2] === 'events') { response.statusCode = 200; response.setHeader('content-type', 'text/event-stream; charset=utf-8'); response.setHeader('cache-control', 'no-cache'); response.setHeader('connection', 'keep-alive'); response.write(`event: session\ndata: ${JSON.stringify(safeSession(session))}\n\n`); response.end(); return; }
       if (request.method === 'POST' && match[2] === 'cancel') { const body = await readJson(request); const active = this.active.get(session.id); const accepted = Boolean(active && body.turnId === active.turnId && active.session.cancelActiveTurn({ kind: 'user' })); this.send(response, 200, { accepted }); return; }
-      if (request.method === 'POST' && match[2] === 'prompt') { const body = await readJson(request); let root: string | undefined; if (typeof body.workspaceRoot === 'string') { root = await resolveWorkspace(body.workspaceRoot, undefined, process.cwd()); if (!('workspaceKey' in session) || workspaceKey(root) !== session.workspaceKey) { this.send(response, 400, { error: 'WORKSPACE_MISMATCH' }); return; } } await this.prompt(session, body, response, root, request.headers.accept?.includes('application/x-ndjson') === true, request); return; }
+      if (request.method === 'POST' && match[2] === 'prompt') { const body = await readJson(request); let root: string | undefined; if (typeof body.workspaceRoot === 'string') { root = await resolveWorkspace(body.workspaceRoot, undefined, process.cwd()); if (!('workspaceKey' in session) || workspaceKey(root) !== session.workspaceKey) { this.send(response, 400, { error: 'WORKSPACE_MISMATCH' }); return; } } await this.prompt(session, body, response, root, request.headers.accept?.includes('application/x-ndjson') === true, request, true); return; }
       if (request.method === 'POST' && match[2]?.startsWith('interactions/') && match[3]) { const body = await readJson(request); const active = this.active.get(session.id); const accepted = Boolean(active && body.turnId === active.turnId && active.interactions.respond(match[3], body)); this.send(response, accepted ? 200 : 409, { accepted }); return; }
       this.send(response, 405, { error: 'METHOD_NOT_ALLOWED' });
     } catch (error) { this.send(response, 400, { error: error instanceof Error ? error.message : 'HOST_REQUEST_FAILED' }); }
   }
 
-  private async prompt(stored: StoredSession, body: Record<string, unknown>, response: ServerResponse, workspaceRoot?: string, stream = false, request?: IncomingMessage): Promise<void> {
+  private async prompt(stored: StoredSession, body: Record<string, unknown>, response: ServerResponse, workspaceRoot?: string, stream = false, request?: IncomingMessage, interactive = false): Promise<void> {
     if (typeof body.text !== 'string') { this.send(response, 400, { error: 'PROMPT_REQUIRED' }); return; }
     const promptText = body.text;
     if (!promptText.trim()) { this.send(response, 400, { error: 'PROMPT_REQUIRED' }); return; }
@@ -138,11 +139,11 @@ export class ResidentHost {
     const turnId = randomUUID();
     const interactions = new RemoteInteractions((event) => { if (stream) this.writeEvent(response, event); });
     const session = this.options.createSession(stored, workspaceRoot, stream ? {
+      turnId,
       onModelStepEvent: event => this.writeEvent(response, event),
       onToolStarted: (tool, callId) => this.writeEvent(response, { type: 'tool_start', tool, callId }),
       onToolFinished: (tool, callId, result) => this.writeEvent(response, { type: 'tool_end', tool, callId, ok: result.ok, ...(!result.ok ? { code: safeCode(result.code) } : {}) }),
-      approvalService: interactions,
-      userQuestionService: interactions,
+      ...(interactive ? { approvalService: interactions, userQuestionService: interactions } : {}),
     } : undefined);
     const active = { turnId, session, interactions };
     this.active.set(stored.id, active);

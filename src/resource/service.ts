@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { closeSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, writeSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
@@ -120,16 +120,16 @@ export class ResourceService {
       if (request.method === "DELETE" && url.pathname === "/api/v1/resource/settings/passwords") { this.send(response, 200, { deleted: this.deleteArchivePasswords(await this.readBody(request)) }); return; }
       if (request.method === "POST" && url.pathname === "/api/v1/resource/scans") { this.send(response, 202, this.scanFolder(await this.readBody(request), true)); return; }
       if (request.method === "POST" && url.pathname === "/api/v1/resource/jobs/batch") { this.send(response, 201, { jobs: this.createBatchJobs(await this.readBody(request)) }); return; }
-      if (request.method === "POST" && url.pathname === "/api/v1/resource/jobs") { this.send(response, 201, { job: this.createJob(await this.readBody(request)) }); return; }
-      if (request.method === "GET" && url.pathname === "/api/v1/resource/jobs") { this.send(response, 200, { jobs: this.listJobs() }); return; }
+      if (request.method === "POST" && url.pathname === "/api/v1/resource/jobs") { const value = await this.readBody(request); const idempotencyKey = request.headers["idempotency-key"]; if (Array.isArray(idempotencyKey)) throw new Error("IDEMPOTENCY_KEY_INVALID"); this.send(response, 201, idempotencyKey ? this.createIdempotentJob(value, idempotencyKey) : { job: this.createJob(value) }); return; }
+      if (request.method === "GET" && url.pathname === "/api/v1/resource/jobs") { const hasLimit = url.searchParams.has("limit"); const requested = hasLimit ? Number(url.searchParams.get("limit")) : undefined; const status = url.searchParams.get("status") ?? undefined; if (requested !== undefined && (!Number.isSafeInteger(requested) || requested < 1 || requested > 100)) throw new Error("JOB_LIMIT_INVALID"); if (status && !["queued", "running", "waiting_user", "cancelling", "completed", "failed", "cancelled"].includes(status)) throw new Error("JOB_STATUS_INVALID"); const jobs = this.listJobs(status, requested); this.send(response, 200, { jobs: url.searchParams.get("projection") === "agent" ? jobs.map(job => projectAgentJob(job, this.listArtifactTree(job.id))) : jobs }); return; }
       const match = url.pathname.match(/^\/api\/v1\/resource\/jobs\/([^/]+)(?:\/(cancel|confirm|retry|repeat|events|tree))?$/u);
       if (!match) { this.send(response, 404, { error: { code: "NOT_FOUND", message: "资源不存在。", retryable: false } }); return; }
       const id = decodeURIComponent(match[1]!);
-      if (request.method === "GET" && !match[2]) { const job = this.getJob(id); if (!job) { this.send(response, 404, { error: { code: "JOB_NOT_FOUND", message: "任务不存在。", retryable: false } }); return; } this.send(response, 200, { job }); return; }
+      if (request.method === "GET" && !match[2]) { const job = this.getJob(id); if (!job) { this.send(response, 404, { error: { code: "JOB_NOT_FOUND", message: "任务不存在。", retryable: false } }); return; } this.send(response, 200, { job: url.searchParams.get("projection") === "agent" ? projectAgentJob(job, this.listArtifactTree(id)) : job }); return; }
       if (request.method === "GET" && match[2] === "events") { this.send(response, 200, { events: this.listJobEvents(id) }); return; }
-      if (request.method === "GET" && match[2] === "tree") { this.send(response, 200, { tree: this.listArtifactTree(id) }); return; }
+      if (request.method === "GET" && match[2] === "tree") { const tree = this.listArtifactTree(id); const artifactId = url.searchParams.get("artifactId"); this.send(response, 200, { tree: artifactId ? tree.filter(item => item.id === artifactId) : tree }); return; }
       if (request.method === "DELETE" && !match[2]) { this.send(response, 200, { deleted: this.deleteTerminalJob(id) }); return; }
-      if (request.method === "POST" && match[2] === "cancel") { this.send(response, 200, { accepted: this.cancelJob(id) }); return; }
+      if (request.method === "POST" && match[2] === "cancel") { const value = await this.readBody(request); const revision = value && typeof value === "object" && "expectedRevision" in value ? (value as { expectedRevision?: unknown }).expectedRevision : undefined; this.send(response, 200, { accepted: this.cancelJob(id, Number.isSafeInteger(revision) ? revision as number : undefined) }); return; }
       if (request.method === "POST" && match[2] === "confirm") { this.send(response, 202, { accepted: this.confirmJob(id, await this.readBody(request)) }); return; }
       if (request.method === "POST" && match[2] === "retry") { this.send(response, 202, { accepted: this.retryJob(id, await this.readBody(request)) }); return; }
       if (request.method === "POST" && match[2] === "repeat") { this.send(response, 201, { job: this.repeatJob(id) }); return; }
@@ -207,7 +207,7 @@ export class ResourceService {
     const remove = this.db.prepare("DELETE FROM resource_archive_passwords WHERE password = ?"); let deleted = 0; for (const password of passwords) deleted += Number(remove.run(password).changes ?? 0); return deleted;
   }
 
-  private health(): Record<string, unknown> { return { ok: true, service: "resource", database: "ready", isla: { configured: true }, queue: { queued: this.count("queued"), running: this.count("running") }, externalTools: this.externalTools }; }
+  private health(): Record<string, unknown> { return { ok: true, apiVersion: 1, service: "resource", database: "ready", isla: { configured: true }, queue: { queued: this.count("queued"), running: this.count("running") }, externalTools: this.externalTools }; }
   private publicConfig(): Record<string, unknown> { return { version: 1, tools: RESOURCE_TOOLBOX, managedRoots: this.options.config.managedRoots.map(root => ({ id: root.id, label: root.label, scanEnabled: root.scanEnabled, outputEnabled: root.outputEnabled })), defaultDestinationRootId: this.options.config.defaultDestinationRootId, concurrency: this.options.config.concurrency, scanning: this.options.config.scanning }; }
   private createBatchJobs(value: unknown): readonly ResourceJobSnapshotV1[] {
     const input = parseCreateResourceJobRequestV1(value);
@@ -242,6 +242,23 @@ export class ResourceService {
       return this.getJob(id)!;
     }
     return record;
+  }
+  private createIdempotentJob(value: unknown, key: string): { readonly job: ResourceJobSnapshotV1 } {
+    if (typeof key !== "string" || !/^[a-f0-9]{64}$/u.test(key)) throw new Error("IDEMPOTENCY_KEY_INVALID");
+    const input = parseCreateResourceJobRequestV1(value);
+    const normalized = { ...input, startMode: "after-preview" as const };
+    const requestHash = createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
+    const existing = this.db.prepare("SELECT request_hash, response_json FROM resource_idempotency WHERE scope = 'agent' AND key = ?").get(key) as { request_hash: string; response_json: string } | undefined;
+    if (existing) { if (existing.request_hash !== requestHash) throw new Error("IDEMPOTENCY_CONFLICT"); return JSON.parse(existing.response_json) as { job: ResourceJobSnapshotV1 }; }
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const again = this.db.prepare("SELECT request_hash, response_json FROM resource_idempotency WHERE scope = 'agent' AND key = ?").get(key) as { request_hash: string; response_json: string } | undefined;
+      if (again) { if (again.request_hash !== requestHash) throw new Error("IDEMPOTENCY_CONFLICT"); const response = JSON.parse(again.response_json) as { job: ResourceJobSnapshotV1 }; this.db.exec("COMMIT"); return response; }
+      const response = { job: this.createJob(normalized) };
+      this.db.prepare("INSERT INTO resource_idempotency (scope, key, request_hash, response_json, created_at) VALUES ('agent', ?, ?, ?, ?)").run(key, requestHash, JSON.stringify(response), new Date().toISOString());
+      this.db.exec("COMMIT");
+      return response;
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 
   private async enrichShareParse(id: string, rawText: string, ruleResult: ReturnType<typeof parseResourceShareText>): Promise<void> {
@@ -368,7 +385,7 @@ export class ResourceService {
     const watches = this.db.prepare("SELECT managed_root_id, relative_path, destination_root_id FROM resource_folder_watches WHERE enabled = 1").all() as unknown as Array<{ managed_root_id: string; relative_path: string; destination_root_id: string }>;
     for (const watch of watches) { try { this.scanFolder({ managedRootId: watch.managed_root_id, relativePath: watch.relative_path, destinationRootId: watch.destination_root_id }, force); } catch { /* 单个目录不可用不阻塞其他 watch，下次周期继续 */ } }
   }
-  private listJobs(): readonly ResourceJobSnapshotV1[] { return (this.db.prepare("SELECT * FROM resource_jobs ORDER BY updated_at DESC").all() as unknown as JobRow[]).map(row => this.toJob(row)); }
+  private listJobs(status?: string, limit?: number): readonly ResourceJobSnapshotV1[] { const sqlLimit = limit === undefined ? "" : " LIMIT ?"; const rows = status ? this.db.prepare(`SELECT * FROM resource_jobs WHERE status = ? ORDER BY updated_at DESC${sqlLimit}`).all(...(limit === undefined ? [status] : [status, limit])) : this.db.prepare(`SELECT * FROM resource_jobs ORDER BY updated_at DESC${sqlLimit}`).all(...(limit === undefined ? [] : [limit])); return (rows as unknown as JobRow[]).map(row => this.toJob(row)); }
   private recoverQueuedJobs(): void {
     const rows = this.db.prepare("SELECT id, source, status, stage, input_json, parse_result_json FROM resource_jobs WHERE status IN ('queued','running') ORDER BY updated_at ASC").all() as unknown as Array<{ id: string; source: string; status: string; stage: ResourceJobSnapshotV1["stage"]; input_json: string; parse_result_json: string | null }>;
     for (const row of rows) {
@@ -406,6 +423,14 @@ export class ResourceService {
     const pending = JSON.parse(row.pending_decision_json) as ResourceJobSnapshotV1["pendingDecision"];
     if (decision.revision !== row.revision || decision.decisionId !== pending?.id) throw new Error("DECISION_STALE");
     if (decision.action === "reject") return this.cancelJob(id);
+    if (decision.action === "choose_destination") {
+      const destinationRootId = typeof decision.values?.destinationRootId === "string" ? decision.values.destinationRootId : "";
+      const destination = this.options.config.managedRoots.find(root => root.id === destinationRootId && root.outputEnabled);
+      if (!destination) throw new Error("DESTINATION_ROOT_INVALID");
+      const nextPending = { ...pending, id: randomUUID(), message: "已选择输出目录，请继续确认任务预览。", actions: pending.actions.filter(action => action !== "choose_destination") };
+      this.db.prepare("UPDATE resource_jobs SET revision = revision + 1, destination_root_id = ?, pending_decision_json = ?, updated_at = ? WHERE id = ?").run(destinationRootId, JSON.stringify(nextPending), new Date().toISOString(), id);
+      return true;
+    }
     if (decision.action === "provide_values" && pending.type === "provide_archive_password") {
       const supplied = [decision.values?.password, ...(Array.isArray(decision.values?.passwords) ? decision.values.passwords : [])].filter((value): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 256).map(value => value.trim());
       if (supplied.length === 0) throw new Error("ARCHIVE_PASSWORD_REQUIRED");
@@ -578,7 +603,7 @@ export class ResourceService {
       this.setStage(id, "extracting", "running");
       return this.options.archiveOrganizer!.organize({ archivePath: nested, stagingPath: join(stagingPath, "inner-stage"), outputPath, passwordCandidates }, signal);
     });
-    void extraction.promise.then(extracted => { if (extracted.successfulPasswordIndex !== undefined) this.recordSuccessfulPassword(passwordCandidates[extracted.successfulPasswordIndex]); this.completeJob(id, extracted.totalBytes); }).catch(error => this.handleJobError(id, error, "inspecting"));
+    void extraction.promise.then(extracted => { if (extracted.successfulPasswordIndex !== undefined) this.recordSuccessfulPassword(passwordCandidates[extracted.successfulPasswordIndex]); const sourceArtifact = this.recordArtifact(id, relative(downloadDirectory, downloadPath!), "archive", "validated"); this.recordArtifact(id, relative(destinationRoot.path, extracted.outputPath), "extracted", "completed", sourceArtifact, { fileCount: extracted.files.length, totalBytes: extracted.totalBytes }); this.completeJob(id, extracted.totalBytes); }).catch(error => this.handleJobError(id, error, "inspecting"));
   }
   private completeJob(id: string, totalBytes: number): void { this.cleanupIntermediateStaging(id); const now = new Date().toISOString(); this.db.prepare("UPDATE resource_jobs SET status = 'completed', stage = 'completed', revision = revision + 1, progress_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({ ratio: 1, completedBytes: totalBytes, totalBytes }), now, id); }
   private cleanupIntermediateStaging(id: string): void { rmSync(join(this.options.config.stagingPath, id, "extracted"), { recursive: true, force: true }); this.appendJobEvent(id, "resource.intermediates_removed", { path: "extracted" }); }
@@ -641,7 +666,7 @@ export class ResourceService {
     return true;
   }
   private setStage(id: string, stage: ResourceJobSnapshotV1["stage"], status: ResourceJobSnapshotV1["status"]): void { this.db.prepare("UPDATE resource_jobs SET status = ?, stage = ?, revision = revision + 1, updated_at = ? WHERE id = ?").run(status, stage, new Date().toISOString(), id); }
-  private cancelJob(id: string): boolean { const row = this.db.prepare("SELECT status, revision FROM resource_jobs WHERE id = ?").get(id) as { status?: string; revision?: number } | undefined; if (!row || row.status === "completed" || row.status === "failed" || row.status === "cancelled") return false; const now = new Date().toISOString(); this.db.prepare("UPDATE resource_jobs SET status = 'cancelled', revision = revision + 1, updated_at = ? WHERE id = ?").run(now, id); this.db.prepare("INSERT INTO resource_events (id, job_id, sequence, type, data_json, occurred_at) SELECT ?, id, COALESCE((SELECT MAX(sequence) + 1 FROM resource_events WHERE job_id = resource_jobs.id), 1), 'job.cancelled', '{}', ? FROM resource_jobs WHERE id = ?").run(randomUUID(), now, id); return true; }
+  private cancelJob(id: string, expectedRevision?: number): boolean { const row = this.db.prepare("SELECT status, revision FROM resource_jobs WHERE id = ?").get(id) as { status?: string; revision?: number } | undefined; if (!row || row.status === "completed" || row.status === "failed" || row.status === "cancelled") return false; if (expectedRevision !== undefined && expectedRevision !== row.revision) throw new Error("JOB_REVISION_STALE"); const now = new Date().toISOString(); this.db.prepare("UPDATE resource_jobs SET status = 'cancelled', revision = revision + 1, updated_at = ? WHERE id = ?").run(now, id); this.db.prepare("INSERT INTO resource_events (id, job_id, sequence, type, data_json, occurred_at) SELECT ?, id, COALESCE((SELECT MAX(sequence) + 1 FROM resource_events WHERE job_id = resource_jobs.id), 1), 'job.cancelled', '{}', ? FROM resource_jobs WHERE id = ?").run(randomUUID(), now, id); return true; }
   private deleteTerminalJob(id: string): boolean { const row = this.db.prepare("SELECT status FROM resource_jobs WHERE id = ?").get(id) as { status?: string } | undefined; if (!row) return false; if (!['completed', 'failed', 'cancelled'].includes(row.status ?? '')) throw new Error("JOB_NOT_TERMINAL"); this.db.exec("BEGIN IMMEDIATE"); try { this.db.prepare("UPDATE resource_file_ledger SET job_id = NULL WHERE job_id = ?").run(id); this.db.prepare("DELETE FROM resource_jobs WHERE id = ?").run(id); this.db.exec("COMMIT"); rmSync(join(this.options.config.stagingPath, id), { recursive: true, force: true }); return true; } catch (error) { this.db.exec("ROLLBACK"); throw error; } }
   private repeatJob(id: string): ResourceJobSnapshotV1 { const row = this.db.prepare("SELECT status, input_json FROM resource_jobs WHERE id = ?").get(id) as { status?: string; input_json?: string } | undefined; if (!row?.input_json || !['completed', 'failed', 'cancelled'].includes(row.status ?? '')) throw new Error("JOB_NOT_REPEATABLE"); const input = parseCreateResourceJobRequestV1(JSON.parse(row.input_json) as unknown); return this.createJob({ ...input, startMode: "automatic" }); }
   private toJob(row: JobRow): ResourceJobSnapshotV1 { return { version: 1, id: row.id, revision: row.revision, source: row.source as ResourceJobSnapshotV1["source"], status: row.status as ResourceJobSnapshotV1["status"], stage: row.stage as ResourceJobSnapshotV1["stage"], destinationRootId: row.destination_root_id, createdAt: row.created_at, updatedAt: row.updated_at, progress: JSON.parse(row.progress_json) as ResourceJobSnapshotV1["progress"], ...(row.model_snapshot_json ? { modelSnapshot: JSON.parse(row.model_snapshot_json) as NonNullable<ResourceJobSnapshotV1["modelSnapshot"]> } : {}), ...(row.pending_decision_json ? { pendingDecision: JSON.parse(row.pending_decision_json) as NonNullable<ResourceJobSnapshotV1["pendingDecision"]> } : {}), ...(row.failure_json ? { failure: JSON.parse(row.failure_json) as NonNullable<ResourceJobSnapshotV1["failure"]> } : {}) }; }
@@ -712,4 +737,15 @@ function classifyBaiduDownloadFailure(result: BaiduDownloadResult): string {
   if (/风控|risk control|risk_control/iu.test(detail)) return "BDPAN_RISK_CONTROL";
   if (/token|登录|认证|unauth/iu.test(detail)) return "BDPAN_AUTH_REQUIRED";
   return "BAIDU_DOWNLOAD_FAILED";
+}
+
+function projectAgentJob(job: ResourceJobSnapshotV1, artifacts: readonly Record<string, unknown>[] = []): Record<string, unknown> {
+  return {
+    version: job.version, id: job.id, revision: job.revision, source: job.source, status: job.status, stage: job.stage,
+    destinationRootId: job.destinationRootId, createdAt: job.createdAt, updatedAt: job.updatedAt,
+    progress: { ...(job.progress.ratio === undefined ? {} : { ratio: job.progress.ratio }), ...(job.progress.completedBytes === undefined ? {} : { completedBytes: job.progress.completedBytes }), ...(job.progress.totalBytes === undefined ? {} : { totalBytes: job.progress.totalBytes }) },
+    artifacts: artifacts.slice(0, 20).map(artifact => ({ id: artifact.id, kind: artifact.kind, path: artifact.path, ...(typeof artifact.sizeBytes === "number" ? { sizeBytes: artifact.sizeBytes } : {}), status: artifact.status, ...(typeof artifact.parentId === "string" ? { parentId: artifact.parentId } : {}) })),
+    ...(job.pendingDecision ? { pendingDecision: { id: job.pendingDecision.id, type: job.pendingDecision.type, actions: job.pendingDecision.actions.slice(0, 8) } } : {}),
+    ...(job.failure ? { failure: { code: job.failure.code, retryable: job.failure.retryable, ...(job.failure.resumeStage ? { resumeStage: job.failure.resumeStage } : {}) } } : {}),
+  };
 }

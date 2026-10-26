@@ -81,6 +81,7 @@ describe('resident host', () => {
     while (!first.includes('\n')) first += decoder.decode((await reader.read()).value);
     const start = JSON.parse(first.trim().split('\n')[0]!) as { sessionId: string; turnId: string; type: string };
     expect(start.type).toBe('turn_start');
+    expect(observer?.approvalService).toBeUndefined();
     observer!.onModelStepEvent({ type: 'model_delta', step: 1, attempt: 1, provisional: true, text: 'partial' });
     const stale = await fetch(`http://${address.host}:${address.port}/sessions/${start.sessionId}/cancel`, { method: 'POST', headers: { authorization: 'Bearer stream-token', 'content-type': 'application/json' }, body: JSON.stringify({ turnId: 'old-turn' }) });
     expect(await stale.json()).toEqual({ accepted: false });

@@ -11,19 +11,18 @@ Isla 的目标是成为长期运行、贴合个人习惯的 Agent Runtime，不�
 - `isla <问题>` 恢复当前 workspace 最近会话；`--new` 创建新会话。
 - 远程交互 CLI 可实时显示模型文本、安全 Tool 阶段，执行远程 Approval/User Question，并按 `sessionId + turnId` 精确取消。
 - `/sessions`、`/memory`、`/trace`、`/context` 由 Host 提供有界查询；CLI 不直接读取 Host 持久化数据。
-- Resource Service 独立处理下载、归档、整理和可选 Worker 推理。
+- Resource Service 独立处理下载、归档、整理和可选 Worker 推理；Resident Host 通过六个受限 Tool 管理现有 Job，Resource SQLite 保持状态事实源。
 - Linux systemd user service 管理 Host 与 Resource。
 
 ## 近期
 
 1. 在 Linux x64/N100 实机验证安装、systemd、linger、重启恢复和日志。
 2. 验证 Host 与 Resource 长期运行时的资源占用、数据库恢复和失败降级。
-3. 在 Linux x64/N100 实机验证远程交互 CLI 与多 Session 切换。
+3. 验证 Resource Bridge 幂等创建、Session 切换与 Host/CLI 重启后的 Job 连续性。
 4. 建立公开 npm 发布前的版本、打包和跨平台门禁。
 
 ## 中期
 
-- 让 Resource 成为主 Agent 可显式调用的受控能力，同时保持独立 Job 生命周期（v0.6.0）。
 - 根据真实个人使用场景扩展长期任务、提醒和后台执行，而不是预建通用 Workflow 平台。
 - 改进 Memory 的个人偏好提取、修订、来源和可解释检索。
 - 完成 macOS ARM64 常驻服务与跨设备配置迁移验证。
