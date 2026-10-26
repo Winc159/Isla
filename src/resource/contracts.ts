@@ -165,6 +165,7 @@ export interface ResourceJobSnapshotV1 {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly progress: { readonly ratio?: number; readonly completedBytes?: number; readonly totalBytes?: number; readonly currentItem?: string };
+  readonly parseResult?: Record<string, unknown>;
   readonly modelSnapshot?: ResourceModelSnapshotV1;
   readonly pendingDecision?: ResourceDecisionV1;
   readonly failure?: { readonly code: string; readonly message: string; readonly retryable: boolean; readonly resumeStage?: ResourceStageV1 };

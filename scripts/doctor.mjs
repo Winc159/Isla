@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 const required = [['node', 'Node.js runtime']];
-const optional = [['7z', '7-Zip compatibility command'], ['unrar', 'RAR fallback'], ['bdpan', 'Baidu Pan runner']];
+const optional = [['7z', '7-Zip compatibility command'], ['unrar', 'RAR fallback'], ['wimlib-imagex', 'WIM image support'], ['bdpan', 'Baidu Pan runner']];
 let failed = false;
 for (const [command, label] of required) { const path = find(command); if (!path) { failed = true; console.error(`[doctor] missing ${label}: ${command}`); } else console.log(`[doctor] ok ${label}: ${path}`); }
 for (const [command, label] of optional) { const path = find(command); console.log(`[doctor] ${path ? 'ok' : 'optional-missing'} ${label}: ${path ?? command}`); }

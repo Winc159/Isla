@@ -3,8 +3,9 @@ import { spawn } from "node:child_process";
 export interface ExternalToolSpec { readonly id: string; readonly commands: readonly string[]; readonly versionArgs: readonly string[]; readonly minimumVersion?: string; readonly required: boolean; }
 export interface ExternalToolReport { readonly id: string; readonly status: "available" | "missing" | "failed"; readonly command?: string; readonly version?: string; readonly reason?: string; }
 export const RESOURCE_EXTERNAL_TOOLS: readonly ExternalToolSpec[] = [
-  { id: "archive-primary", commands: ["7zz", "7z"], versionArgs: ["-version"], required: true },
+  { id: "archive-primary", commands: ["7zz", "7z"], versionArgs: ["i"], required: true },
   { id: "archive-rar-fallback", commands: ["unrar"], versionArgs: ["-version"], required: false },
+  { id: "archive-wim", commands: ["wimlib-imagex"], versionArgs: ["--version"], required: false },
 ];
 export async function probeExternalTool(spec: ExternalToolSpec, runner: (command: string, args: readonly string[]) => Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }> = runCommand): Promise<ExternalToolReport> {
   for (const command of spec.commands) { try { const result = await runner(command, spec.versionArgs); if (result.code === 0) return { id: spec.id, status: "available", command, version: sanitizeVersion(result.stdout || result.stderr) }; } catch { /* 尝试同一能力的下一个候选命令 */ } }
