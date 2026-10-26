@@ -415,9 +415,12 @@ export class ChatSession {
     readonly readOnlyObservationRounds: number;
   }): Promise<{ readonly next: Message[]; readonly readOnlyObservationRounds: number; readonly response?: ModelResponse }> {
     let readOnlyObservationRounds = input.readOnlyObservationRounds;
+    const controlNames = new Set(['submit_result', 'report_blocked', 'propose_replan']);
+    const deferredControlCalls = input.calls.length > 1 ? input.calls.filter(call => controlNames.has(call.name)) : [];
+    const executableCalls = deferredControlCalls.length ? input.calls.filter(call => !controlNames.has(call.name)) : input.calls;
     this.setTurnPhase("executing_tools", { round: input.round });
-    for (let callIndex = 0; callIndex < input.calls.length; callIndex += 1) {
-      const call = input.calls[callIndex]!;
+    for (let callIndex = 0; callIndex < executableCalls.length; callIndex += 1) {
+      const call = executableCalls[callIndex]!;
       this.setTurnPhase("executing_tools", { round: input.round, tool: call.name });
       const writeKey = `${call.name}:${call.arguments}`;
       await this.onSessionEvent?.({ type: "tool_call", callId: call.id, tool: call.name, arguments: call.arguments });
@@ -427,7 +430,7 @@ export class ChatSession {
         this.onToolFinished?.(call.name, call.id, duplicateResult);
         await this.onSessionEvent?.({ type: "tool_result", callId: call.id, tool: call.name, result: duplicateResult });
         await this.appendMessage({ role: "tool", toolCallId: call.id, content: duplicateResult.content });
-        await this.appendSkippedToolResults(input.calls.slice(callIndex + 1), "相同写入已完成，本批次其余调用未执行。");
+        await this.appendSkippedToolResults([...executableCalls.slice(callIndex + 1), ...deferredControlCalls], "相同写入已完成，本批次其余调用未执行。", input.next);
         return { next: input.next, readOnlyObservationRounds, response: { text: "写入已完成，已停止重复写入。", outcome: "completed", evidence: input.evidence, ...(input.responseModel ? { model: input.responseModel } : {}) } };
       }
       let terminalResponse: ModelResponse | undefined;
@@ -468,6 +471,35 @@ export class ChatSession {
             execution = { ...execution, content: `任务状态已保存：${summary.status}，步骤 ${summary.completedSteps}/${summary.totalSteps}，阻塞 ${summary.blockerCount}。` };
           } catch (error) { execution = { ok: false, code: "EXECUTION_FAILED", message: error instanceof Error ? error.message : "TaskState update failed" }; }
         }
+        if (execution.ok && execution.details?.type === "settlement_proposal") {
+          const proposal = execution.details.proposal;
+          if (proposal.kind === 'submit' && proposal.text?.trim()) {
+            // The model may only submit a candidate. Runtime owns the terminal
+            // outcome; v0.6.1 accepts a non-empty candidate after tool results
+            // have been observed and never trusts a model-supplied status.
+            terminalResponse = {
+              text: proposal.text.trim(),
+              outcome: 'completed',
+              ...(input.evidence.length ? { evidence: input.evidence } : {}),
+              ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}),
+              ...(input.responseModel ? { model: input.responseModel } : {}),
+            };
+          } else if (proposal.kind === 'blocked' && proposal.reason?.trim() && proposal.attempts?.length) {
+            const detail = proposal.needsUser ? `${proposal.reason.trim()}；需要用户：${proposal.needsUser.trim()}` : proposal.reason.trim();
+            terminalResponse = { text: `当前无法安全完成：${detail}`, outcome: 'blocked', ...(input.evidence.length ? { evidence: input.evidence } : {}), ...(input.responseModel ? { model: input.responseModel } : {}) };
+          } else {
+            execution = { ok: false, code: 'EXECUTION_FAILED', message: 'CONTROL_SETTLEMENT_INVALID' };
+          }
+        }
+        if (execution.ok && execution.details?.type === "replan_proposal") {
+          const proposal = execution.details;
+          const currentRevision = input.round;
+          if (proposal.strategyRevision <= currentRevision) {
+            execution = { ok: false, code: 'EXECUTION_FAILED', message: 'REPLAN_REVISION_NOT_NEW' };
+          } else {
+            execution = { ...execution, content: `重规划已记录（策略 ${proposal.strategyRevision}）：${proposal.summary}；下一步：${proposal.nextStep}` };
+          }
+        }
         if (actionTurn && execution.ok && execution.details?.type === "command_execution" && execution.details.purpose === "verification") (actionTurn.actions as TurnActionRecord[]).push({ type: "verification", step: input.round, outcome: execution.details.exitCode === 0 && !execution.details.timedOut && !execution.details.aborted && execution.details.signal === null ? "passed" : "failed" });
         if (!execution.ok) {
           if (execution.code === "USER_REJECTED") terminalResponse = { text: "用户拒绝了工具调用，已停止本轮执行。", outcome: "blocked", evidence: input.evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}), ...(input.responseModel ? { model: input.responseModel } : {}) };
@@ -499,7 +531,7 @@ export class ChatSession {
         await this.appendMessage({ role: 'system', content: renderedCards });
       }
       if (terminalResponse) {
-        await this.appendSkippedToolResults(input.calls.slice(callIndex + 1), "本批次前序调用已使执行停止。", input.next);
+        await this.appendSkippedToolResults([...executableCalls.slice(callIndex + 1), ...deferredControlCalls], "本批次前序调用已使执行停止。", input.next);
         return { next: input.next, readOnlyObservationRounds, response: terminalResponse };
       }
       const progress = evaluateToolProgress(call.name, execution);
@@ -517,6 +549,7 @@ export class ChatSession {
         return { next: input.next, readOnlyObservationRounds, response: { text: `工具 ${call.name} 连续失败，错误类型为 ${execution.code}，原因：${execution.message.slice(0, 240)}。已停止重复重试。`, outcome: "blocked", ...(input.responseModel ? { model: input.responseModel } : {}) } };
       }
     }
+    if (deferredControlCalls.length) await this.appendSkippedToolResults(deferredControlCalls, "控制提案与普通工具混合，本轮未调度；请基于最新 Tool Result 在下一步重新提交。", input.next);
     return { next: input.next, readOnlyObservationRounds };
   }
 

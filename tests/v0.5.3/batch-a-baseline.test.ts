@@ -44,5 +44,8 @@ describe('v0.5.3 Batch A baseline', () => {
     expect((session as unknown as { resolveCapabilities?: unknown }).resolveCapabilities).toBeTypeOf('function');
     const resolved = await (session as unknown as { resolveCapabilities: (input: string, step: number, signal: AbortSignal) => Promise<readonly { id: string }[]> }).resolveCapabilities('读取项目文件', 0, new AbortController().signal);
     expect(resolved.some(capability => capability.id === 'capability-routing')).toBe(true);
+    expect(resolved.map(capability => capability.id)).toEqual(expect.arrayContaining([
+      'control', 'project-files', 'project-discovery', 'command-execution', 'task-state',
+    ]));
   });
 });

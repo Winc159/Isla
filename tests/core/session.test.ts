@@ -5,6 +5,7 @@ import type { Message, ModelRequest, ModelResponse, ToolResponse } from "../../s
 import { createProjectFilesCapability } from "../../src/tools/project-files.js";
 import { createCommandExecutionCapability } from "../../src/tools/command-execution.js";
 import { createTaskStateCapability } from "../../src/tools/task-state.js";
+import { createControlCapability } from "../../src/tools/control.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,16 @@ beforeEach(async () => {
 });
 afterEach(async () => { await rm(sessionRoot, { recursive: true, force: true }); });
 describe("session", () => {
+  it("settles an explicit submit proposal in the Host and ignores model terminal fields", async () => {
+    class SubmitProvider extends FakeProvider {
+      async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+        this.requests.push(request);
+        return { text: "", toolCalls: [{ id: "submit-1", name: "submit_result", arguments: JSON.stringify({ text: "已完成", status: "completed" }) }] };
+      }
+    }
+    const response = await new ChatSession(new SubmitProvider([]), { enableTools: true, capabilities: [createControlCapability()] }).send("完成这个问题");
+    expect(response).toMatchObject({ text: "已完成", outcome: "completed" });
+  });
   it("fails closed before spending a tool step when external search is unavailable", async () => {
     const provider = { id: "fake", model: "fake", async generateWithTools(): Promise<ToolResponse> { throw new Error("should not call model"); } };
     const response = await new ChatSession(provider, { enableTools: true, agentLoop: true, projectRoot: sessionRoot }).send("请搜索网上公开资料并核实这个事实");

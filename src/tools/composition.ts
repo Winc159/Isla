@@ -13,6 +13,7 @@ import type { SkillCatalog } from "../skills/catalog.js";
 import { createSkillCapability } from "./skill.js";
 import { createContextCapability } from './context.js';
 import type { Message } from '../core/types.js';
+import { createControlCapability } from './control.js';
 
 export interface ToolCompositionContext {
   readonly workspaceRoot: string;
@@ -31,6 +32,7 @@ export interface ToolCompositionContext {
 export type ToolCapabilityFactory = (context: ToolCompositionContext) => ToolCapability | undefined;
 
 const capabilityFactories: readonly ToolCapabilityFactory[] = [
+  () => createControlCapability(),
   context => createProjectFilesCapability(context.workspaceRoot),
   context => createProjectDiscoveryCapability(context.workspaceRoot),
   context => createCommandExecutionCapability(context.workspaceRoot),

@@ -176,7 +176,13 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         agentLoopTimeoutMs: config.timeoutMs ?? 600_000,
         capabilities: filtered,
         resolveCapabilities: async (input, step, signal) => {
-          const dynamic = await composeCapabilityStepSnapshot(catalog, activator, input, step, [], signal);
+          const dynamic = await composeCapabilityStepSnapshot(catalog, activator, input, step, [
+            'builtin.control',
+            'builtin.project-files',
+            'builtin.project-discovery',
+            'builtin.command-execution',
+            'builtin.task-state',
+          ], signal);
           return [...dynamic.capabilities, routingCapability];
         },
         projectRoot: workspaceRoot,
