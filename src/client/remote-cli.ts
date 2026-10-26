@@ -4,17 +4,54 @@ import { ResidentHostClient } from './host-client.js';
 import { loadOrCreateLocalRuntimeConfig } from '../config/local-runtime.js';
 import { workspaceKey } from '../sessions/workspace.js';
 import { resolve } from 'node:path';
+import type { HostTurnEvent } from '../host/server.js';
 
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
-function startThinking(): () => void {
-  const stream = process.stderr;
-  if (!stream.isTTY) return () => {};
-  let index = 0;
-  const render = () => stream.write(`\r${SPINNER_FRAMES[index++ % SPINNER_FRAMES.length]} 思考中…`);
-  render();
-  const timer = setInterval(render, 120);
-  return () => { clearInterval(timer); stream.write('\r\x1b[2K'); };
+async function runQuickPrompt(client: ResidentHostClient, text: string, key: string, root: string, newSession: boolean, output: Writable): Promise<void> {
+  let active: { readonly sessionId: string; readonly turnId: string } | undefined;
+  let cancelRequested = false;
+  let cancelled = false;
+  let sawDelta = false;
+  let deltaText = '';
+  const controller = new AbortController();
+  const onSigint = () => {
+    if (cancelRequested) { process.exitCode = 130; controller.abort(); return; }
+    cancelRequested = true;
+    output.write('\n正在取消本轮…\n');
+    if (active) void client.cancel(active.sessionId, active.turnId);
+  };
+  process.on('SIGINT', onSigint);
+  const onEvent = (event: HostTurnEvent) => {
+    if (event.type === 'turn_start') {
+      active = { sessionId: event.sessionId, turnId: event.turnId };
+      if (cancelRequested) void client.cancel(event.sessionId, event.turnId);
+    } else if (event.type === 'model_delta') {
+      if (!sawDelta) output.write('isla> ');
+      sawDelta = true;
+      deltaText += event.text;
+      output.write(event.text);
+    } else if (event.type === 'tool_start') {
+      if (sawDelta) output.write('\n');
+      output.write(`[工具] ${event.tool} 开始\n`);
+    } else if (event.type === 'tool_end') {
+      output.write(`[工具] ${event.tool} ${event.ok ? '完成' : '未完成'}\n`);
+    } else if (event.type === 'turn_completed') {
+      if (!sawDelta) output.write(`isla> ${event.text}`);
+      else if (event.text !== deltaText) output.write(`\n[最终回答]\n${event.text}`);
+      output.write('\n');
+    } else if (event.type === 'turn_cancelled') {
+      cancelled = true;
+    }
+  };
+  try {
+    await client.quickPromptStream({ text, workspaceKey: key, workspaceRoot: root, newSession, onEvent, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'TURN_CANCELLED') cancelled = true;
+    else if (controller.signal.aborted) cancelled = true;
+    else throw error;
+  } finally {
+    process.off('SIGINT', onSigint);
+    if (cancelled) process.exitCode = 130;
+  }
 }
 
 export interface RemoteCliInvocation {
@@ -58,11 +95,7 @@ export async function runRemoteCli(invocation: RemoteCliInvocation, input: Reada
   const root = resolve(invocation.workspaceRoot);
   const key = workspaceKey(root);
   if (invocation.prompt) {
-    const stopThinking = startThinking();
-    try {
-      const result = await client.quickPrompt(invocation.prompt, key, root, invocation.newSession);
-      output.write(`isla> ${result.text}\n`);
-    } finally { stopThinking(); }
+    await runQuickPrompt(client, invocation.prompt, key, root, invocation.newSession, output);
     return;
   }
   output.write(`Isla v0 · Resident Host · workspace=${root}\nmaster,你好，我叫（Error划掉）Isla，很高兴认识你\n输入 /new 开启新对话，输入 /sessions 选择会话，输入 /exit 或按 Esc 退出。\n\n`);
@@ -78,13 +111,10 @@ export async function runRemoteCli(invocation: RemoteCliInvocation, input: Reada
       output.write('模型配置属于启动时会话，当前 Resident Host 会话不能直接切换。请退出后使用 /models use <model-id>，再输入 /new 或重新启动 Isla。\n');
       continue;
     }
-    const stopThinking = startThinking();
     try {
-      const result = await client.quickPrompt(text, key, root, newSession);
+      await runQuickPrompt(client, text, key, root, newSession, output);
       newSession = false;
-      output.write(`isla> ${result.text}\n`);
       lines.prompt();
     } catch (error) { output.write(`Error: ${error instanceof Error ? error.message : '请求失败'}\n`); }
-    finally { stopThinking(); }
   }
 }

@@ -7,6 +7,8 @@ import type { SessionStore, StoredSession } from '../sessions/store.js';
 import type { CapabilitySnapshot } from '../capabilities/snapshot.js';
 import type { StructuredInferenceRequestV1, StructuredInferenceSuccessV1 } from '../resource/contracts.js';
 import type { Message } from '../core/types.js';
+import type { ModelStepEvent } from '../core/events.js';
+import type { ToolExecutionResult } from '../tools/types.js';
 import { workspaceKey } from '../sessions/workspace.js';
 import { resolveWorkspace } from '../config/workspace.js';
 
@@ -17,7 +19,7 @@ export interface ResidentHostOptions {
   readonly provider: string;
   readonly model: string;
   readonly sessionStore: SessionStore;
-  readonly createSession: (stored: StoredSession, workspaceRoot?: string) => ChatSession;
+  readonly createSession: (stored: StoredSession, workspaceRoot?: string, events?: HostTurnObservers) => ChatSession;
   readonly capabilitySnapshot?: () => CapabilitySnapshot;
   readonly maxActiveTurns?: number;
   readonly lockPath?: string;
@@ -25,12 +27,31 @@ export interface ResidentHostOptions {
   readonly initialMessages?: readonly Message[];
 }
 
+export type HostTurnObservers = {
+  readonly onModelStepEvent: (event: ModelStepEvent) => void;
+  readonly onToolStarted: (tool: string, callId: string) => void;
+  readonly onToolFinished: (tool: string, callId: string, result: ToolExecutionResult) => void;
+};
+
+export type HostTurnEvent =
+  | { readonly type: 'turn_start'; readonly sessionId: string; readonly turnId: string }
+  | ModelStepEvent
+  | { readonly type: 'tool_start'; readonly tool: string; readonly callId: string }
+  | { readonly type: 'tool_end'; readonly tool: string; readonly callId: string; readonly ok: boolean; readonly code?: string }
+  | { readonly type: 'turn_completed'; readonly sessionId: string; readonly turnId: string; readonly text: string; readonly outcome: string }
+  | { readonly type: 'turn_failed'; readonly sessionId: string; readonly turnId: string; readonly code: string }
+  | { readonly type: 'turn_cancelled'; readonly sessionId: string; readonly turnId: string };
+
+type ActiveTurn = { readonly turnId: string; readonly session: ChatSession };
+const MAX_EVENT_BYTES = 64 * 1024;
+const MAX_STREAM_BUFFER_BYTES = 1024 * 1024;
+
 export class ResidentHost {
   readonly token: string;
   private readonly host: string;
   private readonly port: number;
   private readonly maxActiveTurns: number;
-  private readonly active = new Map<string, ChatSession>();
+  private readonly active = new Map<string, ActiveTurn>();
   private server: Server | undefined;
   private closed = false;
   private lockHandle: Awaited<ReturnType<typeof open>> | undefined;
@@ -56,8 +77,8 @@ export class ResidentHost {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    for (const session of this.active.values()) session.cancelActiveTurn({ kind: 'shutdown' });
-    await Promise.all([...this.active.values()].map(session => session.whenIdle()));
+    for (const active of this.active.values()) active.session.cancelActiveTurn({ kind: 'shutdown' });
+    await Promise.all([...this.active.values()].map(active => active.session.whenIdle()));
     this.active.clear();
     if (this.server) await new Promise<void>(resolve => this.server!.close(() => resolve()));
     this.server = undefined;
@@ -76,7 +97,7 @@ export class ResidentHost {
       if (request.method === 'POST' && url.pathname === '/api/v1/inference/structured') { await this.structuredInference(request, response); return; }
       if (request.method === 'GET' && url.pathname === '/capabilities') { this.send(response, 200, this.options.capabilitySnapshot?.() ?? { version: 1, hash: '', entries: [] }); return; }
       if (request.method === 'GET' && url.pathname === '/sessions') { this.send(response, 200, { sessions: await this.list() }); return; }
-      if (request.method === 'POST' && url.pathname === '/quick') { await this.quick(await readJson(request), response); return; }
+      if (request.method === 'POST' && url.pathname === '/quick') { await this.quick(await readJson(request), response, request.headers.accept?.includes('application/x-ndjson') === true, request); return; }
       if (request.method === 'POST' && url.pathname === '/sessions') { const body = await readJson(request); const session = await this.options.sessionStore.create(this.options.provider, this.options.model, [...(this.options.initialMessages ?? []), ...(typeof body.prompt === 'string' ? [{ role: 'user' as const, content: body.prompt }] : [])]); this.send(response, 201, { sessionId: session.id }); return; }
       const match = url.pathname.match(/^\/sessions\/([^/]+)(?:\/(prompt|cancel|events))?$/);
       if (!match) { this.send(response, 404, { error: 'NOT_FOUND' }); return; }
@@ -84,22 +105,54 @@ export class ResidentHost {
       if (!session) { this.send(response, 404, { error: 'SESSION_NOT_FOUND' }); return; }
       if (request.method === 'GET' && !match[2]) { this.send(response, 200, safeSession(session)); return; }
       if (request.method === 'GET' && match[2] === 'events') { response.statusCode = 200; response.setHeader('content-type', 'text/event-stream; charset=utf-8'); response.setHeader('cache-control', 'no-cache'); response.setHeader('connection', 'keep-alive'); response.write(`event: session\ndata: ${JSON.stringify(safeSession(session))}\n\n`); response.end(); return; }
-      if (request.method === 'POST' && match[2] === 'cancel') { const active = this.active.get(session.id); this.send(response, 200, { accepted: active?.cancelActiveTurn({ kind: 'user' }) ?? false }); return; }
-      if (request.method === 'POST' && match[2] === 'prompt') { await this.prompt(session, await readJson(request), response); return; }
+      if (request.method === 'POST' && match[2] === 'cancel') { const body = await readJson(request); const active = this.active.get(session.id); const accepted = Boolean(active && body.turnId === active.turnId && active.session.cancelActiveTurn({ kind: 'user' })); this.send(response, 200, { accepted }); return; }
+      if (request.method === 'POST' && match[2] === 'prompt') { await this.prompt(session, await readJson(request), response, undefined, false, request); return; }
       this.send(response, 405, { error: 'METHOD_NOT_ALLOWED' });
     } catch (error) { this.send(response, 400, { error: error instanceof Error ? error.message : 'HOST_REQUEST_FAILED' }); }
   }
 
-  private async prompt(stored: StoredSession, body: Record<string, unknown>, response: ServerResponse, workspaceRoot?: string): Promise<void> {
-    if (typeof body.text !== 'string' || !body.text.trim()) { this.send(response, 400, { error: 'PROMPT_REQUIRED' }); return; }
+  private async prompt(stored: StoredSession, body: Record<string, unknown>, response: ServerResponse, workspaceRoot?: string, stream = false, request?: IncomingMessage): Promise<void> {
+    if (typeof body.text !== 'string') { this.send(response, 400, { error: 'PROMPT_REQUIRED' }); return; }
+    const promptText = body.text;
+    if (!promptText.trim()) { this.send(response, 400, { error: 'PROMPT_REQUIRED' }); return; }
     if (this.active.size >= this.maxActiveTurns) { this.send(response, 429, { error: 'HOST_BUSY' }); return; }
-    const session = this.options.createSession(stored, workspaceRoot);
-    this.active.set(stored.id, session);
-    try { const result = await session.send(body.text); this.send(response, 200, { sessionId: stored.id, text: result.text, outcome: result.outcome }); }
-    finally { this.active.delete(stored.id); }
+    if (this.active.has(stored.id)) { this.send(response, 409, { error: 'SESSION_BUSY' }); return; }
+    const turnId = randomUUID();
+    const session = this.options.createSession(stored, workspaceRoot, stream ? {
+      onModelStepEvent: event => this.writeEvent(response, event),
+      onToolStarted: (tool, callId) => this.writeEvent(response, { type: 'tool_start', tool, callId }),
+      onToolFinished: (tool, callId, result) => this.writeEvent(response, { type: 'tool_end', tool, callId, ok: result.ok, ...(!result.ok ? { code: safeCode(result.code) } : {}) }),
+    } : undefined);
+    const active = { turnId, session };
+    this.active.set(stored.id, active);
+    if (stream) {
+      response.statusCode = 200;
+      response.setHeader('content-type', 'application/x-ndjson; charset=utf-8');
+      response.setHeader('cache-control', 'no-cache, no-transform');
+      response.setHeader('connection', 'keep-alive');
+      this.writeEvent(response, { type: 'turn_start', sessionId: stored.id, turnId });
+    }
+    const cancelForDisconnect = () => { if (!response.writableEnded) session.cancelActiveTurn({ kind: 'disconnect' }); };
+    request?.on('aborted', cancelForDisconnect);
+    response.on('close', cancelForDisconnect);
+    try {
+      const result = await session.send(promptText);
+      if (stream) this.writeEvent(response, { type: 'turn_completed', sessionId: stored.id, turnId, text: result.text, outcome: result.outcome ?? 'completed' });
+      else this.send(response, 200, { sessionId: stored.id, text: result.text, outcome: result.outcome });
+    } catch (error) {
+      if (stream) {
+        if (session.currentTurnPhase === 'cancelled') this.writeEvent(response, { type: 'turn_cancelled', sessionId: stored.id, turnId });
+        else this.writeEvent(response, { type: 'turn_failed', sessionId: stored.id, turnId, code: safeTurnErrorCode(error) });
+      } else if (!response.writableEnded) this.send(response, 500, { error: safeTurnErrorCode(error) });
+    } finally {
+      request?.off('aborted', cancelForDisconnect);
+      response.off('close', cancelForDisconnect);
+      if (this.active.get(stored.id) === active) this.active.delete(stored.id);
+      if (stream && !response.writableEnded) response.end();
+    }
   }
 
-  private async quick(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
+  private async quick(body: Record<string, unknown>, response: ServerResponse, stream = false, request?: IncomingMessage): Promise<void> {
     if (typeof body.text !== 'string' || !body.text.trim()) { this.send(response, 400, { error: 'PROMPT_REQUIRED' }); return; }
     if (typeof body.workspaceKey !== 'string' || !body.workspaceKey) { this.send(response, 400, { error: 'WORKSPACE_REQUIRED' }); return; }
     if (typeof body.workspaceRoot !== 'string' || !body.workspaceRoot) { this.send(response, 400, { error: 'WORKSPACE_REQUIRED' }); return; }
@@ -110,7 +163,15 @@ export class ResidentHost {
       ? await this.options.sessionStore.create(this.options.provider, this.options.model, this.options.initialMessages ?? [], body.workspaceKey)
       : sessions.find(item => item.provider === this.options.provider && item.model === this.options.model && (item.version === 4 || item.version === 5) && item.workspaceKey === body.workspaceKey)
         ?? await this.options.sessionStore.create(this.options.provider, this.options.model, this.options.initialMessages ?? [], body.workspaceKey);
-    await this.prompt(stored, { text: body.text }, response, root);
+    await this.prompt(stored, { text: body.text }, response, root, stream, request);
+  }
+
+  private writeEvent(response: ServerResponse, event: HostTurnEvent | ModelStepEvent): void {
+    if (response.destroyed || response.writableEnded) return;
+    const line = `${JSON.stringify(event)}\n`;
+    if (Buffer.byteLength(line, 'utf8') > MAX_EVENT_BYTES) { response.destroy(new Error('HOST_EVENT_TOO_LARGE')); return; }
+    if (response.writableLength + Buffer.byteLength(line, 'utf8') > MAX_STREAM_BUFFER_BYTES) { response.destroy(new Error('HOST_STREAM_BACKPRESSURE_LIMIT')); return; }
+    response.write(line);
   }
 
   private async structuredInference(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -137,3 +198,8 @@ function isLoopback(host: string): boolean { return host === '127.0.0.1' || host
 function safeSession(session: StoredSession): { readonly sessionId: string; readonly provider: string; readonly model: string; readonly updatedAt: string } { return { sessionId: session.id, provider: session.provider, model: session.model, updatedAt: session.updatedAt }; }
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> { let text = ''; for await (const chunk of request) text += chunk.toString(); const value = JSON.parse(text || '{}'); if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('INVALID_JSON'); return value as Record<string, unknown>; }
 function safeInferenceMessage(code: string): string { return code === 'ROLE_NOT_CONFIGURED' ? 'resource-worker 未配置。' : code === 'MODEL_RESPONSE_INVALID' ? 'Worker 返回内容不符合结构化契约。' : '结构化 Worker 请求失败。'; }
+function safeTurnErrorCode(error: unknown): string {
+  if (error instanceof Error && /^[A-Z][A-Z0-9_]{1,63}$/u.test(error.message)) return error.message;
+  return 'TURN_FAILED';
+}
+function safeCode(code: string): string { return /^[A-Z][A-Z0-9_]{1,63}$/u.test(code) ? code : 'TOOL_FAILED'; }

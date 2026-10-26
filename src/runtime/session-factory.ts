@@ -92,6 +92,7 @@ export interface SessionEntryOptions {
   readonly onToolStarted?: (tool: string, callId: string, argumentsJson?: string) => void;
   readonly onToolFinished?: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly onModelStepEvent?: (event: import('../core/events.js').ModelStepEvent) => void;
+  readonly onTurnPhaseChanged?: (event: import('../core/events.js').TurnPhaseEvent) => void;
 }
 
 export function projectStoredSession(storedSession: StoredSession): {
@@ -183,6 +184,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         ...(entry.onToolStarted ? { onToolStarted: entry.onToolStarted } : {}),
         ...(entry.onToolFinished ? { onToolFinished: entry.onToolFinished } : {}),
         ...(entry.onModelStepEvent ? { onModelStepEvent: entry.onModelStepEvent } : {}),
+        ...(entry.onTurnPhaseChanged ? { onTurnPhaseChanged: entry.onTurnPhaseChanged } : {}),
         onSessionStateChanged: async state => {
           current = await sessionStore.save(current, state);
           if (memoryRuntime?.enabled) await memoryRuntime.captureExplicitMemory(current.id, state.messages, workspaceRoot);

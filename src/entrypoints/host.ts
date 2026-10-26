@@ -20,9 +20,9 @@ const host = new ResidentHost({
   provider: loaded.config.provider,
   model: loaded.config.model,
   sessionStore: application.sessions,
-  createSession: (stored, requestedWorkspace) => requestedWorkspace
-    ? createSessionFactory({ runtime: loaded.runtime, config: { ...loaded.config, ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}) }, sessionStore: application.sessions, memoryRuntime: application.memory, workspaceRoot: requestedWorkspace, diagnostics: event => application.diagnostics.emit(event) }).create({ stored, interactive: false, approvalPolicy: 'never' })
-    : factory.create({ stored, interactive: false, approvalPolicy: 'never' }),
+  createSession: (stored, requestedWorkspace, events) => requestedWorkspace
+    ? createSessionFactory({ runtime: loaded.runtime, config: { ...loaded.config, ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}) }, sessionStore: application.sessions, memoryRuntime: application.memory, workspaceRoot: requestedWorkspace, diagnostics: event => application.diagnostics.emit(event) }).create({ stored, interactive: false, approvalPolicy: 'never', ...(events ? { onModelStepEvent: events.onModelStepEvent, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished } : {}) })
+    : factory.create({ stored, interactive: false, approvalPolicy: 'never', ...(events ? { onModelStepEvent: events.onModelStepEvent, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished } : {}) }),
   ...(loaded.config.systemPrompt ? { initialMessages: [{ role: 'system' as const, content: loaded.config.systemPrompt }] } : {}),
   capabilitySnapshot: factory.capabilitySnapshot,
   ...(loaded.worker ? { structuredInference: loaded.worker.inference } : {}),

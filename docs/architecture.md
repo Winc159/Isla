@@ -1,6 +1,6 @@
 # Isla 当前架构
 
-本文以 `0.5.7` 源码和测试为事实源，描述主 Agent Runtime 与独立 Resource 工具子系统的当前稳定边界。
+本文以 `0.5.8` 源码和测试为事实源，描述主 Agent Runtime 与独立 Resource 工具子系统的当前稳定边界。
 
 ## 产品定位与原则
 
@@ -110,6 +110,8 @@ sequenceDiagram
 ```
 
 用户输入先成为 Session 事实，因此实际发给模型的消息可以从会话重建。Provider 错误、取消、空回答或被完成门禁拒绝的候选不会伪装成成功的 assistant 消息。
+
+Resident Host 的一次性 `/quick` 请求可由客户端显式选择 NDJSON。Host 为每次 Turn 生成 `turnId`，事件流只观察模型步骤、文本增量和不含参数的 Tool 阶段；`sessionId + turnId` 是精确取消身份。流只允许一个终态，且不会成为第二份持久 Session 历史。客户端断开和 Host shutdown 都通过当前 `ChatSession` 的协作取消收敛。
 
 ## Capability 与 Tool
 
