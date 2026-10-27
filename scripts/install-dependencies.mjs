@@ -34,6 +34,7 @@ if (installResource) {
     ['7zz', '7zz/7zzs 用于归档测试与解压'],
     ['7z', '7z 兼容命令，可作为 7zz fallback'],
     ['unrar', 'unrar 仅作为复杂 RAR fallback'],
+    ['wimlib-imagex', 'wimlib 用于 WIM 映像检测与处理'],
   ];
   const found = new Map();
   for (const [command, description] of tools) {

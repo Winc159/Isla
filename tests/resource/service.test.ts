@@ -160,9 +160,9 @@ describe("Resource service skeleton", () => {
   });
 
   it("passes a Baidu authorization code only to the login runner", async () => {
-    directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); const received: string[] = []; const baiduBrowser = { list: async () => ({ code: 0, stdout: "[]", stderr: "" }), loginUrl: async () => ({ code: 0, stdout: "https://example.test/oauth", stderr: "" }), loginCode: async (code: string) => { received.push(code); return { code: 0, stdout: "{}", stderr: "" }; } };
+    directory = mkdtempSync(join(tmpdir(), "isla-resource-service-")); const received: string[] = []; const baiduBrowser = { list: async () => ({ code: 0, stdout: "[]", stderr: "" }), loginUrl: async () => ({ code: 0, stdout: JSON.stringify({ code: 0, data: { auth_url: "https://openapi.baidu.com/oauth/2.0/authorize?client_id=test&redirect_uri=oob" }, error: "" }), stderr: "" }), loginCode: async (code: string) => { received.push(code); return { code: 0, stdout: "{}", stderr: "" }; } };
     service = new ResourceService({ config: makeConfig(directory), token: "resource-token", baiduBrowser }); const address = await service.start(); const headers = { authorization: "Bearer resource-token", "content-type": "application/json" }; const endpoint = `http://${address.host}:${address.port}/api/v1/resource/baidu/login`;
-    expect(await (await fetch(`${endpoint}/start`, { method: "POST", headers, body: "{}" })).json()).toEqual({ authorization: "https://example.test/oauth" });
+    expect(await (await fetch(`${endpoint}/start`, { method: "POST", headers, body: "{}" })).json()).toEqual({ authorization: "https://openapi.baidu.com/oauth/2.0/authorize?client_id=test&redirect_uri=oob" });
     expect(await (await fetch(`${endpoint}/complete`, { method: "POST", headers, body: JSON.stringify({ code: "private-code" }) })).json()).toEqual({ status: "signed_in" }); expect(received).toEqual(["private-code"]);
   });
 

@@ -1,11 +1,11 @@
 import { basename, extname, join } from "node:path";
 
-export type ArchiveFormat = "zip" | "7z" | "rar4" | "rar5" | "gzip" | "bzip2" | "xz" | "tar" | "media" | "unknown";
+export type ArchiveFormat = "zip" | "7z" | "rar4" | "rar5" | "gzip" | "bzip2" | "xz" | "tar" | "wim" | "media" | "unknown";
 export interface ArchivePart { readonly path: string; readonly index: number; readonly role: "single" | "first" | "middle" | "last" | "unknown"; }
 export interface ArchiveInspection { readonly path: string; readonly format: ArchiveFormat; readonly isArchive: boolean; readonly likelyMedia: boolean; readonly normalizedName: string; readonly part?: ArchivePart; readonly confidence: "high" | "medium" | "low"; }
 export interface ArchiveTool { run(args: readonly string[], signal?: AbortSignal): Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>; }
 
-const ARCHIVE_EXTENSIONS = new Set([".zip", ".7z", ".rar", ".gz", ".tgz", ".bz2", ".xz", ".tar"]);
+const ARCHIVE_EXTENSIONS = new Set([".zip", ".7z", ".rar", ".gz", ".tgz", ".bz2", ".xz", ".tar", ".wim"]);
 const MEDIA_EXTENSIONS = new Set([".mp4", ".mkv", ".avi", ".mov", ".wmv", ".mp3", ".flac", ".jpg", ".png", ".pdf"]);
 
 export function inspectArchive(path: string, header: Uint8Array, size = 0): ArchiveInspection {
@@ -26,6 +26,7 @@ export function detectArchiveFormat(header: Uint8Array): ArchiveFormat {
   if (starts(header, [0x1f, 0x8b])) return "gzip";
   if (starts(header, [0x42, 0x5a, 0x68])) return "bzip2";
   if (starts(header, [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00])) return "xz";
+  if (starts(header, [0x4d, 0x53, 0x57, 0x49, 0x4d, 0x00, 0x00])) return "wim";
   if (header.length >= 265 && String.fromCharCode(...header.slice(257, 262)) === "ustar") return "tar";
   if (findBytes(header, [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x01, 0x00]) >= 0) return "rar5";
   if (findBytes(header, [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00]) >= 0) return "rar4";

@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { closeSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, writeSync } from "node:fs";
-import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ResourceConfigV1 } from "./config.js";
 import { migrateResourceDatabase } from "./database-schema.js";
@@ -15,7 +15,7 @@ import type { ArchiveOrganizeRequest, ArchiveOrganizeResult } from "./archive-or
 import type { BaiduDownloadRequest, BaiduDownloadResult } from "./baidu-download-runner.js";
 import type { BdpanContext } from "./bdpan-runner.js";
 import { RESOURCE_TOOLBOX } from "./toolbox.js";
-import { inspectArchive } from "./archive.js";
+import { detectArchivePart, inspectArchive } from "./archive.js";
 import type { ResourceInferenceClient } from "./inference-client.js";
 import type { ResourceWorkerSettings } from "./worker-settings.js";
 import type { ResourceSettingsStore } from "./settings.js";
@@ -151,7 +151,23 @@ export class ResourceService {
     return { path, entries: payload };
   }
   private async baiduStatus(): Promise<Record<string, unknown>> { if (!this.options.baiduBrowser?.run) return { status: "unavailable", message: "bdpan runner 未配置。" }; const context: BdpanContext = { agentName: "isla", sessionInput: "whoami", sessionId: `whoami-${Date.now()}` }; try { const result = await this.options.baiduBrowser.run("whoami", [], context); if (result.code !== 0) return { status: "signed_out", message: "百度网盘尚未登录。" }; let payload: unknown; try { payload = JSON.parse(result.stdout); } catch { payload = undefined; } const data = payload && typeof payload === "object" ? payload as Record<string, unknown> : {}; return { status: "signed_in", account: typeof data.account === "string" ? data.account : typeof data.username === "string" ? data.username : undefined }; } catch { return { status: "unavailable", message: "无法执行 bdpan，请运行 npm run doctor。" }; } }
-  private async baiduLoginStart(): Promise<Record<string, unknown>> { if (!this.options.baiduBrowser?.loginUrl) throw new Error("BDPAN_LOGIN_UNAVAILABLE"); const result = await this.options.baiduBrowser.loginUrl({ agentName: "isla", sessionInput: "login", sessionId: `login-${Date.now()}` }); if (result.code !== 0) throw new Error("BDPAN_LOGIN_URL_FAILED"); return { authorization: result.stdout.trim() }; }
+  private async baiduLoginStart(): Promise<Record<string, unknown>> {
+    if (!this.options.baiduBrowser?.loginUrl) throw new Error("BDPAN_LOGIN_UNAVAILABLE");
+    const result = await this.options.baiduBrowser.loginUrl({ agentName: "isla", sessionInput: "login", sessionId: `login-${Date.now()}` });
+    if (result.code !== 0) throw new Error("BDPAN_LOGIN_URL_FAILED");
+    const raw = result.stdout.trim();
+    let authorization = raw;
+    try {
+      const payload = JSON.parse(raw) as { data?: { auth_url?: unknown }; auth_url?: unknown };
+      const candidate = payload.data?.auth_url ?? payload.auth_url;
+      if (typeof candidate === "string") authorization = candidate;
+    } catch { /* 兼容旧版 bdpan 直接输出 URL */ }
+    try {
+      const parsed = new URL(authorization);
+      if (parsed.protocol !== "https:" || parsed.hostname !== "openapi.baidu.com") throw new Error();
+    } catch { throw new Error("BDPAN_AUTH_URL_INVALID"); }
+    return { authorization };
+  }
   private async baiduLoginComplete(value: unknown): Promise<Record<string, unknown>> { if (!this.options.baiduBrowser?.loginCode || !value || typeof value !== "object" || typeof (value as { code?: unknown }).code !== "string") throw new Error("BDPAN_LOGIN_CODE_INVALID"); const result = await this.options.baiduBrowser.loginCode((value as { code: string }).code, { agentName: "isla", sessionInput: "login", sessionId: `login-${Date.now()}` }); if (result.code !== 0) throw new Error("BDPAN_LOGIN_FAILED"); return { status: "signed_in" }; }
 
   private listLocalTree(rootId: string, relativePath: string): Record<string, unknown> {
@@ -468,8 +484,33 @@ export class ResourceService {
     const decision = chooseResourceName({ downloadedNames: [archiveOutputStem(basename(archivePath))], completedAt: new Date() }); const outputPath = availableOutputPath(destinationRoot.path, decision.name); const stagingPath = join(this.options.config.stagingPath, id, "extracted"); const now = new Date().toISOString();
     this.db.prepare("UPDATE resource_jobs SET status = 'queued', stage = 'inspecting', revision = revision + 1, pending_decision_json = NULL, failure_json = NULL, updated_at = ? WHERE id = ?").run(now, id);
     const passwordCandidates = this.passwordCandidates(id);
-    const task = this.scheduler.enqueue(id, "extraction", async signal => { this.setStage(id, "extracting", "running"); return this.options.archiveOrganizer!.organize({ archivePath, stagingPath, outputPath, passwordCandidates }, signal); });
-    void task.promise.then(result => { if (result.successfulPasswordIndex !== undefined) this.recordSuccessfulPassword(passwordCandidates[result.successfulPasswordIndex]); const completedAt = new Date().toISOString(); this.db.prepare("UPDATE resource_jobs SET status = 'completed', stage = 'completed', revision = revision + 1, progress_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({ ratio: 1, completedBytes: result.totalBytes, totalBytes: result.totalBytes }), completedAt, id); this.db.prepare("UPDATE resource_file_ledger SET state = 'completed', observed_at = ? WHERE job_id = ?").run(completedAt, id); }).catch(error => { this.db.prepare("UPDATE resource_file_ledger SET state = 'failed', observed_at = ? WHERE job_id = ?").run(new Date().toISOString(), id); this.handleJobError(id, error, "inspecting"); });
+    const task = this.scheduler.enqueue(id, "extraction", async signal => { this.setStage(id, "extracting", "running"); this.assertSplitArchiveComplete(archivePath); const result = await this.options.archiveOrganizer!.organize({ archivePath, stagingPath, outputPath, passwordCandidates }, signal); if (result.successfulPasswordIndex !== undefined) this.recordSuccessfulPassword(passwordCandidates[result.successfulPasswordIndex]); const nested = await this.extractNestedArchives(id, outputPath, join(stagingPath, "nested"), passwordCandidates, signal); return { ...result, totalBytes: result.totalBytes + nested }; });
+    void task.promise.then(result => { this.cleanupIntermediateStaging(id); const completedAt = new Date().toISOString(); this.db.prepare("UPDATE resource_jobs SET status = 'completed', stage = 'completed', revision = revision + 1, progress_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({ ratio: 1, completedBytes: result.totalBytes, totalBytes: result.totalBytes }), completedAt, id); this.db.prepare("UPDATE resource_file_ledger SET state = 'completed', observed_at = ? WHERE job_id = ?").run(completedAt, id); }).catch(error => { this.db.prepare("UPDATE resource_file_ledger SET state = 'failed', observed_at = ? WHERE job_id = ?").run(new Date().toISOString(), id); this.handleJobError(id, error, "inspecting"); });
+  }
+  private assertSplitArchiveComplete(archivePath: string): void {
+    const part = detectArchivePart(archivePath); if (!part) return;
+    const stem = basename(archivePath).replace(/(?:\.part\d+|\.r\d{2}|\.\d{3,})$/iu, "").toLowerCase();
+    const files = readdirSync(dirname(archivePath)).map(name => join(dirname(archivePath), name)).filter(path => Boolean(detectArchivePart(path)));
+    const parts = files.map(path => ({ path, part: detectArchivePart(path)! })).filter(item => basename(item.path).replace(/(?:\.part\d+|\.r\d{2}|\.\d{3,})$/iu, "").toLowerCase() === stem).sort((a, b) => a.part.index - b.part.index);
+    if (parts.length < 2) return;
+    const max = parts[parts.length - 1]!.part.index;
+    for (let index = 1; index <= max; index += 1) if (!parts.some(item => item.part.index === index)) throw new Error("ARCHIVE_VOLUME_INCOMPLETE");
+  }
+  private async extractNestedArchives(id: string, root: string, stagingRoot: string, passwordCandidates: readonly string[], signal: AbortSignal): Promise<number> {
+    let totalBytes = 0; let current = root;
+    for (let depth = 1; depth <= 3; depth += 1) {
+      const archives = this.findArchives(current).filter(path => !path.startsWith(`${stagingRoot}${sep}`));
+      if (!archives.length) break;
+      this.appendJobEvent(id, "resource.recursive_archives_found", { depth, count: archives.length, paths: archives.slice(0, 20).map(path => relative(root, path)) });
+      const nextRoot = join(root, `嵌套解压-${depth}`); mkdirSync(nextRoot, { recursive: true });
+      for (let index = 0; index < archives.length; index += 1) {
+        const archivePath = archives[index]!; const outputPath = join(nextRoot, String(index + 1).padStart(2, "0")); const nestedStaging = join(stagingRoot, `stage-${depth}-${index + 1}`);
+        this.appendJobEvent(id, "resource.nested_extract_started", { depth, index: index + 1, source: relative(root, archivePath) });
+        try { const result = await this.options.archiveOrganizer!.organize({ archivePath, stagingPath: nestedStaging, outputPath, passwordCandidates }, signal); totalBytes += result.totalBytes; if (result.successfulPasswordIndex !== undefined) this.recordSuccessfulPassword(passwordCandidates[result.successfulPasswordIndex]); this.appendJobEvent(id, "resource.recursive_archive_extracted", { depth, index: index + 1, outputPath: relative(root, outputPath), fileCount: result.files.length, totalBytes: result.totalBytes }); } catch (error) { this.appendJobEvent(id, "resource.recursive_archive_failed", { depth, index: index + 1, code: error instanceof Error ? error.message : "RESOURCE_JOB_FAILED" }); }
+      }
+      current = nextRoot;
+    }
+    return totalBytes;
   }
   private startBaiduJob(id: string, inputJson: string, parseResultJson: string | null): void {
     if (!this.options.baiduDownloader) throw new Error("BAIDU_DOWNLOADER_NOT_CONFIGURED");
@@ -621,7 +662,7 @@ export class ResourceService {
     for (const entry of readdirSync(root, { withFileTypes: true })) if (entry.isDirectory()) this.removeEmptyDirectories(join(root, entry.name), false);
     try { if (!preserve && readdirSync(root).length === 0) rmdirSync(root); } catch { /* best effort */ }
   }
-  private failJob(id: string, error: unknown, resumeStage: ResourceJobSnapshotV1["stage"]): void { const now = new Date().toISOString(); const code = error instanceof Error ? error.message : "RESOURCE_JOB_FAILED"; const message = code === "DOWNLOADED_CONTENT_IS_MEDIA" ? "下载内容经文件头识别为媒体文件，未发现可解压的压缩包；为避免误信伪装文件，任务未继续。" : code === "DOWNLOADED_ARCHIVE_NOT_FOUND" ? "下载目录中未发现可识别的压缩包。" : "资源任务执行失败。"; this.db.prepare("UPDATE resource_jobs SET status = 'failed', revision = revision + 1, failure_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({ code, message, retryable: true, resumeStage }), now, id); }
+  private failJob(id: string, error: unknown, resumeStage: ResourceJobSnapshotV1["stage"]): void { const now = new Date().toISOString(); const code = error instanceof Error ? error.message : "RESOURCE_JOB_FAILED"; const message = code === "DOWNLOADED_CONTENT_IS_MEDIA" ? "下载内容经文件头识别为媒体文件，未发现可解压的压缩包；为避免误信伪装文件，任务未继续。" : code === "DOWNLOADED_ARCHIVE_NOT_FOUND" ? "下载目录中未发现可识别的压缩包。" : `资源任务执行失败（${code}）。请展开处理日志查看具体错误。`; const failure = { code, message, retryable: true, resumeStage }; this.db.prepare("UPDATE resource_jobs SET status = 'failed', revision = revision + 1, failure_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(failure), now, id); this.appendJobEvent(id, "job.failed", failure); }
   private handleJobError(id: string, error: unknown, resumeStage: ResourceJobSnapshotV1["stage"]): void {
     const code = error instanceof Error ? error.message : "RESOURCE_JOB_FAILED"; const now = new Date().toISOString();
     const intervention = code === "ARCHIVE_PASSWORD_REQUIRED" ? { type: "provide_archive_password", message: "压缩包需要密码，自动密码候选均未成功。请输入解压密码后继续。", actions: ["provide_values", "reject"] as const }
@@ -669,7 +710,7 @@ export class ResourceService {
   private cancelJob(id: string, expectedRevision?: number): boolean { const row = this.db.prepare("SELECT status, revision FROM resource_jobs WHERE id = ?").get(id) as { status?: string; revision?: number } | undefined; if (!row || row.status === "completed" || row.status === "failed" || row.status === "cancelled") return false; if (expectedRevision !== undefined && expectedRevision !== row.revision) throw new Error("JOB_REVISION_STALE"); const now = new Date().toISOString(); this.db.prepare("UPDATE resource_jobs SET status = 'cancelled', revision = revision + 1, updated_at = ? WHERE id = ?").run(now, id); this.db.prepare("INSERT INTO resource_events (id, job_id, sequence, type, data_json, occurred_at) SELECT ?, id, COALESCE((SELECT MAX(sequence) + 1 FROM resource_events WHERE job_id = resource_jobs.id), 1), 'job.cancelled', '{}', ? FROM resource_jobs WHERE id = ?").run(randomUUID(), now, id); return true; }
   private deleteTerminalJob(id: string): boolean { const row = this.db.prepare("SELECT status FROM resource_jobs WHERE id = ?").get(id) as { status?: string } | undefined; if (!row) return false; if (!['completed', 'failed', 'cancelled'].includes(row.status ?? '')) throw new Error("JOB_NOT_TERMINAL"); this.db.exec("BEGIN IMMEDIATE"); try { this.db.prepare("UPDATE resource_file_ledger SET job_id = NULL WHERE job_id = ?").run(id); this.db.prepare("DELETE FROM resource_jobs WHERE id = ?").run(id); this.db.exec("COMMIT"); rmSync(join(this.options.config.stagingPath, id), { recursive: true, force: true }); return true; } catch (error) { this.db.exec("ROLLBACK"); throw error; } }
   private repeatJob(id: string): ResourceJobSnapshotV1 { const row = this.db.prepare("SELECT status, input_json FROM resource_jobs WHERE id = ?").get(id) as { status?: string; input_json?: string } | undefined; if (!row?.input_json || !['completed', 'failed', 'cancelled'].includes(row.status ?? '')) throw new Error("JOB_NOT_REPEATABLE"); const input = parseCreateResourceJobRequestV1(JSON.parse(row.input_json) as unknown); return this.createJob({ ...input, startMode: "automatic" }); }
-  private toJob(row: JobRow): ResourceJobSnapshotV1 { return { version: 1, id: row.id, revision: row.revision, source: row.source as ResourceJobSnapshotV1["source"], status: row.status as ResourceJobSnapshotV1["status"], stage: row.stage as ResourceJobSnapshotV1["stage"], destinationRootId: row.destination_root_id, createdAt: row.created_at, updatedAt: row.updated_at, progress: JSON.parse(row.progress_json) as ResourceJobSnapshotV1["progress"], ...(row.model_snapshot_json ? { modelSnapshot: JSON.parse(row.model_snapshot_json) as NonNullable<ResourceJobSnapshotV1["modelSnapshot"]> } : {}), ...(row.pending_decision_json ? { pendingDecision: JSON.parse(row.pending_decision_json) as NonNullable<ResourceJobSnapshotV1["pendingDecision"]> } : {}), ...(row.failure_json ? { failure: JSON.parse(row.failure_json) as NonNullable<ResourceJobSnapshotV1["failure"]> } : {}) }; }
+  private toJob(row: JobRow): ResourceJobSnapshotV1 { return { version: 1, id: row.id, revision: row.revision, source: row.source as ResourceJobSnapshotV1["source"], status: row.status as ResourceJobSnapshotV1["status"], stage: row.stage as ResourceJobSnapshotV1["stage"], destinationRootId: row.destination_root_id, createdAt: row.created_at, updatedAt: row.updated_at, progress: JSON.parse(row.progress_json) as ResourceJobSnapshotV1["progress"], ...(row.parse_result_json ? { parseResult: JSON.parse(row.parse_result_json) as Record<string, unknown> } : {}), ...(row.model_snapshot_json ? { modelSnapshot: JSON.parse(row.model_snapshot_json) as NonNullable<ResourceJobSnapshotV1["modelSnapshot"]> } : {}), ...(row.pending_decision_json ? { pendingDecision: JSON.parse(row.pending_decision_json) as NonNullable<ResourceJobSnapshotV1["pendingDecision"]> } : {}), ...(row.failure_json ? { failure: JSON.parse(row.failure_json) as NonNullable<ResourceJobSnapshotV1["failure"]> } : {}) }; }
   private count(status: string): number { return Number((this.db.prepare("SELECT COUNT(*) AS count FROM resource_jobs WHERE status = ?").get(status) as { count: number }).count); }
   private authorized(request: IncomingMessage): boolean {
     const bearer = request.headers.authorization?.startsWith("Bearer ") ? request.headers.authorization.slice(7) : undefined;
