@@ -56,4 +56,12 @@ describe("completion gate", () => {
     const contract = { status: "active" as const, deliverables: ["报告"], steps: [{ status: "completed" }], evidence: [] };
     expect(evaluateCompletionGate({ contract, priorRejections: ["deliverable_missing"] })).toMatchObject({ accepted: false, reason: "deliverable_missing", terminal: "blocked" });
   });
+
+  it('does not accept a completed response while an Act plan step is pending', () => {
+    const workPlan = { status:'active' as const, steps:[{status:'completed'},{status:'pending'}] };
+    expect(evaluateCompletionGate({workPlan})).toMatchObject({accepted:false,reason:'task_step_pending'});
+    expect(evaluateCompletionGate({workPlan,priorRejections:['task_step_pending']})).toMatchObject({accepted:false,terminal:'blocked'});
+    expect(evaluateCompletionGate({workPlan:{status:'completed',steps:[{status:'completed'}]}})).toMatchObject({accepted:false,reason:'task_step_pending'});
+    expect(evaluateCompletionGate({workPlan:{status:'completed',steps:[{status:'completed',evidenceCallIds:['verified-call']}]}})).toEqual({accepted:true});
+  });
 });

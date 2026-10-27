@@ -20,7 +20,8 @@ export interface TaskStateUpdateToolDetails { readonly type: "task_state_update"
 export interface SettlementProposalToolDetails { readonly type: "settlement_proposal"; readonly proposal: { readonly kind: "submit" | "blocked"; readonly text?: string; readonly reason?: string; readonly attempts?: readonly string[]; readonly limitations?: readonly string[]; readonly needsUser?: string } }
 export interface ReplanProposalToolDetails { readonly type: "replan_proposal"; readonly strategyRevision: number; readonly summary: string; readonly nextStep: string; readonly abandonedAssumption?: string }
 export interface WorkPlanUpdateToolDetails { readonly type: 'work_plan_update'; readonly plan: import('../core/work-plan.js').WorkPlanV1; }
-export type ToolSuccessDetails = ProjectSearchToolDetails | WebFetchToolDetails | WebSearchToolDetails | CommandExecutionToolDetails | ExecutionRuntimeToolDetails | TaskStateUpdateToolDetails | SettlementProposalToolDetails | ReplanProposalToolDetails | WorkPlanUpdateToolDetails;
+export interface WorkPlanProgressToolDetails { readonly type: 'work_plan_progress'; readonly stepId: string; readonly status: import('../core/work-plan.js').WorkPlanStep['status']; readonly evidenceCallIds: readonly string[]; }
+export type ToolSuccessDetails = ProjectSearchToolDetails | WebFetchToolDetails | WebSearchToolDetails | CommandExecutionToolDetails | ExecutionRuntimeToolDetails | TaskStateUpdateToolDetails | SettlementProposalToolDetails | ReplanProposalToolDetails | WorkPlanUpdateToolDetails | WorkPlanProgressToolDetails;
 export interface ToolOutput { readonly content: string; readonly details?: ToolSuccessDetails; }
 
 export type ToolExecutionErrorCode = ToolFailureCode | "UNKNOWN_TOOL" | "PERMISSION_DENIED" | "USER_REJECTED";

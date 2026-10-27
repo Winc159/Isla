@@ -9,6 +9,11 @@ describe("tool result message", () => {
     expect(prepared.pruning).toMatchObject({ pruned: false, originalChars: 4, retainedChars: 4 });
   });
 
+  it("includes a successful call ID as model-visible Plan evidence when requested", () => {
+    const prepared = prepareToolResultMessage("call-evidence", { ok: true, content: "read completed" }, true);
+    expect(prepared.message.content).toBe("read completed\nEvidence Tool Call ID: call-evidence");
+  });
+
   it("projects a failure into the existing safe code and message format", () => {
     const prepared = prepareToolResultMessage("call-2", { ok: false, code: "USER_REJECTED", message: "用户拒绝" });
 

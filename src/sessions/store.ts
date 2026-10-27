@@ -184,7 +184,7 @@ export class JsonSessionStore implements SessionStore {
       ...(state.task ? { task: isTaskState(state.task) ? state.task : migrateTaskBrief(state.task, state.messages) } : {}),
       ...('taskContract' in state && state.taskContract ? { taskContract: state.taskContract } : {}),
       journal: state.journal ?? ('journal' in session ? session.journal : emptyJournal()),
-      ...((session.version === 5 || session.version === 6 || state.skillCatalog !== undefined) ? { skillCatalog: state.skillCatalog ?? (session.version === 5 || session.version === 6 ? session.skillCatalog : { version: 1, entries: [] }) } : {}),
+      ...((session.version >= 5 || state.skillCatalog !== undefined || state.workPlan !== undefined || state.workMode !== undefined) ? { skillCatalog: state.skillCatalog ?? (session.version === 5 || session.version === 6 ? session.skillCatalog : { version: 1, entries: [] }) } : {}),
       ...(state.capabilityActivation ? { capabilityActivation: state.capabilityActivation } : ((session.version === 5 || session.version === 6) && session.capabilityActivation ? { capabilityActivation: session.capabilityActivation } : {})),
       ...('workPlan' in state && state.workPlan ? { workPlan: state.workPlan } : ('workPlan' in session && session.workPlan ? { workPlan: session.workPlan } : {})),
       ...('workMode' in state && state.workMode ? { workMode: state.workMode } : ('workMode' in session && session.workMode ? { workMode: session.workMode } : {})),

@@ -11,7 +11,7 @@ import type { TaskBrief } from "./agent-loop.js";
 import { preflightAgentLoop } from './agent-loop-preflight.js';
 import { migrateTaskBrief, summarizeTaskState, updateTaskState, type TaskStateV1 } from "./task-state.js";
 import type { TaskContractV1 } from './task-contract.js';
-import { validateWorkPlan, type WorkMode, type WorkModeStateV1, type WorkPlanV1 } from './work-plan.js';
+import { advanceWorkPlanProgress, normalizeWorkPlan, validateWorkPlan, type WorkMode, type WorkModeStateV1, type WorkPlanV1, type WorkPlanEvidence } from './work-plan.js';
 import { evaluateCompletionGate, type CompletionRejectionReason } from "./completion-gate.js";
 import { ModelStepRunner } from "./model-step.js";
 import { RequestContextBuilder } from "./request-context.js";
@@ -130,7 +130,7 @@ export class ChatSession {
     this.context = options.context;
     this.task = options.task;
     this.taskContract = options.taskContract;
-    this.workPlan = options.workPlan;
+    this.workPlan = options.workPlan ? normalizeWorkPlan(options.workPlan) : undefined;
     this.workMode = options.workMode ?? (options.enablePlanAct ? { version: 1, mode: 'plan', revision: 1, updatedAt: new Date().toISOString() } : { version: 1, mode: 'act', revision: 0, updatedAt: new Date().toISOString() });
     this.skillCatalog = options.skillCatalog;
     this.capabilityActivation = options.capabilityActivation;
@@ -229,7 +229,7 @@ export class ChatSession {
   async previewWorkspaceCheckpoint(id: string) { if (!this.checkpointStore) throw new Error('CHECKPOINT_UNAVAILABLE'); return this.checkpointStore.preview(id); }
   async restoreWorkspaceCheckpoint(id: string, approved: boolean) { if (!this.checkpointStore) throw new Error('CHECKPOINT_UNAVAILABLE'); await this.checkpointStore.restore(id, approved); }
   async setWorkMode(mode: WorkMode, explicitUserApproval = false): Promise<void> {
-    if (mode === 'act' && (!explicitUserApproval || !this.workPlan)) throw new Error('ACT_REQUIRES_EXPLICIT_PLAN_APPROVAL');
+    if (mode === 'act' && (!explicitUserApproval || !this.workPlan || this.workPlan.status !== 'active')) throw new Error('ACT_REQUIRES_EXPLICIT_PLAN_APPROVAL');
     if (mode === 'act') {
       this.workPlan = validateWorkPlan({ ...this.workPlan!, approvedRevision: this.workPlan!.revision });
       this.workMode = { version: 1, mode, revision: this.workMode.revision + 1, actApprovedRevision: this.workPlan.revision, updatedAt: new Date().toISOString() };
@@ -238,11 +238,62 @@ export class ChatSession {
   }
   async updateWorkPlan(plan: WorkPlanV1, expectedRevision: number): Promise<void> {
     if ((this.workPlan?.revision ?? 0) !== expectedRevision) throw new Error('PLAN_REVISION_CONFLICT');
-    const next = validateWorkPlan({ ...plan, revision: expectedRevision + 1, planId: this.workPlan?.planId ?? plan.planId, updatedAt: new Date().toISOString() });
+    if (this.workMode.mode === 'act') {
+      if (!this.workPlan || this.workPlan.approvedRevision !== this.workPlan.revision || this.workMode.actApprovedRevision !== this.workPlan.revision) throw new Error('ACT_REQUIRES_EXPLICIT_PLAN_APPROVAL');
+      const next = advanceWorkPlanProgress(this.workPlan, { ...plan, revision: this.workPlan.revision, ...(this.workPlan.approvedRevision !== undefined ? { approvedRevision: this.workPlan.approvedRevision } : {}) }, this.collectWorkPlanEvidence());
+      this.workPlan = next;
+      await this.persistState();
+      await this.onSessionEvent?.({ type: 'plan_updated', plan: next });
+      return;
+    }
+    if (plan.status !== 'active') throw new Error('PLAN_REVISION_MUST_BE_ACTIVE');
+    const evidence = this.collectWorkPlanEvidence();
+    for (const step of plan.steps) {
+      if (step.status === 'in_progress' || step.status === 'blocked') throw new Error('PLAN_REVISION_PROGRESS_INVALID');
+      const refs = step.evidenceCallIds ?? [];
+      if (step.status === 'pending' && refs.length) throw new Error('PLAN_REVISION_PROGRESS_INVALID');
+      if (step.status !== 'completed') continue;
+      if (!refs.length || refs.some(id => !evidence.get(id)?.success)) throw new Error('PLAN_COMPLETION_EVIDENCE_REQUIRED');
+      if (step.kind === 'change' && !refs.some(id => evidence.get(id)?.kind === 'change')) throw new Error('PLAN_CHANGE_EVIDENCE_REQUIRED');
+      if (step.kind === 'verify' && !refs.some(id => evidence.get(id)?.kind === 'verification')) throw new Error('PLAN_VERIFICATION_EVIDENCE_REQUIRED');
+      if (step.dependencies.some(id => !plan.steps.find(candidate => candidate.id === id && candidate.status === 'completed'))) throw new Error('PLAN_DEPENDENCY_PENDING');
+    }
+    const { approvedRevision: _approvedRevision, ...unapproved } = plan;
+    const next = normalizeWorkPlan({ ...unapproved, revision: expectedRevision + 1, progressRevision: 0, replanCount: this.workPlan?.replanCount ?? 0, planId: this.workPlan?.planId ?? plan.planId, updatedAt: new Date().toISOString() });
     this.workPlan = next;
     this.workMode = { version: 1, mode: 'plan', revision: this.workMode.revision + 1, updatedAt: new Date().toISOString() };
     await this.persistState();
     await this.onSessionEvent?.({ type: 'plan_updated', plan: next });
+  }
+
+  async updateWorkPlanStep(stepId: string, status: WorkPlanV1['steps'][number]['status'], evidenceCallIds: readonly string[] = []): Promise<void> {
+    if (this.workMode.mode !== 'act' || !this.workPlan) throw new Error('PLAN_PROGRESS_REQUIRES_ACT');
+    const selected = this.workPlan.steps.find(step => step.id === stepId);
+    if (!selected) throw new Error('PLAN_STEP_NOT_FOUND');
+    const steps = this.workPlan.steps.map(step => step.id === stepId ? { ...step, status, evidenceCallIds: evidenceCallIds.length ? [...evidenceCallIds] : step.evidenceCallIds ?? [] } : step);
+    const planStatus = status === 'blocked' ? 'blocked' : steps.every(step => step.status === 'completed') ? 'completed' : 'active';
+    await this.updateWorkPlan({ ...this.workPlan, steps, status: planStatus }, this.workPlan.revision);
+  }
+
+  private collectWorkPlanEvidence(): Map<string, WorkPlanEvidence> {
+    const evidence = new Map<string, WorkPlanEvidence>();
+    for (const turn of this.journal.turns) for (const action of turn.actions) {
+      if (action.type === 'tool' && !evidence.has(action.callId)) evidence.set(action.callId, { callId: action.callId, success: action.ok, kind: 'tool' });
+      else if (action.type === 'workspace_mutation') evidence.set(action.callId, { callId: action.callId, success: true, kind: 'change' });
+      else if (action.type === 'verification') evidence.set(action.callId, { callId: action.callId, success: action.outcome === 'passed', kind: 'verification' });
+    }
+    return evidence;
+  }
+
+  private async enterPlanForReplan(reason: string): Promise<boolean> {
+    if (!this.workPlan || this.workMode.mode !== 'act') return false;
+    const replanCount = this.workPlan.replanCount ?? 0;
+    const { approvedRevision: _approvedRevision, ...unapproved } = this.workPlan;
+    this.workPlan = validateWorkPlan({ ...unapproved, status: 'blocked', replanCount: replanCount >= 2 ? 2 : replanCount + 1, replanReason: reason.slice(0, 1000), updatedAt: new Date().toISOString() });
+    this.workMode = { version: 1, mode: 'plan', revision: this.workMode.revision + 1, updatedAt: new Date().toISOString() };
+    await this.persistState();
+    await this.onSessionEvent?.({ type: 'plan_updated', plan: this.workPlan });
+    return replanCount < 2;
   }
 
   get skillCatalogSnapshot(): import("../sessions/store.js").StoredSkillCatalogV1 | undefined { return this.skillCatalog; }
@@ -389,6 +440,7 @@ export class ChatSession {
           toolResultIds,
           verificationStatus: deriveVerificationStatus(this.journal),
           priorRejections: completionRejections,
+          ...(this.workMode.mode === 'act' && this.workPlan ? { workPlan: this.workPlan } : {}),
           ...(this.taskContract ? { contract: this.taskContract } : {}),
         });
         if (!completion.accepted) {
@@ -521,7 +573,7 @@ export class ChatSession {
         }
         if (execution.ok && (call.name === "write_text_file" || call.name === "edit_text_file")) input.successfulWrites.add(writeKey);
         const actionTurn = this.journal.turns.at(-1);
-        if (actionTurn && execution.ok && (call.name === "write_text_file" || call.name === "edit_text_file")) (actionTurn.actions as TurnActionRecord[]).push({ type: "workspace_mutation", step: input.round, tool: call.name });
+        if (actionTurn && execution.ok && (call.name === "write_text_file" || call.name === "edit_text_file")) (actionTurn.actions as TurnActionRecord[]).push({ type: "workspace_mutation", step: input.round, callId: call.id, tool: call.name });
         if (execution.ok && execution.details?.type === "task_state_update") {
           try {
             const currentTask = this.task && "version" in this.task ? this.task : this.task ? migrateTaskBrief(this.task, this.messages) : undefined;
@@ -532,12 +584,25 @@ export class ChatSession {
           } catch (error) { execution = { ok: false, code: "EXECUTION_FAILED", message: error instanceof Error ? error.message : "TaskState update failed" }; }
         }
         if (execution.ok && execution.details?.type === 'work_plan_update') {
-          try { await this.updateWorkPlan(execution.details.plan, this.workPlan?.revision ?? 0); execution = { ...execution, content: `Plan 已保存，revision=${this.workPlan!.revision}。用户仍需显式批准后才能进入 Act。` }; }
+          try {
+            await this.updateWorkPlan(execution.details.plan, this.workPlan?.revision ?? 0);
+            execution = { ...execution, content: this.workMode.mode === 'act' ? `Plan 进度已保存：progressRevision=${this.workPlan!.progressRevision ?? 0}。结构 revision ${this.workPlan!.revision} 的用户批准仍有效。` : `Plan 已保存，revision=${this.workPlan!.revision}。用户仍需显式批准后才能进入 Act。` };
+          }
           catch (error) { execution = { ok: false, code: 'EXECUTION_FAILED', message: error instanceof Error ? error.message : 'PLAN_UPDATE_FAILED' }; }
+        }
+        if (execution.ok && execution.details?.type === 'work_plan_progress') {
+          try {
+            await this.updateWorkPlanStep(execution.details.stepId, execution.details.status, execution.details.evidenceCallIds);
+            execution = { ...execution, content: `Plan 步骤 ${execution.details.stepId} 已保存为 ${execution.details.status}；progressRevision=${this.workPlan!.progressRevision ?? 0}。` };
+          } catch (error) { execution = { ok: false, code: 'EXECUTION_FAILED', message: error instanceof Error ? error.message : 'PLAN_PROGRESS_UPDATE_FAILED' }; }
         }
         if (execution.ok && execution.details?.type === "settlement_proposal") {
           const proposal = execution.details.proposal;
           if (proposal.kind === 'submit' && proposal.text?.trim()) {
+            if (this.workMode.mode === 'act' && this.workPlan && (this.workPlan.status !== 'completed' || this.workPlan.steps.some(step => step.status !== 'completed' || !step.evidenceCallIds?.length))) {
+              execution = { ok: false, code: 'EXECUTION_FAILED', message: 'PLAN_STEPS_INCOMPLETE' };
+              terminalResponse = undefined;
+            } else {
             // The model may only submit a candidate. Runtime owns the terminal
             // outcome; v0.6.1 accepts a non-empty candidate after tool results
             // have been observed and never trusts a model-supplied status.
@@ -548,6 +613,7 @@ export class ChatSession {
               ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}),
               ...(input.responseModel ? { model: input.responseModel } : {}),
             };
+            }
           } else if (proposal.kind === 'blocked' && proposal.reason?.trim() && proposal.attempts?.length) {
             const detail = proposal.needsUser ? `${proposal.reason.trim()}；需要用户：${proposal.needsUser.trim()}` : proposal.reason.trim();
             terminalResponse = { text: `当前无法安全完成：${detail}`, outcome: 'blocked', ...(input.evidence.length ? { evidence: input.evidence } : {}), ...(input.responseModel ? { model: input.responseModel } : {}) };
@@ -560,17 +626,35 @@ export class ChatSession {
           const currentRevision = input.round;
           if (proposal.strategyRevision <= currentRevision) {
             execution = { ok: false, code: 'EXECUTION_FAILED', message: 'REPLAN_REVISION_NOT_NEW' };
+          } else if (!(await this.enterPlanForReplan(proposal.summary))) {
+            execution = { ok: false, code: 'EXECUTION_FAILED', message: (this.workPlan?.replanCount ?? 0) >= 2 ? 'PLAN_REPLAN_LIMIT' : 'PLAN_REPLAN_UNAVAILABLE' };
+            terminalResponse = { text: '重规划次数已达上限或当前没有可重规划的已批准 Plan；已停止执行，需要用户检查并调整计划。', outcome: 'blocked', evidence: input.evidence, ...(input.responseModel ? { model: input.responseModel } : {}) };
           } else {
-            execution = { ...execution, content: `重规划已记录（策略 ${proposal.strategyRevision}）：${proposal.summary}；下一步：${proposal.nextStep}` };
+            execution = { ...execution, content: `已切回 Plan 模式并记录重规划原因：${proposal.summary}；下一步建议：${proposal.nextStep}。请提交新的完整 Work Plan；它需要用户重新批准后才能执行。` };
           }
         }
-        if (actionTurn && execution.ok && execution.details?.type === "command_execution" && execution.details.purpose === "verification") (actionTurn.actions as TurnActionRecord[]).push({ type: "verification", step: input.round, outcome: execution.details.exitCode === 0 && !execution.details.timedOut && !execution.details.aborted && execution.details.signal === null ? "passed" : "failed" });
+        if (actionTurn && execution.ok && execution.details?.type === "command_execution" && execution.details.purpose === "verification") {
+          const passed = execution.details.exitCode === 0 && !execution.details.timedOut && !execution.details.aborted && execution.details.signal === null;
+          (actionTurn.actions as TurnActionRecord[]).push({ type: "verification", step: input.round, callId: call.id, outcome: passed ? "passed" : "failed" });
+          if (!passed) {
+            const key = `verification:${call.arguments}`;
+            const count = (input.failures.get(key) ?? 0) + 1;
+            input.failures.set(key, count);
+            if (count >= 2) {
+              if (await this.enterPlanForReplan('同一验证动作连续失败。')) execution = { ...execution, content: '相同验证连续失败，已切回 Plan 模式；请提交新的完整计划并等待用户批准后再执行。' };
+              else { execution = { ...execution, content: '相同验证连续失败且重规划额度已耗尽；需要用户介入。' }; terminalResponse = { text: '验证连续失败，且重规划次数已达上限；已停止执行，需要用户检查。', outcome: 'blocked', evidence: input.evidence, ...(input.responseModel ? { model: input.responseModel } : {}) }; }
+            }
+          }
+        }
         if (!execution.ok) {
           if (execution.code === "USER_REJECTED") terminalResponse = { text: "用户拒绝了工具调用，已停止本轮执行。", outcome: "blocked", evidence: input.evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}), ...(input.responseModel ? { model: input.responseModel } : {}) };
           const key = `${call.name}:${call.arguments}:${execution.code}`;
           const count = (input.failures.get(key) ?? 0) + 1;
           input.failures.set(key, count);
-          if (count >= 2) terminalResponse = { text: "工具调用连续失败，已停止自动重试。", outcome: "blocked", evidence: input.evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}), ...(input.responseModel ? { model: input.responseModel } : {}) };
+          if (count >= 2) {
+            if (await this.enterPlanForReplan(`工具 ${call.name} 连续失败。`)) execution = { ...execution, message: '相同工具动作连续失败，已切回 Plan 模式；请提出新的完整方案并等待用户重新批准。' };
+            else terminalResponse = { text: "工具调用连续失败或重规划额度已耗尽；已停止自动执行。", outcome: "blocked", evidence: input.evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}), ...(input.responseModel ? { model: input.responseModel } : {}) };
+          }
         }
       } finally {
         const turn = this.journal.turns.at(-1);
@@ -581,7 +665,7 @@ export class ChatSession {
       }
       if (!execution.ok && execution.code === "TURN_CANCELLED") throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
       this.onToolsUsed?.([call.name]);
-      const preparedResult = prepareToolResultMessage(call.id, execution);
+      const preparedResult = prepareToolResultMessage(call.id, execution, this.workMode.revision > 0);
       this.setTurnPhase("observing", { round: input.round, tool: call.name });
       if (preparedResult.pruning.pruned) this.onDiagnostic?.({ code: "TOOL_RESULT_PRUNED", component: "context", severity: "debug", detail: `tool=${call.name};originalChars=${preparedResult.pruning.originalChars};retainedChars=${preparedResult.pruning.retainedChars}` });
       const evidenceCards = buildEvidenceCards(call, execution);

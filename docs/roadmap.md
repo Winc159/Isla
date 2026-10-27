@@ -19,8 +19,9 @@ Isla 的目标是成为长期运行、贴合个人习惯的完整 Agent 产品�
 1. v0.7.0：Runtime Kernel，建立 Service/Scope/Effect 和 Agent 生命周期。
 2. v0.7.1：Event Session 与可恢复 App Server 协议。
 3. v0.7.2：分类审批、长命令、受管依赖和执行环境（已完成；真实通用执行闭环 92/100）。
-4. v0.7.3：真正的 Plan/Act 与 Workspace Checkpoint（下一阶段）。
-5. v0.8.0：主 Agent Web UI。
+4. v0.7.3：真正的 Plan/Act 与 Workspace Checkpoint（已完成；实现和验收记录见版本计划）。
+5. v0.7.4：Plan 步骤进度/证据、有界重规划、Checkpoint 差异与 Session 恢复闭环（已完成；自动验收 712 通过，真实对话 100/100）。
+6. v0.8.0：主 Agent Web UI。
 
 ## 中期
 

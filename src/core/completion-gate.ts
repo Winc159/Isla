@@ -24,6 +24,7 @@ export interface CompletionGateInput {
   readonly verificationStatus?: VerificationStatus;
   readonly priorRejections?: readonly CompletionRejectionReason[];
   readonly contract?: { readonly status: "active" | "blocked" | "completed"; readonly deliverables: readonly string[]; readonly steps: readonly { readonly status: string }[]; readonly evidence: readonly unknown[] };
+  readonly workPlan?: { readonly status: "active" | "blocked" | "completed"; readonly steps: readonly { readonly status: string; readonly evidenceCallIds?: readonly string[] }[] };
   readonly completedDeliverableCount?: number;
   readonly satisfiedContractEvidenceCount?: number;
 }
@@ -62,7 +63,9 @@ export function evaluateCompletionGate(input: CompletionGateInput): CompletionGa
               ? "verification_missing_after_mutation"
               : input.verificationStatus === "failed_after_last_change"
                 ? "verification_failed_after_mutation"
-                : input.contract && input.contract.status === "active" && input.contract.steps.some(step => step.status !== "completed")
+                : input.workPlan && input.workPlan.status !== "blocked" && (input.workPlan.status !== "completed" || input.workPlan.steps.some(step => step.status !== "completed" || !step.evidenceCallIds?.length))
+                  ? "task_step_pending"
+                  : input.contract && input.contract.status === "active" && input.contract.steps.some(step => step.status !== "completed")
                   ? "task_step_pending"
                   : input.contract && input.contract.status === "active" && input.contract.deliverables.length > (input.completedDeliverableCount ?? 0)
                     ? "deliverable_missing"

@@ -9,8 +9,60 @@ export function createControlCapability(): ToolCapability {
     instructions: 'Host 控制面：提交最终候选结果或报告当前阻塞。调用只产生提案，最终状态由 Runtime 判定。',
     tools: [
       {
-        definition: { name: 'update_work_plan', description: '在 plan 模式下创建或修订完整工作计划。Runtime 自动分配 revision；绝不可通过此工具批准 Act。', parameters: { type: 'object', additionalProperties: false, required: ['planId','goal','constraints','assumptions','steps','risks','verification','openQuestions','status'], properties: { planId:{type:'string'},goal:{type:'string'},constraints:{type:'array',items:{type:'string'}},assumptions:{type:'array',items:{type:'string'}},steps:{type:'array',items:{type:'object',additionalProperties:false,required:['id','title','status','dependencies'],properties:{id:{type:'string'},title:{type:'string'},status:{type:'string',enum:['pending','in_progress','completed','blocked']},dependencies:{type:'array',items:{type:'string'}}}}},risks:{type:'array',items:{type:'string'}},verification:{type:'array',items:{type:'string'}},openQuestions:{type:'array',items:{type:'string'}},status:{type:'string',enum:['active','blocked','completed']}} } },
-        async execute(raw) { const plan = JSON.parse(raw) as import('../core/work-plan.js').WorkPlanV1; return { content:'Plan update submitted for Runtime validation.', details:{type:'work_plan_update', plan:{...plan,version:1,revision:0,updatedAt:new Date().toISOString()} } }; },
+        definition: {
+          name: 'update_work_plan',
+          description: 'Plan 模式使用 action=revise 提交完整计划；Act 模式使用 action=progress 更新一个步骤的状态。completed/blocked 必须引用已成功/失败的真实 Tool Call ID。结构修改由 Runtime 增加 revision 并撤销批准；进度更新只增加 progressRevision。',
+          parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['action'],
+            properties: {
+              action: { type: 'string', enum: ['revise','progress'] },
+              stepId: { type: 'string' },
+              stepStatus: { type: 'string', enum: ['pending','in_progress','completed','blocked'] },
+              evidenceCallIds: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+              planId: { type: 'string' },
+              goal: { type: 'string' },
+              constraints: { type: 'array', items: { type: 'string' } },
+              assumptions: { type: 'array', items: { type: 'string' } },
+              steps: {
+                type: 'array',
+                items: {
+                  type: 'object', additionalProperties: false,
+                  required: ['id','title','status','dependencies'],
+                  properties: {
+                    id: { type: 'string' }, title: { type: 'string' },
+                    status: { type: 'string', enum: ['pending','in_progress','completed','blocked'] },
+                    dependencies: { type: 'array', items: { type: 'string' } },
+                    kind: { type: 'string', enum: ['inspect','change','verify','other'] },
+                    evidenceCallIds: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+                  },
+                },
+              },
+              risks: { type: 'array', items: { type: 'string' } },
+              verification: { type: 'array', items: { type: 'string' } },
+              openQuestions: { type: 'array', items: { type: 'string' } },
+              status: { type: 'string', enum: ['active','blocked','completed'] },
+            },
+          },
+        },
+        async execute(raw) {
+          const args = parseObject(raw);
+          if (args.action === 'progress') {
+            const stepId = requiredString(args.stepId, MAX_ITEM);
+            const status = args.stepStatus;
+            if (!['pending','in_progress','completed','blocked'].includes(String(status))) throw new Error('WORK_PLAN_PROGRESS_INVALID');
+            const evidenceCallIds = optionalStrings(args.evidenceCallIds, MAX_ITEM) ?? [];
+            return { content: 'Work Plan progress submitted for Runtime evidence validation.', details: { type: 'work_plan_progress', stepId, status: status as import('../core/work-plan.js').WorkPlanStep['status'], evidenceCallIds } };
+          }
+          if (args.action !== 'revise') throw new Error('WORK_PLAN_ACTION_INVALID');
+          if (args.planId === undefined || args.goal === undefined || args.steps === undefined) throw new Error('WORK_PLAN_REVISION_INVALID');
+          if (args.verification === undefined) args.verification = ['Run the relevant automated tests and inspect the resulting diff.'];
+          const defaults = { constraints: [], assumptions: [], risks: [], openQuestions: [], status: 'active' };
+          for (const [key, value] of Object.entries(defaults)) if (args[key] === undefined) args[key] = value;
+          const plan = args as unknown as import('../core/work-plan.js').WorkPlanV1;
+          return { content:'Plan update submitted for Runtime validation.', details:{type:'work_plan_update', plan:{...plan,version:1,revision:0,updatedAt:new Date().toISOString()} } };
+        },
       },
       {
         definition: {

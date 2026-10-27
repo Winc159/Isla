@@ -7,8 +7,8 @@ export interface PreparedToolResultMessage {
   readonly pruning: PrunedToolResult;
 }
 
-export function prepareToolResultMessage(toolCallId: string, result: ToolExecutionResult): PreparedToolResultMessage {
-  const content = result.ok ? result.content : `[${result.code}] ${result.message}`;
+export function prepareToolResultMessage(toolCallId: string, result: ToolExecutionResult, includeEvidenceCallId = false): PreparedToolResultMessage {
+  const content = result.ok ? `${result.content}${includeEvidenceCallId ? `\nEvidence Tool Call ID: ${toolCallId}` : ''}` : `[${result.code}] ${result.message}`;
   const pruning = pruneToolResult(content);
   return {
     message: { role: "tool", toolCallId, content: pruning.content },

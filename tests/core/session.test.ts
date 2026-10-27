@@ -6,6 +6,7 @@ import { createProjectFilesCapability } from "../../src/tools/project-files.js";
 import { createCommandExecutionCapability } from "../../src/tools/command-execution.js";
 import { createTaskStateCapability } from "../../src/tools/task-state.js";
 import { createControlCapability } from "../../src/tools/control.js";
+import type { WorkPlanV1 } from '../../src/core/work-plan.js';
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +17,78 @@ beforeEach(async () => {
 });
 afterEach(async () => { await rm(sessionRoot, { recursive: true, force: true }); });
 describe("session", () => {
+  it('persists evidence-backed progress without invalidating Act approval', async () => {
+    const plan: WorkPlanV1 = { version:1,planId:'progress-plan',revision:1,progressRevision:0,replanCount:0,goal:'Fix and verify',constraints:[],assumptions:[],steps:[{id:'inspect',title:'Inspect',kind:'inspect',status:'pending',dependencies:[]},{id:'change',title:'Change',kind:'change',status:'pending',dependencies:['inspect']},{id:'verify',title:'Verify',kind:'verify',status:'pending',dependencies:['change']}],risks:[],verification:['tests pass'],openQuestions:[],status:'active',approvedRevision:1,updatedAt:new Date().toISOString() };
+    const journal = { version:1 as const, turns:[{id:'evidence-turn',sequence:1,startedAt:new Date().toISOString(),endedAt:new Date().toISOString(),status:'completed' as const,userMessageIndex:0,assistantMessageIndex:1,attempts:[],actions:[{type:'tool' as const,step:1,callId:'inspect-call',tool:'read_text_file',ok:true},{type:'workspace_mutation' as const,step:2,callId:'change-call',tool:'edit_text_file' as const},{type:'tool' as const,step:2,callId:'change-call',tool:'edit_text_file',ok:true},{type:'verification' as const,step:3,callId:'verify-call',outcome:'passed' as const},{type:'tool' as const,step:3,callId:'verify-call',tool:'run_command',ok:true}]}] };
+    const persisted: Array<{workPlan?:WorkPlanV1}> = [];
+    const session = new ChatSession(new FakeProvider([]),{workPlan:plan,workMode:{version:1,mode:'act',revision:1,actApprovedRevision:1,updatedAt:new Date().toISOString()},journal,messages:[{role:'user',content:'task'},{role:'assistant',content:'started'}],onSessionStateChanged:async state=>{persisted.push(state);}});
+    const saveProgress = async (steps: WorkPlanV1['steps'], status: WorkPlanV1['status']='active') => session.updateWorkPlan({...session.currentWorkPlan!,steps,status},1);
+    await saveProgress([{...plan.steps[0]!,status:'in_progress'},plan.steps[1]!,plan.steps[2]!]);
+    await saveProgress([{...plan.steps[0]!,status:'completed',evidenceCallIds:['inspect-call']},plan.steps[1]!,plan.steps[2]!]);
+    await saveProgress([session.currentWorkPlan!.steps[0]!,{...plan.steps[1]!,status:'in_progress'},plan.steps[2]!]);
+    await saveProgress([session.currentWorkPlan!.steps[0]!,{...plan.steps[1]!,status:'completed',evidenceCallIds:['change-call']},plan.steps[2]!]);
+    await saveProgress([session.currentWorkPlan!.steps[0]!,session.currentWorkPlan!.steps[1]!,{...plan.steps[2]!,status:'in_progress'}]);
+    await saveProgress([session.currentWorkPlan!.steps[0]!,session.currentWorkPlan!.steps[1]!,{...plan.steps[2]!,status:'completed',evidenceCallIds:['verify-call']}],'completed');
+    expect(session.currentWorkPlan).toMatchObject({revision:1,progressRevision:6,approvedRevision:1,status:'completed',steps:[{status:'completed',evidenceCallIds:['inspect-call']},{status:'completed',evidenceCallIds:['change-call']},{status:'completed',evidenceCallIds:['verify-call']}]});
+    expect(persisted.at(-1)?.workPlan).toEqual(session.currentWorkPlan);
+    expect(session.currentWorkMode).toMatchObject({mode:'act',actApprovedRevision:1});
+  });
+
+  it('returns to Plan after an explicit bounded replan proposal and requires a new approval', async () => {
+    class ReplanProvider extends FakeProvider {
+      private calls=0;
+      override async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+        this.requests.push(request); this.calls++;
+        if(this.calls===1)return {text:'',toolCalls:[{id:'replan-1',name:'propose_replan',arguments:JSON.stringify({strategyRevision:2,summary:'当前方法不可行',nextStep:'先检查依赖假设'})}]};
+        return {text:'已记录新计划方向，等待用户重新批准。'};
+      }
+    }
+    const plan:WorkPlanV1={version:1,planId:'replan-plan',revision:1,progressRevision:0,replanCount:0,goal:'Finish work',constraints:[],assumptions:[],steps:[{id:'step-1',title:'Implement',status:'in_progress',dependencies:[]}],risks:[],verification:['tests pass'],openQuestions:[],status:'active',approvedRevision:1,updatedAt:new Date().toISOString()};
+    const session=new ChatSession(new ReplanProvider([]),{enableTools:true,capabilities:[createControlCapability()],workPlan:plan,workMode:{version:1,mode:'act',revision:1,actApprovedRevision:1,updatedAt:new Date().toISOString()}});
+    await expect(session.send('继续任务')).resolves.toMatchObject({text:'已记录新计划方向，等待用户重新批准。'});
+    expect(session.currentWorkMode.mode).toBe('plan');
+    expect(session.currentWorkPlan).toMatchObject({revision:1,replanCount:1,status:'blocked'});
+    expect(session.currentWorkPlan?.replanReason).toContain('当前方法不可行');
+    expect(session.currentWorkPlan?.approvedRevision).toBeUndefined();
+    expect(session.currentWorkMode.actApprovedRevision).toBeUndefined();
+    await expect(session.setWorkMode('act',true)).rejects.toThrow('ACT_REQUIRES_EXPLICIT_PLAN_APPROVAL');
+  });
+
+  it('increments the structural revision and invalidates approval for a Plan-mode edit', async () => {
+    const plan:WorkPlanV1={version:1,planId:'revision-plan',revision:1,progressRevision:4,replanCount:0,goal:'Old goal',constraints:[],assumptions:[],steps:[{id:'step-1',title:'Do work',status:'pending',dependencies:[]}],risks:[],verification:[],openQuestions:[],status:'active',approvedRevision:1,updatedAt:new Date().toISOString()};
+    const session=new ChatSession(new FakeProvider([]),{workPlan:plan,workMode:{version:1,mode:'plan',revision:2,updatedAt:new Date().toISOString()}});
+    await session.updateWorkPlan({...plan,goal:'New goal'},1);
+    expect(session.currentWorkPlan).toMatchObject({revision:2,progressRevision:0,goal:'New goal'});
+    expect(session.currentWorkPlan?.approvedRevision).toBeUndefined();
+    expect(session.currentWorkMode.mode).toBe('plan');
+  });
+
+  it('accepts pre-completed Plan steps only when current Session evidence supports them', async () => {
+    const evidenceJournal={version:1 as const,turns:[{id:'inspect-turn',sequence:1,startedAt:new Date().toISOString(),endedAt:new Date().toISOString(),status:'completed' as const,userMessageIndex:0,assistantMessageIndex:1,attempts:[],actions:[{type:'tool' as const,step:1,callId:'plan-read',tool:'read_text_file',ok:true}]}]};
+    const session=new ChatSession(new FakeProvider([]),{workMode:{version:1,mode:'plan',revision:1,updatedAt:new Date().toISOString()},journal:evidenceJournal});
+    const planned:WorkPlanV1={version:1,planId:'evidence-plan',revision:0,goal:'Fix and verify',constraints:[],assumptions:[],steps:[{id:'inspect',title:'Inspect',kind:'inspect',status:'completed',dependencies:[],evidenceCallIds:['plan-read']},{id:'change',title:'Change',kind:'change',status:'pending',dependencies:['inspect']},{id:'verify',title:'Verify',kind:'verify',status:'pending',dependencies:['change']}],risks:[],verification:['tests pass'],openQuestions:[],status:'active',updatedAt:new Date().toISOString()};
+    await session.updateWorkPlan(planned,0);
+    expect(session.currentWorkPlan?.revision).toBe(1);
+    expect(session.currentWorkPlan?.steps[0]).toMatchObject({id:'inspect',status:'completed',evidenceCallIds:['plan-read']});
+    const nextSession=new ChatSession(new FakeProvider([]),{workMode:{version:1,mode:'plan',revision:1,updatedAt:new Date().toISOString()}});
+    await expect(nextSession.updateWorkPlan(planned,0)).rejects.toThrow('PLAN_COMPLETION_EVIDENCE_REQUIRED');
+  });
+
+  it('persists the replan cap as blocked and revokes Act after the limit', async () => {
+    class ReplanProvider extends FakeProvider {
+      override async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+        this.requests.push(request);
+        return {text:'',toolCalls:[{id:'replan-limit',name:'propose_replan',arguments:JSON.stringify({strategyRevision:2,summary:'再次失败',nextStep:'需要用户检查'})}]};
+      }
+    }
+    const plan:WorkPlanV1={version:1,planId:'replan-cap',revision:3,progressRevision:2,replanCount:2,goal:'Finish work',constraints:[],assumptions:[],steps:[{id:'step-1',title:'Implement',status:'in_progress',dependencies:[]}],risks:[],verification:['tests pass'],openQuestions:[],status:'active',approvedRevision:3,updatedAt:new Date().toISOString()};
+    const session=new ChatSession(new ReplanProvider([]),{enableTools:true,capabilities:[createControlCapability()],workPlan:plan,workMode:{version:1,mode:'act',revision:3,actApprovedRevision:3,updatedAt:new Date().toISOString()}});
+    await expect(session.send('继续任务')).resolves.toMatchObject({outcome:'blocked'});
+    expect(session.currentWorkMode.mode).toBe('plan');
+    expect(session.currentWorkPlan).toMatchObject({status:'blocked',replanCount:2,replanReason:'再次失败'});
+    expect(session.currentWorkPlan?.approvedRevision).toBeUndefined();
+  });
+
   it("closes idempotently and rejects new turns after shutdown", async () => {
     const session = new ChatSession(new FakeProvider([{ text: "响应" }]));
     await session.close();

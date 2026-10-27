@@ -5,6 +5,7 @@ import { loadOrCreateLocalRuntimeConfig } from '../config/local-runtime.js';
 import { workspaceKey } from '../sessions/workspace.js';
 import { resolve } from 'node:path';
 import type { HostTurnEvent } from '../host/server.js';
+import { formatWorkspaceCheckpointPreview, type WorkspaceCheckpointPreview } from '../checkpoints/workspace-checkpoint.js';
 
 async function runQuickPrompt(client: ResidentHostClient, text: string, key: string, root: string, newSession: boolean, output: Writable): Promise<void> {
   let active: { readonly sessionId: string; readonly turnId: string } | undefined;
@@ -127,8 +128,8 @@ export async function runRemoteCli(invocation: RemoteCliInvocation, input: Reada
     if (text === '/plan approve') { const current = await client.workPlan(sessionId); if (!current.plan) output.write('当前没有可批准的计划。请先让 Isla 制定计划。\n'); else { await client.setWorkMode(sessionId, root, 'act', current.plan.revision); output.write(`已批准 Plan revision ${current.plan.revision}，进入 Act 模式。\n`); } lines.prompt(); return; }
     if (text === '/plan mode plan' || text === '/plan mode review') { const mode = text.endsWith('review') ? 'review' : 'plan'; await client.setWorkMode(sessionId, root, mode); output.write(`当前模式：${mode}\n`); lines.prompt(); return; }
     if(text==='/checkpoint'){writeJson('/checkpoint',await client.checkpoints(sessionId,root));lines.prompt();return;}
-    if(text.startsWith('/checkpoint preview ')){const id=text.slice(20).trim();writeJson('/checkpoint preview',await client.checkpointOperation(sessionId,root,'preview',id));lines.prompt();return;}
-    if(text.startsWith('/checkpoint restore ')){const id=text.slice(20).trim();const preview=await client.checkpointOperation(sessionId,root,'preview',id);writeJson('恢复预览（确认后再执行 /checkpoint restore-confirm <id>）',preview);lines.prompt();return;}
+    if(text.startsWith('/checkpoint preview ')){const id=text.slice(20).trim();const preview=await client.checkpointOperation(sessionId,root,'preview',id) as WorkspaceCheckpointPreview;output.write(`${formatWorkspaceCheckpointPreview(preview)}\n`);lines.prompt();return;}
+    if(text.startsWith('/checkpoint restore ')){const id=text.slice(20).trim();const preview=await client.checkpointOperation(sessionId,root,'preview',id) as WorkspaceCheckpointPreview;output.write(`${formatWorkspaceCheckpointPreview(preview)}\n恢复预览已显示。再次输入 /checkpoint restore-confirm <id> 执行破坏性恢复。\n`);lines.prompt();return;}
     if(text.startsWith('/checkpoint restore-confirm ')){const id=text.slice(28).trim();writeJson('/checkpoint restore',await client.checkpointOperation(sessionId,root,'restore',id,true));lines.prompt();return;}
     if (text === '/memory' || text.startsWith('/memory ')) { const parts = text.split(/\s+/u); const action = parts[1] ?? 'list'; if (action === 'disable' && parts[2]) { const value = await client.memory('show', parts[2]) as { revision?: number }; if (!Number.isInteger(value.revision)) throw new Error('MEMORY_NOT_FOUND'); writeJson('/memory', await client.disableMemory(parts[2], value.revision!)); } else { const value = await client.memory(action === 'show' ? 'show' : 'list', action === 'show' ? parts[2] : undefined); writeJson('/memory', value); } lines.prompt(); return; }
     if (text === '/model' || text.startsWith('/model ')) { output.write('模型由 Resident Host 启动配置决定，远程交互中不能切换。\n'); lines.prompt(); return; }
