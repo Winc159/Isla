@@ -11,12 +11,14 @@ describe("CLI command registry", () => {
     expect(findCliCommand("/models search qwen")?.inputMode).toBe("line");
     expect(findCliCommand("/mcp check local")?.inputMode).toBe("line");
     expect(findCliCommand("/mcp setup")?.inputMode).toBe("line");
+    expect(findCliCommand("/approval add command-execute run_command . [\"node\"]")?.inputMode).toBe("line");
+    expect(findCliCommand("/approval add process-interact exec_write .")?.inputMode).toBe("line");
     expect(findCliCommand("/skills")?.inputMode).toBe("line");
     expect(findCliCommand("/skill release-check")?.inputMode).toBe("line");
     expect(findCliCommand("你好")).toBeUndefined();
   });
 
   it("lists command names in display order", () => {
-    expect(listCliCommands().map(command => command.name)).toEqual(["/new", "/sessions", "/task", "/skills", "/capabilities", "/context", "/browser", "/memory", "/trace", "/config", "/profile", "/models", "/mcp", "/help", "/exit"]);
+    expect(listCliCommands().map(command => command.name)).toEqual(["/new", "/sessions", "/task", "/skills", "/capabilities", "/context", "/browser", "/approval", "/memory", "/trace", "/config", "/profile", "/models", "/mcp", "/help", "/exit"]);
   });
 });

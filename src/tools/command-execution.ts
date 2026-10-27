@@ -2,10 +2,11 @@ import { relative } from "node:path";
 import { ToolFailure, invalidArguments } from "./errors.js";
 import { runCommand, type CommandRunRequest } from "./subprocess-runner.js";
 import type { Tool, ToolCapability, ToolOutput } from "./types.js";
+import type { ExecutionProcessRegistry } from './process-registry.js';
 
 interface CommandInput { readonly executable?: string; readonly argv?: readonly string[]; readonly command?: string; readonly workdir?: string; readonly timeoutMs?: number; readonly purpose?: "verification" | "other"; }
 
-export function createCommandExecutionCapability(workspaceRoot: string): ToolCapability {
+export function createCommandExecutionCapability(workspaceRoot: string, registry?: ExecutionProcessRegistry, ownerId?: () => string): ToolCapability {
   return {
     id: "command-execution",
     instructions: [
@@ -15,11 +16,11 @@ export function createCommandExecutionCapability(workspaceRoot: string): ToolCap
       "命令的非零退出、超时和标准错误都是执行结果的一部分；读取结果后再决定是否修复或重试。",
       "不要把 API Key、令牌或私人内容放入命令。命令执行需要用户批准。",
     ].join("\n"),
-    tools: [createRunCommandTool(workspaceRoot)],
+    tools: [createRunCommandTool(workspaceRoot, registry, ownerId)],
   };
 }
 
-export function createRunCommandTool(workspaceRoot: string): Tool {
+export function createRunCommandTool(workspaceRoot: string, registry?: ExecutionProcessRegistry, ownerId: () => string = () => 'compat-run-command'): Tool {
   return {
     permission: { kind: "command-execute" },
     definition: {
@@ -48,7 +49,9 @@ export function createRunCommandTool(workspaceRoot: string): Tool {
       const input = parseInput(argumentsJson);
       let result;
       try {
-        result = await runCommand(workspaceRoot, { ...input, ...(options.signal ? { signal: options.signal } : {}) });
+        result = registry && !input.command
+          ? await runThroughRegistry(registry, workspaceRoot, ownerId(), input, options.signal)
+          : await runCommand(workspaceRoot, { ...input, ...(options.signal ? { signal: options.signal } : {}) });
       } catch (error) {
         if (error instanceof ToolFailure) throw error;
         throw new ToolFailure(error instanceof Error && error.message.includes("workdir") ? "SANDBOX_DENIED" : "COMMAND_EXECUTION_FAILED", error instanceof Error ? error.message : String(error));
@@ -75,6 +78,35 @@ export function createRunCommandTool(workspaceRoot: string): Tool {
       };
     },
   };
+}
+
+async function runThroughRegistry(registry: ExecutionProcessRegistry, workspaceRoot: string, ownerId: string, input: CommandInput, signal?: AbortSignal): Promise<Awaited<ReturnType<typeof runCommand>>> {
+  if (!input.executable) throw invalidArguments('run_command requires executable and argv when using the execution runtime');
+  const started = await registry.start({ workspaceRoot, ownerId, executable: input.executable, argv: input.argv ?? [], ...(input.workdir === undefined ? {} : { workdir: input.workdir }), ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }) });
+  let cursor = 0;
+  const output = { stdout: '', stderr: '', stdoutTruncated: false, stderrTruncated: false };
+  try {
+    for (;;) {
+      if (signal?.aborted) await registry.cancel(started.processId, ownerId);
+      const chunk = registry.read(started.processId, cursor, 64_000, ownerId);
+      for (const event of chunk.events) {
+        const field = event.stream;
+        const room = Math.max(0, 64_000 - Buffer.byteLength(output[field], 'utf8'));
+        const encoded = Buffer.from(event.text, 'utf8');
+        const retained = encoded.subarray(0, room).toString('utf8');
+        output[field] += retained;
+        if (retained.length !== event.text.length || chunk.truncated) output[`${field}Truncated`] = true;
+      }
+      cursor = chunk.cursor;
+      const status = registry.status(started.processId, ownerId);
+      if (!status || status.state !== 'running') {
+        return { shell: 'direct', workdir: status?.workdir ?? started.workdir, exitCode: status?.exitCode ?? null, signal: status?.signal ?? null, timedOut: status?.state === 'timed_out', aborted: status?.state === 'cancelled', stdout: { text: output.stdout, truncated: output.stdoutTruncated || chunk.truncated }, stderr: { text: output.stderr, truncated: output.stderrTruncated || chunk.truncated } };
+      }
+      await new Promise(resolveDelay => setTimeout(resolveDelay, 20));
+    }
+  } finally {
+    if (signal?.aborted) await registry.cancel(started.processId, ownerId).catch(() => undefined);
+  }
 }
 
 function parseInput(argumentsJson: string): CommandInput {

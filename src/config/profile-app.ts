@@ -41,6 +41,7 @@ export function profileToAppConfig(profile: StartupProfileV1): AppConfig {
     ...(profile.tools?.webSearch?.enabled && (profile.tools.webSearch.apiKey ?? profile.apiKey) ? { webSearch: normalizeWebSearchConfig(profile.tools.webSearch, profile.tools.webSearch.apiKey ?? profile.apiKey!, profile.tools.webSearch.model ?? profile.model) } : {}),
     ...(profile.mcp?.servers?.length ? { mcpServers: profile.mcp.servers } : {}),
     ...(profile.capabilities ? { capabilityPolicy: profile.capabilities } : {}),
+    ...(profile.execution ? { execution: profile.execution } : {}),
   };
   if (profile.provider === 'local') return { ...common, provider: 'local', baseURL: profile.baseURL, ...(profile.apiKey ? { apiKey: profile.apiKey } : {}) };
   if (profile.provider === 'bailian') return { ...common, provider: 'bailian', baseURL: profile.baseURL, apiKey: profile.apiKey, ...(profile.streaming === undefined ? {} : { streaming: profile.streaming }) };

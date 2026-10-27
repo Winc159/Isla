@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createToolCapabilities } from "../../src/tools/composition.js";
+import { DependencyManager } from '../../src/dependencies/manager.js';
 
 describe("tool capability composition", () => {
   it("always includes project files and omits disabled optional capabilities", () => {
@@ -39,6 +40,14 @@ describe("tool capability composition", () => {
 
     expect(capabilities.map(capability => capability.id)).toEqual(["control", "project-files", "project-discovery", "command-execution", "task-state", "user-interaction"]);
     expect(capabilities[5]?.tools.map(tool => tool.definition.name)).toEqual(["ask_user_question"]);
+  });
+
+  it('exposes generic managed dependency operations only when a manager is supplied', () => {
+    const manager = new DependencyManager({ manifests: [], root: 'D:/isla-test-toolchains' });
+    const capabilities = createToolCapabilities({ workspaceRoot: process.cwd(), dependencyManager: manager });
+    const dependency = capabilities.find(item => item.id === 'managed-dependencies');
+    expect(dependency?.tools.map(tool => tool.definition.name)).toEqual(['dependency_catalog', 'dependency_list', 'dependency_install', 'dependency_uninstall']);
+    expect(dependency?.tools.find(tool => tool.definition.name === 'dependency_install')?.permission).toEqual([{ kind: 'dependency-install' }, { kind: 'network-download' }]);
   });
 
   it("exposes Host settlement controls and ignores model terminal fields", async () => {

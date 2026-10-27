@@ -5,6 +5,7 @@ import { DEFAULT_WEB_FETCH } from './profile-app.js';
 import { parseMcpProfileSettings } from '../mcp/profile-schema.js';
 import { parseCapabilityProfileSettings } from '../capabilities/profile-schema.js';
 import { parseAppearance as parseProfileAppearance, parseMemory as parseProfileMemory, parseRuntime as parseProfileRuntime } from './profile-settings.js';
+import { validateDependencyManifest, type DependencyManifestV1 } from '../dependencies/manager.js';
 
 export interface WebFetchConfig {
   readonly enabled: boolean;
@@ -24,6 +25,13 @@ export interface WebSearchConfig {
   readonly maxResults: number;
   readonly timeoutMs: number;
   readonly maxOutputChars: number;
+}
+
+export interface ExecutionConfig {
+  readonly defaultAdapter?: 'local' | 'managed-toolchain' | 'container';
+  readonly containerEngine?: 'docker' | 'podman';
+  readonly containerImage?: string;
+  readonly dependencies?: readonly DependencyManifestV1[];
 }
 
 export const DEFAULT_BAILIAN_MODEL = 'qwen-plus';
@@ -57,6 +65,7 @@ export type OpenAIConfig = {
   readonly webSearch?: WebSearchConfig;
   readonly mcpServers?: readonly McpServerConfig[];
   readonly capabilityPolicy?: CapabilityPolicy;
+  readonly execution?: ExecutionConfig;
 };
 export type DeepSeekConfig = {
   readonly provider: 'deepseek';
@@ -87,6 +96,7 @@ export type DeepSeekConfig = {
   readonly webSearch?: WebSearchConfig;
   readonly mcpServers?: readonly McpServerConfig[];
   readonly capabilityPolicy?: CapabilityPolicy;
+  readonly execution?: ExecutionConfig;
 };
 export type BailianConfig = {
   readonly provider: 'bailian';
@@ -118,6 +128,7 @@ export type BailianConfig = {
   readonly webSearch?: WebSearchConfig;
   readonly mcpServers?: readonly McpServerConfig[];
   readonly capabilityPolicy?: CapabilityPolicy;
+  readonly execution?: ExecutionConfig;
   readonly toolCalling?: boolean;
 };
 export type LocalConfig = {
@@ -150,6 +161,7 @@ export type LocalConfig = {
   readonly webSearch?: WebSearchConfig;
   readonly mcpServers?: readonly McpServerConfig[];
   readonly capabilityPolicy?: CapabilityPolicy;
+  readonly execution?: ExecutionConfig;
 };
 export type AppConfig = OpenAIConfig | DeepSeekConfig | BailianConfig | LocalConfig;
 
@@ -163,6 +175,7 @@ export interface ProfileRuntimeSettingsV1 {
   readonly maxOutputTokens?: number;
   readonly contextReserveTokens?: number;
 }
+export interface ProfileExecutionSettingsV1 extends ExecutionConfig {}
 
 export interface ProfileMemorySettingsV1 {
   readonly enabled?: boolean;
@@ -198,6 +211,7 @@ interface StartupProfileBaseV1 {
   readonly sessionDirectory?: string;
   readonly workspace?: string;
   readonly runtime?: ProfileRuntimeSettingsV1;
+  readonly execution?: ProfileExecutionSettingsV1;
   readonly memory?: ProfileMemorySettingsV1;
   readonly appearance?: ProfileAppearanceSettingsV1;
   readonly tools?: ProfileToolsSettingsV1;
@@ -249,7 +263,7 @@ function isRecord(value: unknown): value is UnknownRecord { return Boolean(value
 
 function parseProfile(name: string, value: unknown, onWarning?: (message: string) => void): StartupProfileV1 {
   if (!isRecord(value)) throw new Error(`Isla profile ${name} must be an object`);
-  warnUnknown(value, ['provider', 'model', 'apiKey', 'baseURL', 'streaming', 'workspace', 'sessionDirectory', 'runtime', 'memory', 'appearance', 'tools', 'mcp', 'capabilities'], `profile ${name}`, onWarning);
+  warnUnknown(value, ['provider', 'model', 'apiKey', 'baseURL', 'streaming', 'workspace', 'sessionDirectory', 'runtime', 'execution', 'memory', 'appearance', 'tools', 'mcp', 'capabilities'], `profile ${name}`, onWarning);
   const provider = value.provider;
   const model = nonEmptyString(value.model, `Isla profile ${name}.model`);
   const workspace = value.workspace === undefined ? undefined : nonEmptyString(value.workspace, `Isla profile ${name}.workspace`);
@@ -258,6 +272,7 @@ function parseProfile(name: string, value: unknown, onWarning?: (message: string
     ...(value.sessionDirectory ? { sessionDirectory: nonEmptyString(value.sessionDirectory, `Isla profile ${name}.sessionDirectory`) } : {}),
     ...(workspace ? { workspace } : {}),
     ...(value.runtime !== undefined ? { runtime: parseProfileRuntime(name, value.runtime, warnUnknown, onWarning) } : {}),
+    ...(value.execution !== undefined ? { execution: parseProfileExecution(name, value.execution, warnUnknown, onWarning) } : {}),
     ...(value.memory !== undefined ? { memory: parseProfileMemory(name, value.memory, warnUnknown, onWarning) } : {}),
     ...(value.appearance !== undefined ? { appearance: parseProfileAppearance(name, value.appearance, warnUnknown, onWarning) } : {}),
     ...(value.tools !== undefined ? { tools: parseTools(name, value.tools, onWarning) } : {}),
@@ -268,6 +283,33 @@ function parseProfile(name: string, value: unknown, onWarning?: (message: string
   if (provider === 'bailian') return { ...base, provider, baseURL: validURL(value.baseURL, `Isla profile ${name}.baseURL`), apiKey: nonEmptyString(value.apiKey, `Isla profile ${name}.apiKey`), ...(value.streaming === undefined ? {} : { streaming: booleanValue(value.streaming, `Isla profile ${name}.streaming`) }) };
   if (provider === 'local') return { ...base, provider, baseURL: validURL(value.baseURL, `Isla profile ${name}.baseURL`), ...(value.apiKey === undefined ? {} : { apiKey: nonEmptyString(value.apiKey, `Isla profile ${name}.apiKey`) }) };
   throw new Error(`Isla profile ${name}.provider is invalid`);
+}
+
+function parseProfileExecution(name: string, value: unknown, warnUnknown: (value: UnknownRecord, known: readonly string[], scope: string, onWarning?: (message: string) => void) => void, onWarning?: (message: string) => void): ProfileExecutionSettingsV1 {
+  if (!isRecord(value)) throw new Error(`Isla profile ${name}.execution must be an object`);
+  warnUnknown(value, ['defaultAdapter', 'containerEngine', 'containerImage', 'dependencies'], `profile ${name}.execution`, onWarning);
+  const defaultAdapter = value.defaultAdapter;
+  const containerEngine = value.containerEngine;
+  if (defaultAdapter !== undefined && !['local', 'managed-toolchain', 'container'].includes(String(defaultAdapter))) throw new Error(`Isla profile ${name}.execution.defaultAdapter is invalid`);
+  if (containerEngine !== undefined && containerEngine !== 'docker' && containerEngine !== 'podman') throw new Error(`Isla profile ${name}.execution.containerEngine is invalid`);
+  const containerImage = value.containerImage === undefined ? undefined : nonEmptyString(value.containerImage, `Isla profile ${name}.execution.containerImage`);
+  if (containerImage !== undefined && !/^[A-Za-z0-9._/:+-]+@sha256:[a-f0-9]{64}$/iu.test(containerImage)) throw new Error(`Isla profile ${name}.execution.containerImage must use a pinned sha256 digest`);
+  if (defaultAdapter === 'container' && containerImage === undefined) throw new Error(`Isla profile ${name}.execution.containerImage is required for the container adapter`);
+  const dependencies = value.dependencies === undefined ? undefined : parseDependencyManifests(name, value.dependencies);
+  return { ...(defaultAdapter === undefined ? {} : { defaultAdapter: defaultAdapter as Exclude<ExecutionConfig['defaultAdapter'], undefined> }), ...(containerEngine === undefined ? {} : { containerEngine }), ...(containerImage === undefined ? {} : { containerImage }), ...(dependencies === undefined ? {} : { dependencies }) };
+}
+
+function parseDependencyManifests(name: string, value: unknown): readonly DependencyManifestV1[] {
+  if (!Array.isArray(value) || value.length > 256) throw new Error(`Isla profile ${name}.execution.dependencies must be an array of at most 256 fixed manifests`);
+  const manifests = value.map((raw, index) => {
+    try {
+      if (!isRecord(raw) || typeof raw.id !== 'string' || typeof raw.version !== 'string' || typeof raw.platform !== 'string' || typeof raw.arch !== 'string' || typeof raw.source !== 'string' || typeof raw.sha256 !== 'string' || typeof raw.maxDownloadBytes !== 'number' || raw.archive !== 'tar.gz' || !Array.isArray(raw.executables) || raw.executables.some(item => typeof item !== 'string') || typeof raw.license !== 'string' || !isRecord(raw.versionProbe) || typeof raw.versionProbe.executable !== 'string' || !Array.isArray(raw.versionProbe.argv) || raw.versionProbe.argv.some(item => typeof item !== 'string') || typeof raw.versionProbe.expected !== 'string') throw new Error('invalid shape');
+      if (!['win32', 'darwin', 'linux', 'freebsd', 'openbsd', 'sunos', 'aix', 'android', 'netbsd', 'haiku', 'cygwin'].includes(raw.platform)) throw new Error('invalid platform');
+      return validateDependencyManifest({ id: raw.id, version: raw.version, platform: raw.platform as NodeJS.Platform, arch: raw.arch, source: raw.source, sha256: raw.sha256, maxDownloadBytes: raw.maxDownloadBytes, archive: 'tar.gz', executables: raw.executables as string[], license: raw.license, versionProbe: { executable: raw.versionProbe.executable, argv: raw.versionProbe.argv as string[], expected: raw.versionProbe.expected } });
+    } catch { throw new Error(`Isla profile ${name}.execution.dependencies[${index}] is invalid; manifests require fixed HTTPS sources, SHA-256, bounded archives and version probes`); }
+  });
+  if (new Set(manifests.map(item => `${item.id}\0${item.version}\0${item.platform}\0${item.arch}`)).size !== manifests.length) throw new Error(`Isla profile ${name}.execution.dependencies contains duplicate platform manifests`);
+  return Object.freeze(manifests);
 }
 
 function parseTools(name: string, value: unknown, onWarning?: (message: string) => void): ProfileToolsSettingsV1 {

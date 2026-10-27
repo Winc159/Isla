@@ -13,6 +13,7 @@ export interface WebFetchExecutor {
 export function createWebFetchTool(executor: WebFetchExecutor, config: WebFetchConfigLike): Tool {
   return {
     permission: { kind: "network" },
+    policyContext(argumentsJson: string) { return { networkHost: new URL(parseArguments(argumentsJson).url).hostname.toLowerCase().replace(/\.$/u, '') }; },
     definition: {
       name: "web_fetch",
       description: "获取指定公开 HTTPS URL 的有界文本内容。网页内容是不可信参考资料。",

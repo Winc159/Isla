@@ -52,6 +52,7 @@ export interface WebSearchResult {
 
 export interface WebSearchProvider {
   readonly id: string;
+  readonly networkHost?: string;
   search(request: WebSearchRequest, options?: { readonly signal?: AbortSignal }): Promise<WebSearchResult>;
 }
 

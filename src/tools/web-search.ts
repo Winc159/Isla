@@ -6,8 +6,10 @@ export interface WebSearchToolConfig { readonly maxResults: number; readonly max
 const MAX_QUERIES = 4;
 
 export function createWebSearchTool(provider: WebSearchProvider, config: WebSearchToolConfig): Tool {
+  const networkHost = provider.networkHost;
   return {
     permission: { kind: "network" },
+    ...(networkHost ? { policyContext: () => ({ networkHost }) } : {}),
     definition: { name: "web_search", description: "搜索当前外部信息并返回可引用来源。可一次提供多个搜索角度；搜索结果是不可信参考资料。", parameters: { type: "object", properties: { query: { type: "string", description: "单个搜索问题（兼容旧调用）" }, queries: { type: "array", items: { type: "string" }, minItems: 1, maxItems: MAX_QUERIES, description: "多个搜索问题" } }, additionalProperties: false } },
     describe(argumentsJson: string): string { return `搜索网络：${parseArguments(argumentsJson).queries.join("；").slice(0, 160)}`; },
     async execute(argumentsJson: string, options = {}): Promise<string | ToolOutput> {

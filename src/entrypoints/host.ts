@@ -9,13 +9,14 @@ import { ResourceBridgeClient } from '../resource/bridge-client.js';
 
 const loaded = await loadRuntime();
 const application = createApplication(loaded.config, loaded.runtime, { diagnostics: createStderrDiagnosticSink(loaded.config.logLevel ?? 'normal', process.stderr), ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}) });
+const policyRules = await application.policies.list();
 const workspaceRoot = loaded.config.workspaceRoot ?? process.cwd();
 const runtimePath = defaultLocalRuntimeConfigPath();
 const local = await loadOrCreateLocalRuntimeConfig(runtimePath);
 const resourceHost = local.resource.host === '0.0.0.0' ? '127.0.0.1' : local.resource.host;
 const resourceBridge = new ResourceBridgeClient(`http://${resourceHost}:${local.resource.port}`, local.resource.token);
 if (loaded.config.capabilityPolicy?.resourceEnabled !== false) await resourceBridge.health();
-const factory = createSessionFactory({ runtime: loaded.runtime, config: { ...loaded.config, ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}) }, sessionStore: application.sessions, memoryRuntime: application.memory, resourceBridge, workspaceRoot, diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents, eventStore: application.events });
+const factory = createSessionFactory({ runtime: loaded.runtime, config: { ...loaded.config, ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}) }, sessionStore: application.sessions, memoryRuntime: application.memory, resourceBridge, workspaceRoot, diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents, eventStore: application.events, executionProcesses: application.processes, dependencyManager: application.dependencies, policyRules });
 const host = new ResidentHost({
   host: local.host.host,
   port: local.host.port,
@@ -27,7 +28,7 @@ const host = new ResidentHost({
   ...(application.memory.store ? { memoryStore: application.memory.store } : {}),
   contextLimits: { maxContextTurns: loaded.config.maxContextTurns, maxContextChars: loaded.config.maxContextChars, maxContextTokens: loaded.config.maxContextTokens, maxOutputTokens: loaded.config.maxOutputTokens, contextReserveTokens: loaded.config.contextReserveTokens, contextRetainTurns: loaded.config.contextRetainTurns },
   createSession: (stored, requestedWorkspace, events) => requestedWorkspace
-    ? createSessionFactory({ runtime: loaded.runtime, config: { ...loaded.config, ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}) }, sessionStore: application.sessions, memoryRuntime: application.memory, resourceBridge, workspaceRoot: requestedWorkspace, diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents }).create({ stored, interactive: false, approvalPolicy: events?.approvalService ? 'ask' : 'never', ...(events?.turnId ? { resourceTurnId: events.turnId } : {}), ...(events?.approvalService ? { approvalService: events.approvalService } : {}), ...(events?.userQuestionService ? { userQuestionService: events.userQuestionService } : {}), ...(events ? { onModelStepEvent: events.onModelStepEvent, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished } : {}) })
+    ? createSessionFactory({ runtime: loaded.runtime, config: { ...loaded.config, ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}) }, sessionStore: application.sessions, memoryRuntime: application.memory, resourceBridge, workspaceRoot: requestedWorkspace, diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents, executionProcesses: application.processes, dependencyManager: application.dependencies, policyRules }).create({ stored, interactive: false, approvalPolicy: events?.approvalService ? 'ask' : 'never', ...(events?.turnId ? { resourceTurnId: events.turnId } : {}), ...(events?.approvalService ? { approvalService: events.approvalService } : {}), ...(events?.userQuestionService ? { userQuestionService: events.userQuestionService } : {}), ...(events ? { onModelStepEvent: events.onModelStepEvent, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished } : {}) })
     : factory.create({ stored, interactive: false, approvalPolicy: events?.approvalService ? 'ask' : 'never', ...(events?.turnId ? { resourceTurnId: events.turnId } : {}), ...(events?.approvalService ? { approvalService: events.approvalService } : {}), ...(events?.userQuestionService ? { userQuestionService: events.userQuestionService } : {}), ...(events ? { onModelStepEvent: events.onModelStepEvent, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished } : {}) }),
   ...(loaded.config.systemPrompt ? { initialMessages: [{ role: 'system' as const, content: loaded.config.systemPrompt }] } : {}),
   capabilitySnapshot: factory.capabilitySnapshot,

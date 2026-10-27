@@ -3,7 +3,13 @@ export type ToolPermission =
   | { readonly kind: "filesystem-read" }
   | { readonly kind: "filesystem-write" }
   | { readonly kind: "command-execute" }
-  | { readonly kind: "network" };
+  | { readonly kind: "process-interact" }
+  | { readonly kind: "network" }
+  | { readonly kind: "network-download" }
+  | { readonly kind: "dependency-install" }
+  | { readonly kind: "mcp-invoke" }
+  | { readonly kind: "credential-use" }
+  | { readonly kind: "sandbox-elevate" };
 
 export type ApprovalPolicy = "never" | "ask" | "always";
 export interface ApprovalRequest { readonly toolName: string; readonly permission: ToolPermission; readonly summary: string; readonly details?: string; }

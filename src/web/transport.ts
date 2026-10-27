@@ -9,10 +9,10 @@ export interface PinnedTransportDeps {
   readonly fetch: typeof undiciFetch;
 }
 
-export async function requestPinned(url: URL, addresses: readonly PublicAddress[], headers: Record<string, string>, signal: AbortSignal, deps: PinnedTransportDeps = productionDeps): Promise<PinnedResponse> {
+export async function requestPinned(url: URL, addresses: readonly PublicAddress[], headers: Record<string, string>, signal: AbortSignal, deps: PinnedTransportDeps = productionDeps, request: { readonly method?: "GET" | "POST"; readonly body?: string } = {}): Promise<PinnedResponse> {
   const resource = deps.createAgent(addresses);
   try {
-    const response = await deps.fetch(url, { method: "GET", redirect: "manual", headers, signal, dispatcher: resource.dispatcher });
+    const response = await deps.fetch(url, { method: request.method ?? "GET", ...(request.body === undefined ? {} : { body: request.body }), redirect: "manual", headers, signal, dispatcher: resource.dispatcher });
     return { response, close: resource.close };
   } catch (error) {
     await resource.close();

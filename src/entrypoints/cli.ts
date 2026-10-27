@@ -93,6 +93,8 @@ export async function runCli(
   maxOutputTokens = 2048,
   contextReserveTokens = 512,
   agentRegistry?: AgentRegistry,
+  policyRules?: readonly import('../approval/policy.js').PolicyRuleV1[],
+  policyStore?: import('../approval/policy.js').FilePolicyStore,
 ): Promise<void> {
   writeHeader(output, providerId, model, workspaceRoot, webFetch?.enabled === true, runtime.getProviderCapabilities(providerId)?.toolCalling === true);
   const currentWorkspaceKey = workspaceKey(workspaceRoot);
@@ -129,7 +131,7 @@ export async function runCli(
       if (streamState.sawDelta) output.write('\n');
     }
   };
-  session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => activeLoading?.pause(), () => activeLoading?.resume(), mcpHost, maxContextTokens, maxOutputTokens, contextReserveTokens, agentRegistry);
+  session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => activeLoading?.pause(), () => activeLoading?.resume(), mcpHost, maxContextTokens, maxOutputTokens, contextReserveTokens, agentRegistry, policyRules);
 
   const handleLine = async (line: string): Promise<'continue' | 'exit'> => {
     const command = findCliCommand(line);
@@ -154,6 +156,7 @@ export async function runCli(
           ...(openConfig ? { openConfig } : {}),
           ...(mcpHost ? { mcpHost } : {}),
           capabilitySnapshot: inventoryFactory.capabilitySnapshot,
+          ...(policyStore ? { policyStore } : {}),
           maxContextTurns,
           maxContextChars,
           maxContextTokens,
@@ -166,7 +169,7 @@ export async function runCli(
       if (result.type === 'switch-session') {
         await session.close();
         storedSession = result.session;
-        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => activeLoading?.pause(), () => activeLoading?.resume(), mcpHost, maxContextTokens, maxOutputTokens, contextReserveTokens, agentRegistry);
+        session = createPersistentSession(runtime, providerId, systemPrompt, storedSession, sessionStore, maxContextTurns, maxContextChars, contextRetainTurns, output, input, interactive, memoryRuntime, modelRetries, workspaceRoot, diagnostics, webFetch, webSearch, onModelStepEvent, () => activeLoading?.pause(), () => activeLoading?.resume(), mcpHost, maxContextTokens, maxOutputTokens, contextReserveTokens, agentRegistry, policyRules);
         output.write('\x1b[2J\x1b[3J\x1b[H');
         writeHeader(output, providerId, model, workspaceRoot);
         if (result.replayHistory) writeSessionHistory(output, storedSession);
@@ -281,10 +284,12 @@ export interface CliAdapterOptions {
   readonly mcpHost?: McpHost;
   readonly capabilityPolicy?: CapabilityPolicy;
   readonly agentRegistry?: AgentRegistry;
+  readonly policyRules?: readonly import('../approval/policy.js').PolicyRuleV1[];
+  readonly policyStore?: import('../approval/policy.js').FilePolicyStore;
 }
 
 export async function runCliAdapter(options: CliAdapterOptions): Promise<void> {
-  return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics, options.webFetch, options.webSearch, options.mcpHost, options.capabilityPolicy, options.maxContextTokens, options.maxOutputTokens, options.contextReserveTokens, options.agentRegistry);
+  return runCli(options.input, options.output, options.errorOutput, options.runtime, options.providerId, options.model, options.systemPrompt, options.debug, options.maxContextTurns, options.sessionStore, options.maxContextChars, options.contextRetainTurns, options.memoryRuntime, options.modelRetries, options.configStore, options.configPath, options.profileName, options.openConfig, options.logLevel, options.workspaceRoot, options.diagnostics, options.webFetch, options.webSearch, options.mcpHost, options.capabilityPolicy, options.maxContextTokens, options.maxOutputTokens, options.contextReserveTokens, options.agentRegistry, options.policyRules, options.policyStore);
 }
 
 function writeSessionHistory(output: Writable, session: StoredSession): void {
@@ -382,8 +387,9 @@ function createPersistentSession(
   maxOutputTokens = 2048,
   contextReserveTokens = 512,
   agentRegistry?: AgentRegistry,
+  policyRules?: readonly import('../approval/policy.js').PolicyRuleV1[],
 ) {
-  const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, maxContextTokens, maxOutputTokens, contextReserveTokens, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}), ...(agentRegistry ? { agentRegistry } : {}) });
+  const factory = createSessionFactory({ runtime, config: { provider: providerId, model: storedSession.model, ...(systemPrompt ? { systemPrompt } : {}), maxContextTurns, maxContextChars, contextRetainTurns, maxContextTokens, maxOutputTokens, contextReserveTokens, modelRetries, ...(webFetch ? { webFetch } : {}), ...(webSearch ? { webSearch } : {}), ...(mcpHost ? { mcpHost } : {}) }, sessionStore, ...(memoryRuntime ? { memoryRuntime } : {}), workspaceRoot, ...(diagnostics ? { diagnostics } : {}), ...(agentRegistry ? { agentRegistry } : {}), ...(policyRules ? { policyRules } : {}) });
   return factory.create({ stored: storedSession, input, output, interactive, ...(interactive ? { approvalService: new CliApprovalService(input, output, onInteractionStart, onInteractionEnd), userQuestionService: new CliUserQuestionService(input, output, onInteractionStart, onInteractionEnd) } : {}), ...(onModelStepEvent ? { onModelStepEvent } : {}) });
 }
 if (isCliEntry(import.meta.url, process.argv[1]) && process.argv[2] === 'install') {
@@ -426,13 +432,14 @@ if (isCliEntry(import.meta.url, process.argv[1]) && process.argv[2] === 'install
     const browserConsoleEnabled = process.env.ISLA_BROWSER_CONSOLE === '1' || (startup.protocol === undefined && !process.env.VITEST);
     if (browserConsoleEnabled) { const browserConsole = await ensureBrowserConsole(consoleWorkspace); process.stderr.write(`[browser-console] ${browserConsole.url} token=${browserConsole.token}\n`); }
     const application = createApplication(config, runtime, { diagnostics: createStderrDiagnosticSink(config.logLevel ?? (config.debug ? 'debug' : 'normal'), process.stderr), ...(mcpHost ? { mcpHost } : {}) });
+    const policyRules = await application.policies.list();
     const memoryRuntime = application.memory;
     try {
     if (startup.protocol !== undefined) {
       const protocol = startup.protocol;
       if (protocol !== 'ndjson') throw new Error('Unsupported protocol');
       const protocolStore = application.sessions;
-      const sessionFactory = createSessionFactory({ runtime, config: { ...config, ...(mcpHost ? { mcpHost } : {}) }, sessionStore: protocolStore, memoryRuntime, workspaceRoot: config.workspaceRoot ?? process.cwd(), diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents, eventStore: application.events });
+      const sessionFactory = createSessionFactory({ runtime, config: { ...config, ...(mcpHost ? { mcpHost } : {}) }, sessionStore: protocolStore, memoryRuntime, workspaceRoot: config.workspaceRoot ?? process.cwd(), diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents, eventStore: application.events, executionProcesses: application.processes, dependencyManager: application.dependencies, policyRules });
       const currentWorkspaceKey = workspaceKey(config.workspaceRoot ?? process.cwd());
       let protocolStored = await protocolStore.loadLatest(config.provider, config.model, currentWorkspaceKey);
       if (!protocolStored) protocolStored = await protocolStore.create(config.provider, config.model, config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : [], currentWorkspaceKey);
@@ -509,6 +516,8 @@ if (isCliEntry(import.meta.url, process.argv[1]) && process.argv[2] === 'install
       contextReserveTokens: config.contextReserveTokens,
       diagnostics: event => application.diagnostics.emit(event),
       agentRegistry: application.agents,
+      policyRules,
+      policyStore: application.policies,
     });
     } finally { await closeBrowserConsole(consoleWorkspace); await application.dispose(); }
   } catch (error) {

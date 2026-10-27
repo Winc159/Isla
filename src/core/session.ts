@@ -78,6 +78,7 @@ export interface ChatSessionOptions {
   readonly loopBudget?: LoopBudgetOptions;
   readonly approvalPolicy?: ApprovalPolicy;
   readonly approvalService?: ApprovalService;
+  readonly policyRules?: readonly import('../approval/policy.js').PolicyRuleV1[];
   readonly permissionPreset?: PermissionPreset;
   readonly retrieveContext?: (input: string, visibleMessages: readonly Message[]) => Promise<string | undefined>;
   readonly onTurnCommitted?: (messages: readonly Message[]) => Promise<void>;
@@ -155,6 +156,8 @@ export class ChatSession {
     this.toolRuntime = new ToolRuntime(this.toolRegistry, {
       approvalPolicy: options.approvalPolicy,
       approvalService: options.approvalService,
+      ...(options.policyRules ? { policyRules: options.policyRules } : {}),
+      ...(options.projectRoot ? { workspace: options.projectRoot } : {}),
       permissionPreset: options.permissionPreset,
     });
   }

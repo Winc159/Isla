@@ -14,6 +14,10 @@ import { createSkillCapability } from "./skill.js";
 import { createContextCapability } from './context.js';
 import type { Message } from '../core/types.js';
 import { createControlCapability } from './control.js';
+import { createExecutionRuntimeCapability } from './execution-runtime.js';
+import type { ExecutionProcessRegistry } from './process-registry.js';
+import type { DependencyManager } from '../dependencies/manager.js';
+import { createDependencyCapability } from './dependencies.js';
 
 export interface ToolCompositionContext {
   readonly workspaceRoot: string;
@@ -27,6 +31,8 @@ export interface ToolCompositionContext {
   readonly skillAllow?: readonly string[];
   readonly skillDeny?: readonly string[];
   readonly contextMessages?: () => readonly Message[];
+  readonly executionProcesses?: ExecutionProcessRegistry;
+  readonly dependencyManager?: DependencyManager;
 }
 
 export type ToolCapabilityFactory = (context: ToolCompositionContext) => ToolCapability | undefined;
@@ -35,11 +41,13 @@ const capabilityFactories: readonly ToolCapabilityFactory[] = [
   () => createControlCapability(),
   context => createProjectFilesCapability(context.workspaceRoot),
   context => createProjectDiscoveryCapability(context.workspaceRoot),
-  context => createCommandExecutionCapability(context.workspaceRoot),
+  context => createCommandExecutionCapability(context.workspaceRoot, context.executionProcesses, context.currentSessionId),
   () => createTaskStateCapability(),
   context => context.sessionQuery && context.workspaceKey && context.currentSessionId ? createSessionQueryCapability(context.sessionQuery, context.workspaceKey, context.currentSessionId) : undefined,
   context => context.skillCatalog ? createSkillCapability(context.skillCatalog, context.skillAllow, context.skillDeny) : undefined,
   context => context.contextMessages ? createContextCapability(context.contextMessages) : undefined,
+  context => context.executionProcesses && context.currentSessionId ? createExecutionRuntimeCapability(context.executionProcesses, context.workspaceRoot, context.currentSessionId) : undefined,
+  context => context.dependencyManager ? createDependencyCapability(context.dependencyManager) : undefined,
   context => context.userQuestionService ? createUserInteractionCapability(context.userQuestionService) : undefined,
   context => context.webFetch?.enabled || context.webSearch?.enabled
     ? createWebCapability({

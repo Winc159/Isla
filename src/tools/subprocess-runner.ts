@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, stat } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { sandboxDenied } from "./errors.js";
 import { createShellInvocation, type ShellInvocation } from "./shell-adapter.js";
@@ -72,7 +72,8 @@ export async function runCommand(workspaceRoot: string, request: CommandRunReque
 
 export async function resolveWorkdir(workspaceRoot: string, workdir: string): Promise<string> {
   const root = resolve(workspaceRoot);
-  if (workdir === "") return root;
+  const canonicalRoot = await realpath(root);
+  if (workdir === "") return canonicalRoot;
   if (isAbsolute(workdir)) throw sandboxDenied("command workdir must be relative to the workspace");
   const candidate = resolve(root, workdir);
   const relativePath = relative(root, candidate);
@@ -80,6 +81,10 @@ export async function resolveWorkdir(workspaceRoot: string, workdir: string): Pr
   try {
     await access(candidate);
     if (!(await stat(candidate)).isDirectory()) throw sandboxDenied("command workdir must be a directory");
+    const canonicalCandidate = await realpath(candidate);
+    const canonicalRelative = relative(canonicalRoot, canonicalCandidate);
+    if (canonicalRelative.startsWith("..") || isAbsolute(canonicalRelative)) throw sandboxDenied("command workdir must stay inside the workspace");
+    return canonicalCandidate;
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("command workdir")) throw error;
     throw sandboxDenied("command workdir does not exist");

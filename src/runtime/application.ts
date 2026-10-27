@@ -6,6 +6,11 @@ import type { AppConfig } from '../config/schema.js';
 import type { McpHost } from '../mcp/host.js';
 import { AgentRegistry, RuntimeScope } from '../core/service-kernel.js';
 import { FileEventStore } from '../core/event-store.js';
+import { FilePolicyStore } from '../approval/policy.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { ExecutionProcessRegistry } from '../tools/process-registry.js';
+import { DependencyManager } from '../dependencies/manager.js';
 
 export interface DiagnosticSink { emit(event: DiagnosticEvent): void; }
 export interface DiagnosticEvent { readonly code: string; readonly component: string; readonly severity?: 'warning' | 'error' | 'debug'; readonly detail?: string; readonly domain?: import('../core/errors.js').RuntimeErrorDomain; }
@@ -26,6 +31,9 @@ export interface IslaApplication {
   readonly scope: RuntimeScope;
   readonly agents: AgentRegistry;
   readonly events: FileEventStore;
+  readonly policies: FilePolicyStore;
+  readonly processes: ExecutionProcessRegistry;
+  readonly dependencies: DependencyManager;
 }
 
 export function createApplication(config: AppConfig, runtime: IslaRuntime, options: { readonly sessionStore?: SessionStore; readonly diagnostics?: DiagnosticSink; readonly mcpHost?: McpHost } = {}): IslaApplication {
@@ -45,9 +53,17 @@ export function createApplication(config: AppConfig, runtime: IslaRuntime, optio
   const scope = new RuntimeScope('host', 'isla-application');
   const agents = new AgentRegistry(scope);
   const events = new FileEventStore(`${config.sessionDirectory}/events`);
-  scope.defer(() => memory.close());
+  const policies = new FilePolicyStore(join(config.sessionDirectory ?? join(homedir(), '.isla', 'sessions'), 'runtime', 'approval-rules.json'));
+  const dependencies = new DependencyManager({ manifests: config.execution?.dependencies ?? [], root: join(homedir(), '.isla', 'toolchains') });
+  const processes = new ExecutionProcessRegistry({
+    defaultAdapter: config.execution?.defaultAdapter ?? 'local',
+    ...(config.execution?.containerImage ? { container: { engine: config.execution.containerEngine ?? 'docker', image: config.execution.containerImage } } : {}),
+    resolveManagedExecutable: (dependencyId, executableId) => dependencies.resolveExecutable(dependencyId, executableId),
+  });
   if (options.mcpHost) scope.defer(() => options.mcpHost!.close());
+  scope.defer(() => processes.close());
   scope.defer(() => agents.close());
+  scope.defer(() => memory.close());
   let disposal: Promise<void> | undefined;
   return {
     runtime,
@@ -57,6 +73,9 @@ export function createApplication(config: AppConfig, runtime: IslaRuntime, optio
     scope,
     agents,
     events,
+    policies,
+    processes,
+    dependencies,
     close: () => { if (closed) return; closed = true; void scope.close(); },
     dispose: () => {
       if (disposal) return disposal;

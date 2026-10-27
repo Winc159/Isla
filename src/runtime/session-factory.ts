@@ -41,7 +41,10 @@ export interface SessionFactoryOptions {
   readonly browserRuntime?: BrowserRuntime;
   readonly resourceBridge?: ResourceBridgeClient;
   readonly agentRegistry?: AgentRegistry;
+  readonly policyRules?: readonly import('../approval/policy.js').PolicyRuleV1[];
   readonly eventStore?: FileEventStore;
+  readonly executionProcesses?: import('../tools/process-registry.js').ExecutionProcessRegistry;
+  readonly dependencyManager?: import('../dependencies/manager.js').DependencyManager;
 }
 export interface SessionFactoryConfig {
   readonly provider: string;
@@ -124,8 +127,9 @@ export function projectStoredSession(storedSession: StoredSession): {
 }
 
 export function createSessionFactory(options: SessionFactoryOptions) {
-  const { runtime, config, sessionStore, memoryRuntime, workspaceRoot, diagnostics, browserRuntime, resourceBridge, agentRegistry, eventStore } = options;
+  const { runtime, config, sessionStore, memoryRuntime, workspaceRoot, diagnostics, browserRuntime, resourceBridge, agentRegistry, eventStore, policyRules, executionProcesses } = options;
   const agentIds = new WeakMap<import('../core/session.js').ChatSession, string>();
+  const sessionIds = new WeakMap<import('../core/session.js').ChatSession, string>();
   const effectiveBrowserRuntime = browserRuntime ?? hostBrowserRuntime(workspaceRoot);
   const browserConsoleUrl = browserConsoles.get(workspaceRoot)?.url;
   const browserConsoleToken = browserConsoles.get(workspaceRoot)?.token;
@@ -135,7 +139,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
   const resourceEnabled = config.capabilityPolicy?.resourceEnabled !== false;
   const skillCatalog = new SkillCatalog({ workspaceRoot: personalSkillsRoot, personalRoot: personalSkillsRoot });
   const capabilitySnapshot = (): CapabilitySnapshot => {
-    const capabilities = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => 'inventory', skillCatalog, ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(resourceEnabled && resourceBridge?.isAvailable ? [createResourceCapability(resourceBridge, 'inventory', 'inventory')] : []), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime)] : []), ...(config.mcpHost?.capabilities() ?? [])];
+    const capabilities = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => 'inventory', skillCatalog, ...(executionProcesses ? { executionProcesses } : {}), ...(options.dependencyManager ? { dependencyManager: options.dependencyManager } : {}), ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(resourceEnabled && resourceBridge?.isAvailable ? [createResourceCapability(resourceBridge, 'inventory', 'inventory')] : []), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime)] : []), ...(config.mcpHost?.capabilities() ?? [])];
     const snapshot = composeCapabilitySnapshot(capabilities, skillCatalog.listSync().entries, config.capabilityPolicy);
     if (resourceEnabled && resourceBridge && !resourceBridge.isAvailable) return { ...snapshot, entries: [...snapshot.entries, { id: 'resource', kind: 'builtin-tool', origin: 'resource', available: false, modelVisible: false, userInvocable: true, diagnosticCode: resourceBridge.unavailableReason }] };
     if (!resourceEnabled) return { ...snapshot, entries: [...snapshot.entries, { id: 'resource', kind: 'builtin-tool', origin: 'resource', available: false, modelVisible: false, userInvocable: false, diagnosticCode: 'CAPABILITY_DENIED' }] };
@@ -143,7 +147,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
   };
   const capabilityCatalog = (sessionId = 'inventory', turnId = 'inventory'): CapabilityCatalog => {
     const catalog = new CapabilityCatalog();
-    const capabilities = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => 'inventory', skillCatalog, ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime)] : []), ...(config.mcpHost?.capabilities() ?? [])];
+    const capabilities = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => sessionId, skillCatalog, ...(executionProcesses ? { executionProcesses } : {}), ...(options.dependencyManager ? { dependencyManager: options.dependencyManager } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime)] : []), ...(config.mcpHost?.capabilities() ?? [])];
     for (const capability of capabilities) {
       catalog.register(createCapabilityProvider(capability, { ...(config.capabilityPolicy ? { policy: config.capabilityPolicy } : {}), keywords: [capability.id, ...capability.tools.map(tool => tool.definition.name)] }));
     }
@@ -155,12 +159,14 @@ export function createSessionFactory(options: SessionFactoryOptions) {
     capabilityCatalog,
     async dispose(session: import('../core/session.js').ChatSession): Promise<void> {
       const id = agentIds.get(session);
+      const sessionId = sessionIds.get(session);
+      if (sessionId && executionProcesses) await executionProcesses.closeOwner(sessionId);
       if (id && agentRegistry) { await agentRegistry.dispose(id); agentIds.delete(session); }
       else await session.close();
     },
     create(entry: SessionEntryOptions) {
       let current = entry.stored;
-        const composed = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, contextMessages: () => current.messages, skillCatalog, ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(resourceEnabled && resourceBridge?.isAvailable ? [createResourceCapability(resourceBridge, current.id, entry.resourceTurnId ?? `session-${current.id}`)] : []), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime, entry.userQuestionService, browserConsoleUrl, browserConsoleToken, browserVault)] : []), ...(config.mcpHost?.capabilities() ?? [])];
+        const composed = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, contextMessages: () => current.messages, skillCatalog, ...(executionProcesses ? { executionProcesses } : {}), ...(options.dependencyManager ? { dependencyManager: options.dependencyManager } : {}), ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(resourceEnabled && resourceBridge?.isAvailable ? [createResourceCapability(resourceBridge, current.id, entry.resourceTurnId ?? `session-${current.id}`)] : []), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime, entry.userQuestionService, browserConsoleUrl, browserConsoleToken, browserVault)] : []), ...(config.mcpHost?.capabilities() ?? [])];
       const catalog = capabilityCatalog(current.id, entry.resourceTurnId ?? `session-${current.id}`);
       const activator = new CapabilityActivator(catalog, ('capabilityActivation' in current && current.capabilityActivation) ? current.capabilityActivation : undefined);
       const routingTools = createCapabilityRoutingTools(catalog, activator, () => 0);
@@ -200,6 +206,7 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         ...(diagnostics ? { onDiagnostic: diagnostics } : {}),
         permissionPreset: 'workspace',
         approvalPolicy: entry.approvalPolicy ?? (entry.interactive ? 'ask' : 'never'),
+        ...(policyRules ? { policyRules } : {}),
         ...(entry.approvalService ? { approvalService: entry.approvalService } : {}),
         ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}),
         ...(memoryRuntime?.enabled ? {
@@ -219,9 +226,10 @@ export function createSessionFactory(options: SessionFactoryOptions) {
       });
       if (agentRegistry) {
         const id = `agent-${randomUUID()}`;
-        agentRegistry.register({ id, sessionId: current.id, close: () => session.close() });
+        agentRegistry.register({ id, sessionId: current.id, close: async () => { await executionProcesses?.closeOwner(current.id); await session.close(); } });
         agentIds.set(session, id);
       }
+      sessionIds.set(session, current.id);
       return session;
     },
   };

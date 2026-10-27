@@ -29,6 +29,17 @@ describe("ApplicationContext resources", () => {
     await app.dispose();
     expect(events).toEqual(["child-effect"]);
   });
+
+  it('terminates live managed processes before application disposal completes', async () => {
+    const app = createApplication({
+      provider: 'local', model: 'fixture', baseURL: 'http://127.0.0.1:1/v1', apiKey: 'fixture', timeoutMs: 1000,
+      debug: false, maxContextTurns: 2, maxContextChars: 1000, contextRetainTurns: 1, modelRetries: 0,
+      memoryEnabled: false, logLevel: 'quiet', workspaceRoot: process.cwd(),
+    }, new IslaRuntime());
+    const processStatus = await app.processes.start({ workspaceRoot: process.cwd(), ownerId: 'session-test', executable: process.execPath, argv: ['-e', 'setInterval(() => {}, 1000)'] });
+    await app.dispose();
+    expect(app.processes.status(processStatus.processId, 'session-test')?.state).toBe('cancelled');
+  });
 });
 
 describe("diagnostic sink", () => {

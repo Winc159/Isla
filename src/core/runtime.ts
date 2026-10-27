@@ -38,6 +38,7 @@ export interface CreateSessionOptions {
   readonly onDiagnostic?: (event: { readonly code: string; readonly component: string; readonly severity: 'warning' | 'error' | 'debug' }) => void;
   readonly approvalPolicy?: ApprovalPolicy;
   readonly approvalService?: ApprovalService;
+  readonly policyRules?: readonly import('../approval/policy.js').PolicyRuleV1[];
   readonly permissionPreset?: PermissionPreset;
   readonly retrieveContext?: (input: string, visibleMessages: readonly Message[]) => Promise<string | undefined>;
   readonly onTurnCommitted?: (messages: readonly Message[]) => Promise<void>;

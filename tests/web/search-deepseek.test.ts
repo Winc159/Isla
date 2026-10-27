@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDeepSeekSearchProvider } from "../../src/web/search-deepseek.js";
+import type { PinnedResponse } from "../../src/web/transport.js";
 
 const options = { apiKey: "test-key", model: "search-model", endpoint: "https://search.test/messages", timeoutMs: 30 } as const;
 function response(body: unknown, status = 200): Response { return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }); }
@@ -44,5 +45,30 @@ describe("DeepSeek search provider", () => {
     await expect(pending).rejects.toMatchObject({ code: "TURN_CANCELLED" });
     const timeoutProvider = createDeepSeekSearchProvider({ ...options, timeoutMs: 1, fetch: async (_url, init) => new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true })) });
     await expect(timeoutProvider.search({ query: "x", maxResults: 8 })).rejects.toMatchObject({ code: "WEB_SEARCH_TIMEOUT" });
+  });
+
+  it("pins production requests to validated DNS addresses and rejects redirects", async () => {
+    let resolvedHost = "";
+    let requestedUrl = "";
+    let closed = false;
+    const provider = createDeepSeekSearchProvider({
+      ...options,
+      resolveAddresses: async host => { resolvedHost = host; return [{ address: "203.0.113.10", family: 4 }]; },
+      requestPinned: async url => {
+        requestedUrl = url.hostname;
+        return { response: response({ content: [{ type: "web_search_tool_result", content: [{ url: "https://example.com" }] }] }) as unknown as PinnedResponse["response"], close: async () => { closed = true; } };
+      },
+    });
+    await expect(provider.search({ query: "x", maxResults: 3 })).resolves.toMatchObject({ sources: [{ url: "https://example.com/" }] });
+    expect(resolvedHost).toBe("search.test");
+    expect(requestedUrl).toBe("search.test");
+    expect(closed).toBe(true);
+
+    const redirected = createDeepSeekSearchProvider({ ...options, requestPinned: async () => ({ response: new Response("", { status: 302, headers: { location: "https://other.test" } }) as unknown as PinnedResponse["response"], close: async () => undefined }) });
+    await expect(redirected.search({ query: "x", maxResults: 3 })).rejects.toMatchObject({ code: "WEB_SEARCH_NETWORK_ERROR" });
+  });
+
+  it("rejects non-HTTPS provider endpoints", () => {
+    expect(() => createDeepSeekSearchProvider({ ...options, endpoint: "http://search.test/messages" })).toThrow(/HTTPS/u);
   });
 });

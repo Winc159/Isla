@@ -1,5 +1,6 @@
 import type { ToolDefinition } from '../core/types.js';
 import type { ToolCapability } from '../tools/types.js';
+import type { ToolPermission } from '../approval/types.js';
 import type { SkillCatalogEntry } from '../skills/types.js';
 import { classifyTool, type ToolBoundary, type ToolCategory } from '../tools/catalog.js';
 
@@ -54,7 +55,8 @@ export function composeCapabilitySnapshot(capabilities: readonly ToolCapability[
       const allowed = kind === 'mcp-tool' ? mcpAllowed(id, server!, policy) : true;
       const definition = tool.definition;
       const classification = classifyTool(id);
-      entries.push({ id, kind, origin: capability.id, available: true, modelVisible: allowed, userInvocable: true, category: classification.category, boundary: classification.boundary, canonicalPurpose: classification.canonicalPurpose, ...(tool.permission ? { permission: tool.permission.kind } : {}), schemaBytes: Buffer.byteLength(JSON.stringify(definition.parameters), 'utf8') });
+      const permission = permissionSummary(tool.permission);
+      entries.push({ id, kind, origin: capability.id, available: true, modelVisible: allowed, userInvocable: true, category: classification.category, boundary: classification.boundary, canonicalPurpose: classification.canonicalPurpose, ...(permission ? { permission } : {}), schemaBytes: Buffer.byteLength(JSON.stringify(definition.parameters), 'utf8') });
       if (allowed) toolDefinitions.push(definition);
     }
   }
@@ -85,6 +87,12 @@ export function composeCapabilitySnapshot(capabilities: readonly ToolCapability[
   }
   const canonical = JSON.stringify({ entries, tools: toolDefinitions.map(tool => tool.name) });
   return Object.freeze({ version: 1, entries: Object.freeze(entries), toolDefinitions: Object.freeze(toolDefinitions), hash: simpleHash(canonical) });
+}
+
+function permissionSummary(permission: ToolPermission | readonly ToolPermission[] | undefined): string | undefined {
+  if (!permission) return undefined;
+  if ('kind' in permission) return permission.kind;
+  return permission.map(item => item.kind).join('+');
 }
 
 function skillAllowed(name: string, policy: CapabilityPolicy): boolean {

@@ -31,6 +31,23 @@ describe('config file v1', () => {
     expect(file.profiles.main.model).toBe('m');
   });
 
+  it('parses pinned execution adapter settings and requires an immutable container image', () => {
+    const digest = `registry.example.test/isla/runtime@sha256:${'a'.repeat(64)}`;
+    const config = parseConfigFile(deepseek({ execution: { defaultAdapter: 'container', containerEngine: 'podman', containerImage: digest } }));
+    expect(profileToAppConfig(config.profiles.main)).toMatchObject({ execution: { defaultAdapter: 'container', containerEngine: 'podman', containerImage: digest } });
+    expect(() => parseConfigFile(deepseek({ execution: { defaultAdapter: 'container' } }))).toThrow('containerImage is required');
+    expect(() => parseConfigFile(deepseek({ execution: { containerImage: 'node:24-alpine' } }))).toThrow('pinned sha256 digest');
+  });
+
+  it('accepts only fixed, hashed HTTPS dependency manifests in the selected execution profile', () => {
+    const manifest = { id: 'sample-tool', version: '1.2.3', platform: 'linux', arch: 'x64', source: 'https://downloads.example.test/sample-tool.tar.gz', sha256: 'a'.repeat(64), maxDownloadBytes: 1000000, archive: 'tar.gz', executables: ['bin/sample-tool'], license: 'MIT', versionProbe: { executable: 'bin/sample-tool', argv: ['--version'], expected: '1.2.3' } };
+    const config = parseConfigFile(deepseek({ execution: { dependencies: [manifest] } }));
+    expect(profileToAppConfig(config.profiles.main)).toMatchObject({ execution: { dependencies: [manifest] } });
+    expect(() => parseConfigFile(deepseek({ execution: { dependencies: [{ ...manifest, source: 'http://downloads.example.test/tool.tar.gz' }] } }))).toThrow('fixed HTTPS sources');
+    expect(() => parseConfigFile(deepseek({ execution: { dependencies: [{ ...manifest, source: 'https://downloads.example.test/tool.tar.gz?token=secret' }] } }))).toThrow('fixed HTTPS sources');
+    expect(() => parseConfigFile(deepseek({ execution: { dependencies: [{ ...manifest, versionProbe: { executable: 'not-registered', argv: [], expected: '1.2.3' } }] } }))).toThrow('fixed HTTPS sources');
+  });
+
   it('requires an explicit profile when several exist', () => {
     const file = parseConfigFile(JSON.stringify({ version: 1, profiles: { a: { provider: 'deepseek', model: 'm', apiKey: 'a' }, b: { provider: 'deepseek', model: 'm', apiKey: 'b' } } }));
     expect(() => resolveProfile(file)).toThrow('explicit profile');

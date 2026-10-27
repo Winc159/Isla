@@ -73,6 +73,51 @@ describe("ToolRuntime", () => {
     expect(executed).toBe(false);
   });
 
+  it("enforces matching persistent rules before execution", async () => {
+    const registry = new ToolRegistry(); let executions = 0; let approvals = 0;
+    registry.register({ definition: { name: "run_command", description: "", parameters: {} }, permission: { kind: "command-execute" }, execute: async () => { executions += 1; return "ok"; } });
+    const runtime = new ToolRuntime(registry, { workspace: "C:/work", approvalPolicy: "never", policyRules: [{ id: "test-rule", effect: "allow", tool: "run_command", permission: "command-execute", workspace: "c:\\WORK", commandPrefix: ["node", "test.mjs"] }], approvalService: { request: async () => { approvals += 1; return { approved: false }; } } });
+    await expect(runtime.execute({ id: "1", name: "run_command", arguments: JSON.stringify({ executable: "node", argv: ["test.mjs"] }) })).resolves.toMatchObject({ ok: true });
+    await expect(runtime.execute({ id: "2", name: "run_command", arguments: JSON.stringify({ executable: "node", argv: ["deploy.mjs"] }) })).resolves.toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+    expect(executions).toBe(1); expect(approvals).toBe(0);
+  });
+
+  it("applies argv-scoped policy to managed process start", async () => {
+    const registry = new ToolRegistry(); let executions = 0;
+    registry.register({ definition: { name: 'exec_start', description: '', parameters: {} }, permission: { kind: 'command-execute' }, execute: async () => { executions += 1; return 'ok'; } });
+    const runtime = new ToolRuntime(registry, { workspace: 'C:/work', approvalPolicy: 'never', policyRules: [{ id: 'allow-version', effect: 'allow', tool: 'exec_start', permission: 'command-execute', workspace: 'c:\\work', commandPrefix: ['node', '--version'] }] });
+    await expect(runtime.execute({ id: '1', name: 'exec_start', arguments: JSON.stringify({ executable: 'node', argv: ['--version'] }) })).resolves.toMatchObject({ ok: true });
+    await expect(runtime.execute({ id: '2', name: 'exec_start', arguments: JSON.stringify({ executable: 'node', argv: ['install.mjs'] }) })).resolves.toMatchObject({ ok: false, code: 'PERMISSION_DENIED' });
+    expect(executions).toBe(1);
+  });
+
+  it('applies hostname-scoped persistent approvals to network tools', async () => {
+    const registry = new ToolRegistry(); let executions = 0;
+    registry.register({ definition: { name: 'web_fetch', description: '', parameters: {} }, permission: { kind: 'network' }, policyContext: () => ({ networkHost: 'docs.example.com' }), execute: async () => { executions += 1; return 'ok'; } });
+    const runtime = new ToolRuntime(registry, { approvalPolicy: 'never', policyRules: [{ id: 'docs-only', effect: 'allow', permission: 'network', tool: 'web_fetch', networkHost: 'docs.example.com' }] });
+    await expect(runtime.execute({ id: '1', name: 'web_fetch', arguments: '{}' })).resolves.toMatchObject({ ok: true });
+    expect(executions).toBe(1);
+  });
+
+  it('requires each permission for a managed download before executing it', async () => {
+    const registry = new ToolRegistry();
+    const requests: string[] = [];
+    let executed = false;
+    registry.register({
+      definition: { name: 'dependency_install', description: '', parameters: {} },
+      permission: [{ kind: 'dependency-install' }, { kind: 'network-download' }],
+      policyContext: () => ({ networkHost: 'artifacts.example.com' }),
+      execute: async () => { executed = true; return 'installed'; },
+    });
+    const runtime = new ToolRuntime(registry, {
+      workspace: 'C:/work', approvalPolicy: 'ask',
+      approvalService: { request: async request => { requests.push(request.permission.kind); return { approved: request.permission.kind !== 'network-download' }; } },
+    });
+    await expect(runtime.execute({ id: '1', name: 'dependency_install', arguments: '{}' })).resolves.toMatchObject({ ok: false, code: 'USER_REJECTED' });
+    expect(requests).toEqual(['dependency-install', 'network-download']);
+    expect(executed).toBe(false);
+  });
+
   it("maps a signal aborted during tool execution to cancellation", async () => {
     const registry = new ToolRegistry();
     const controller = new AbortController();
