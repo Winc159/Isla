@@ -497,6 +497,7 @@ export class ResourceService {
     for (let index = 1; index <= max; index += 1) if (!parts.some(item => item.part.index === index)) throw new Error("ARCHIVE_VOLUME_INCOMPLETE");
   }
   private async extractNestedArchives(id: string, root: string, stagingRoot: string, passwordCandidates: readonly string[], signal: AbortSignal): Promise<number> {
+    if (!existsSync(root) || !statSync(root).isDirectory()) return 0;
     let totalBytes = 0; let current = root;
     for (let depth = 1; depth <= 3; depth += 1) {
       const archives = this.findArchives(current).filter(path => !path.startsWith(`${stagingRoot}${sep}`));
