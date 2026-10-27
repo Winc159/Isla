@@ -21,6 +21,7 @@ const CLASSIFICATIONS: Readonly<Record<string, ToolClassification>> = {
   dependency_install: { category: 'command', boundary: 'execute', canonicalPurpose: '安装固定清单中的受管依赖' },
   dependency_uninstall: { category: 'command', boundary: 'execute', canonicalPurpose: '卸载受管依赖' },
   update_task_state: { category: 'task', boundary: 'control', canonicalPurpose: '更新持久化任务状态' },
+  update_work_plan: { category: 'task', boundary: 'control', canonicalPurpose: '创建或更新持久化工作计划' },
   search_session_history: { category: 'session', boundary: 'read', canonicalPurpose: '搜索当前工作区历史会话' },
   read_session_context: { category: 'session', boundary: 'read', canonicalPurpose: '读取有限历史会话上下文' },
   context_find: { category: 'session', boundary: 'read', canonicalPurpose: '查找已压缩历史片段' },

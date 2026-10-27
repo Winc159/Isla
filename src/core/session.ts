@@ -11,6 +11,7 @@ import type { TaskBrief } from "./agent-loop.js";
 import { preflightAgentLoop } from './agent-loop-preflight.js';
 import { migrateTaskBrief, summarizeTaskState, updateTaskState, type TaskStateV1 } from "./task-state.js";
 import type { TaskContractV1 } from './task-contract.js';
+import { validateWorkPlan, type WorkMode, type WorkModeStateV1, type WorkPlanV1 } from './work-plan.js';
 import { evaluateCompletionGate, type CompletionRejectionReason } from "./completion-gate.js";
 import { ModelStepRunner } from "./model-step.js";
 import { RequestContextBuilder } from "./request-context.js";
@@ -43,6 +44,8 @@ import { observeToolResult } from './tool-observation.js';
 import { buildEvidenceCards, renderEvidenceCards } from './evidence-cards.js';
 import { createToolBatchExecutionInput } from './tool-batch-contract.js';
 import type { UserQuestionService } from "../user-questions/types.js";
+import { WorkspaceCheckpointStore } from '../checkpoints/workspace-checkpoint.js';
+import { toolAllowedInMode } from '../tools/mode-policy.js';
 export const DEFAULT_MAX_CONTEXT_TURNS = 20;
 export const DEFAULT_MAX_TOOL_ROUNDS = 12;
 type ModelRequestPhase = "legacy" | "agent_step";
@@ -60,6 +63,9 @@ export interface ChatSessionOptions {
   readonly journal?: SessionJournal;
   readonly task?: TaskBrief | TaskStateV1;
   readonly taskContract?: TaskContractV1;
+  readonly workPlan?: WorkPlanV1;
+  readonly workMode?: WorkModeStateV1;
+  readonly enablePlanAct?: boolean;
   readonly skillCatalog?: import("../sessions/store.js").StoredSkillCatalogV1;
   readonly capabilityActivation?: import("../capabilities/routing.js").CapabilityActivationStateV1;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
@@ -94,6 +100,7 @@ function sameTaskState(current: TaskStateV1, next: Omit<TaskStateV1, "revision" 
   return JSON.stringify({ goal: current.goal, status: current.status, constraints: current.constraints, assumptions: current.assumptions, openQuestions: current.openQuestions, steps: current.steps, blockers: current.blockers })
     === JSON.stringify({ goal: next.goal, status: next.status, constraints: next.constraints, assumptions: next.assumptions, openQuestions: next.openQuestions, steps: next.steps, blockers: next.blockers });
 }
+function optionsHasWorkContext(mode: WorkModeStateV1, plan: WorkPlanV1 | undefined): boolean { return mode.revision > 0 || plan !== undefined; }
 export class ChatSession {
   private readonly messages: Message[];
   private readonly maxContextTurns: number;
@@ -123,6 +130,8 @@ export class ChatSession {
     this.context = options.context;
     this.task = options.task;
     this.taskContract = options.taskContract;
+    this.workPlan = options.workPlan;
+    this.workMode = options.workMode ?? (options.enablePlanAct ? { version: 1, mode: 'plan', revision: 1, updatedAt: new Date().toISOString() } : { version: 1, mode: 'act', revision: 0, updatedAt: new Date().toISOString() });
     this.skillCatalog = options.skillCatalog;
     this.capabilityActivation = options.capabilityActivation;
     this.journal = options.journal ?? { version: 1, turns: [] };
@@ -159,7 +168,10 @@ export class ChatSession {
       ...(options.policyRules ? { policyRules: options.policyRules } : {}),
       ...(options.projectRoot ? { workspace: options.projectRoot } : {}),
       permissionPreset: options.permissionPreset,
+      ...(options.enablePlanAct || options.workMode || options.workPlan ? { mode: () => this.workMode.mode } : {}),
+      ...(options.enablePlanAct || options.workMode || options.workPlan ? { plan: () => this.workPlan, actApproved: () => !!this.workPlan && this.workPlan.approvedRevision === this.workPlan.revision && this.workMode.actApprovedRevision === this.workPlan.revision } : {}),
     });
+    this.checkpointStore = options.projectRoot && (options.enablePlanAct || options.workMode) ? new WorkspaceCheckpointStore(options.projectRoot) : undefined;
   }
   private readonly onMessagesChanged: ((messages: readonly Message[]) => Promise<void>) | undefined;
   private readonly skillCatalog: import("../sessions/store.js").StoredSkillCatalogV1 | undefined;
@@ -186,6 +198,7 @@ export class ChatSession {
   private readonly requestContextBuilder: RequestContextBuilder;
   private readonly toolRegistry: ToolRegistry;
   private readonly toolRuntime: ToolRuntime;
+  private readonly checkpointStore: WorkspaceCheckpointStore | undefined;
   private readonly userQuestionService: UserQuestionService | undefined;
   private readonly agentLoopTimeoutMs: number;
   private activeTurn: { readonly controller: AbortController; readonly promise: Promise<ModelResponse> } | undefined;
@@ -194,6 +207,8 @@ export class ChatSession {
   private readonly projectSourceReferences = new Map<string, ProjectSourceReference>();
   private task: TaskBrief | TaskStateV1 | undefined;
   private taskContract: TaskContractV1 | undefined;
+  private workPlan: WorkPlanV1 | undefined;
+  private workMode: WorkModeStateV1;
   private turnPhase: TurnPhase = "idle";
 
   private setTurnPhase(phase: TurnPhase, details: Omit<TurnPhaseEvent, "phase"> = {}): void {
@@ -206,6 +221,28 @@ export class ChatSession {
   get taskState(): TaskStateV1 | undefined {
     if (!this.task) return undefined;
     return "version" in this.task ? this.task : migrateTaskBrief(this.task, this.messages);
+  }
+
+  get currentWorkPlan(): WorkPlanV1 | undefined { return this.workPlan; }
+  get currentWorkMode(): WorkModeStateV1 { return this.workMode; }
+  async listWorkspaceCheckpoints() { return this.checkpointStore?.list() ?? []; }
+  async previewWorkspaceCheckpoint(id: string) { if (!this.checkpointStore) throw new Error('CHECKPOINT_UNAVAILABLE'); return this.checkpointStore.preview(id); }
+  async restoreWorkspaceCheckpoint(id: string, approved: boolean) { if (!this.checkpointStore) throw new Error('CHECKPOINT_UNAVAILABLE'); await this.checkpointStore.restore(id, approved); }
+  async setWorkMode(mode: WorkMode, explicitUserApproval = false): Promise<void> {
+    if (mode === 'act' && (!explicitUserApproval || !this.workPlan)) throw new Error('ACT_REQUIRES_EXPLICIT_PLAN_APPROVAL');
+    if (mode === 'act') {
+      this.workPlan = validateWorkPlan({ ...this.workPlan!, approvedRevision: this.workPlan!.revision });
+      this.workMode = { version: 1, mode, revision: this.workMode.revision + 1, actApprovedRevision: this.workPlan.revision, updatedAt: new Date().toISOString() };
+    } else this.workMode = { version: 1, mode, revision: this.workMode.revision + 1, updatedAt: new Date().toISOString() };
+    await this.persistState();
+  }
+  async updateWorkPlan(plan: WorkPlanV1, expectedRevision: number): Promise<void> {
+    if ((this.workPlan?.revision ?? 0) !== expectedRevision) throw new Error('PLAN_REVISION_CONFLICT');
+    const next = validateWorkPlan({ ...plan, revision: expectedRevision + 1, planId: this.workPlan?.planId ?? plan.planId, updatedAt: new Date().toISOString() });
+    this.workPlan = next;
+    this.workMode = { version: 1, mode: 'plan', revision: this.workMode.revision + 1, updatedAt: new Date().toISOString() };
+    await this.persistState();
+    await this.onSessionEvent?.({ type: 'plan_updated', plan: next });
   }
 
   get skillCatalogSnapshot(): import("../sessions/store.js").StoredSkillCatalogV1 | undefined { return this.skillCatalog; }
@@ -332,6 +369,12 @@ export class ChatSession {
       this.setTurnPhase("model", { round });
       const response = await this.generateModel({ messages: current, tools, ...(requiredToolChoice ? { toolChoice: { name: requiredToolChoice } } : {}) }, true, signal, "agent_step");
       if (!response.toolCalls?.length && !mustSearch && !mustFetch) {
+        const verificationStatus = deriveVerificationStatus(this.journal);
+        if (verificationStatus === "not_run" && !completionRejections.includes("verification_missing_after_mutation")) {
+          completionRejections.push("verification_missing_after_mutation");
+          current = [...current, { role: "system", content: "[completion_rejected] 当前存在修改但尚未验证。必须先运行适用验证，再报告完成。" }];
+          continue;
+        }
         const hasExternalEvidence = evidence.some(item => /^(?:web_search|web_fetch|browser_read|browser_links):/u.test(item));
         if (researchRequired && !hasExternalEvidence) {
           const canDiscoverSources = tools.some(tool => tool.name === "web_search" || tool.name === "browser_open");
@@ -449,6 +492,10 @@ export class ChatSession {
       let terminalResponse: ModelResponse | undefined;
       let execution: ToolExecutionResult = { ok: false, code: "EXECUTION_FAILED", message: "Tool execution interrupted" };
       try {
+        if (this.checkpointStore && (call.name === 'write_text_file' || call.name === 'edit_text_file' || (this.workMode.mode === 'act' && ['run_command','exec_start'].includes(call.name)))) {
+          const checkpoint = await this.checkpointStore.create();
+          await this.onSessionEvent?.({ type: 'workspace_checkpoint_created', checkpointId: checkpoint.id, createdAt: checkpoint.createdAt });
+        }
         execution = await this.toolRuntime.execute(call, { signal: input.signal, webFetchAllowedUrls: [...input.searchResultUrls] });
         const observation = observeToolResult(call.name, execution);
         input.evidence.push(...observation.evidence);
@@ -483,6 +530,10 @@ export class ChatSession {
             const summary = summarizeTaskState(this.task);
             execution = { ...execution, content: `任务状态已保存：${summary.status}，步骤 ${summary.completedSteps}/${summary.totalSteps}，阻塞 ${summary.blockerCount}。` };
           } catch (error) { execution = { ok: false, code: "EXECUTION_FAILED", message: error instanceof Error ? error.message : "TaskState update failed" }; }
+        }
+        if (execution.ok && execution.details?.type === 'work_plan_update') {
+          try { await this.updateWorkPlan(execution.details.plan, this.workPlan?.revision ?? 0); execution = { ...execution, content: `Plan 已保存，revision=${this.workPlan!.revision}。用户仍需显式批准后才能进入 Act。` }; }
+          catch (error) { execution = { ok: false, code: 'EXECUTION_FAILED', message: error instanceof Error ? error.message : 'PLAN_UPDATE_FAILED' }; }
         }
         if (execution.ok && execution.details?.type === "settlement_proposal") {
           const proposal = execution.details.proposal;
@@ -635,7 +686,7 @@ export class ChatSession {
         } catch { this.onDiagnostic?.({ code: "MEMORY_RETRIEVAL_DEGRADED", component: "memory", severity: "debug" }); }
       }
       const phase = this.capabilities.length ? "agent_step" as const : "legacy" as const;
-      const request = this.requestContextBuilder.build(history, phase, memoryContext, this.agentLoop ? this.task : undefined);
+      const request = this.requestContextBuilder.build(history, phase, memoryContext, this.agentLoop ? this.task : undefined, undefined, optionsHasWorkContext(this.workMode, this.workPlan) ? { plan: this.workPlan, mode: this.workMode } : undefined);
       return { history, memoryContext, request };
     };
     let prepared = await prepareRequest();
@@ -652,11 +703,11 @@ export class ChatSession {
       const currentMessage = [...this.messages].reverse().find(message => message.role === "user");
       if (currentMessage) minimalHistory.push(currentMessage);
       const phase = this.capabilities.length ? "agent_step" as const : "legacy" as const;
-      const minimalWithMemory = this.requestContextBuilder.build(minimalHistory, phase, prepared.memoryContext, this.agentLoop ? this.task : undefined);
+      const minimalWithMemory = this.requestContextBuilder.build(minimalHistory, phase, prepared.memoryContext, this.agentLoop ? this.task : undefined, undefined, optionsHasWorkContext(this.workMode, this.workPlan) ? { plan: this.workPlan, mode: this.workMode } : undefined);
       const preserveMemory = requestTokenEstimate(minimalWithMemory) <= this.tokenBudget.maxInputTokens;
       const minimalRequest = preserveMemory
         ? minimalWithMemory
-        : this.requestContextBuilder.build(minimalHistory, phase, undefined, this.agentLoop ? this.task : undefined);
+        : this.requestContextBuilder.build(minimalHistory, phase, undefined, this.agentLoop ? this.task : undefined, undefined, optionsHasWorkContext(this.workMode, this.workPlan) ? { plan: this.workPlan, mode: this.workMode } : undefined);
       prepared = { history: minimalHistory, memoryContext: preserveMemory ? prepared.memoryContext : undefined, request: minimalRequest };
       this.onDiagnostic?.({ code: "CONTEXT_MINIMAL_FALLBACK", component: "context", severity: "warning", detail: `estimated=${requestTokenEstimate(minimalRequest)};budget=${this.tokenBudget.maxInputTokens}` });
     }
@@ -719,7 +770,7 @@ export class ChatSession {
   }
 
   private selectToolDefinitions(context: string): readonly ToolDefinition[] {
-    const tools = this.toolRegistry.definitions();
+    const tools = this.toolRegistry.definitions().filter(tool => toolAllowedInMode(tool.name,this.workMode.mode));
     const estimated = estimateRequestTokens({ messages: [{ role: "user", content: context }], tools });
     if (estimated <= this.tokenBudget.maxInputTokens) return tools;
     const lower = context.toLowerCase();
@@ -758,7 +809,7 @@ export class ChatSession {
   }
 
   private async persistState(includeMessages = true): Promise<void> {
-    const state = buildSessionPersistenceState({ messages: this.messages, context: this.context, journal: this.journal, task: this.task, ...(this.taskContract ? { taskContract: this.taskContract } : {}), skillCatalog: this.skillCatalog, capabilityActivation: this.capabilityActivation });
+    const state = buildSessionPersistenceState({ messages: this.messages, context: this.context, journal: this.journal, task: this.task, ...(this.taskContract ? { taskContract: this.taskContract } : {}), skillCatalog: this.skillCatalog, capabilityActivation: this.capabilityActivation, ...(this.workPlan ? { workPlan: this.workPlan } : {}), ...(this.workMode.revision > 0 ? { workMode: this.workMode } : {}) });
     if (this.onSessionStateChanged) {
       await this.onSessionStateChanged(state);
     } else if (includeMessages) {

@@ -11,6 +11,8 @@ import { migrateTaskBrief, type TaskStateV1 } from "../core/task-state.js";
 import type { SkillCatalogEntry } from "../skills/types.js";
 import type { CapabilityActivationStateV1 } from '../capabilities/routing.js';
 import type { TaskContractV1 } from '../core/task-contract.js';
+import type { WorkModeStateV1, WorkPlanV1 } from '../core/work-plan.js';
+import { validateWorkPlan } from '../core/work-plan.js';
 
 export type { ContextCheckpoint, SessionContext } from "../core/context.js";
 
@@ -76,7 +78,9 @@ export interface StoredSessionV5 extends Omit<StoredSessionV4, "version"> {
   readonly taskContract?: TaskContractV1;
 }
 
-export type StoredSession = StoredSessionV1 | StoredSessionV2 | StoredSessionV3 | StoredSessionV4 | StoredSessionV5;
+export interface StoredSessionV6 extends Omit<StoredSessionV5, "version"> { readonly version: 6; readonly workPlan?: WorkPlanV1; readonly workMode?: WorkModeStateV1; }
+
+export type StoredSession = StoredSessionV1 | StoredSessionV2 | StoredSessionV3 | StoredSessionV4 | StoredSessionV5 | StoredSessionV6;
 
 export interface SessionState {
   readonly messages: readonly Message[];
@@ -85,6 +89,8 @@ export interface SessionState {
   readonly task?: TaskBrief | TaskStateV1;
   readonly skillCatalog?: StoredSkillCatalogV1;
   readonly capabilityActivation?: CapabilityActivationStateV1;
+  readonly workPlan?: WorkPlanV1;
+  readonly workMode?: WorkModeStateV1;
 }
 
 export interface SessionStore {
@@ -119,7 +125,7 @@ export class JsonSessionStore implements SessionStore {
 
   async loadLatest(provider: string, model: string, currentWorkspaceKey?: string): Promise<StoredSession | undefined> {
     const sessions = await this.list(provider, model);
-    return sessions.find(session => currentWorkspaceKey === undefined || ((session.version === 4 || session.version === 5) && session.workspaceKey === currentWorkspaceKey));
+    return sessions.find(session => currentWorkspaceKey === undefined || ((session.version === 4 || session.version === 5 || session.version === 6) && session.workspaceKey === currentWorkspaceKey));
   }
 
   async listAll(): Promise<StoredSession[]> {
@@ -166,25 +172,27 @@ export class JsonSessionStore implements SessionStore {
   async save(session: StoredSession, state: SessionState): Promise<StoredSession> {
     const updatedAt = nextUpdatedAt(session.updatedAt);
     const next = {
-      version: session.version === 5 || state.skillCatalog !== undefined ? 5 : 4,
+      version: session.version >= 5 || state.skillCatalog !== undefined || state.workPlan !== undefined || state.workMode !== undefined ? 6 : 4,
       id: session.id,
       createdAt: session.createdAt,
       updatedAt,
       provider: session.provider,
       model: session.model,
-      workspaceKey: session.version === 4 || session.version === 5 ? session.workspaceKey : "legacy",
+      workspaceKey: session.version === 4 || session.version === 5 || session.version === 6 ? session.workspaceKey : "legacy",
       messages: [...state.messages],
       ...(state.context ? { context: state.context } : {}),
       ...(state.task ? { task: isTaskState(state.task) ? state.task : migrateTaskBrief(state.task, state.messages) } : {}),
       ...('taskContract' in state && state.taskContract ? { taskContract: state.taskContract } : {}),
       journal: state.journal ?? ('journal' in session ? session.journal : emptyJournal()),
-      ...((session.version === 5 || state.skillCatalog !== undefined) ? { skillCatalog: state.skillCatalog ?? (session.version === 5 ? session.skillCatalog : { version: 1, entries: [] }) } : {}),
-      ...(state.capabilityActivation ? { capabilityActivation: state.capabilityActivation } : (session.version === 5 && session.capabilityActivation ? { capabilityActivation: session.capabilityActivation } : {})),
-    } as StoredSessionV4 | StoredSessionV5;
+      ...((session.version === 5 || session.version === 6 || state.skillCatalog !== undefined) ? { skillCatalog: state.skillCatalog ?? (session.version === 5 || session.version === 6 ? session.skillCatalog : { version: 1, entries: [] }) } : {}),
+      ...(state.capabilityActivation ? { capabilityActivation: state.capabilityActivation } : ((session.version === 5 || session.version === 6) && session.capabilityActivation ? { capabilityActivation: session.capabilityActivation } : {})),
+      ...('workPlan' in state && state.workPlan ? { workPlan: state.workPlan } : ('workPlan' in session && session.workPlan ? { workPlan: session.workPlan } : {})),
+      ...('workMode' in state && state.workMode ? { workMode: state.workMode } : ('workMode' in session && session.workMode ? { workMode: session.workMode } : {})),
+    } as StoredSessionV4 | StoredSessionV5 | StoredSessionV6;
     return this.write(next, session.updatedAt);
   }
 
-  private async write(session: StoredSessionV4 | StoredSessionV5, expectedUpdatedAt?: string): Promise<StoredSessionV4 | StoredSessionV5> {
+  private async write(session: StoredSessionV4 | StoredSessionV5 | StoredSessionV6, expectedUpdatedAt?: string): Promise<StoredSessionV4 | StoredSessionV5 | StoredSessionV6> {
     await mkdir(this.directory, { recursive: true });
     const path = join(this.directory, `${session.id}.json`);
     const temporaryPath = `${path}.${randomUUID()}.tmp`;
@@ -365,6 +373,7 @@ export function parseStoredSession(source: string): StoredSession {
     ...(value.taskContract ? { taskContract: value.taskContract } : {}),
     ...(value.capabilityActivation ? { capabilityActivation: value.capabilityActivation } : {}),
   };
+  if (value.version === 6) return { ...value, journal };
   return {
     version: 3,
     id: value.id,
@@ -383,7 +392,7 @@ function parseSession(source: string): StoredSession { return parseStoredSession
 function isStoredSession(value: unknown): value is StoredSession {
   if (!value || typeof value !== "object") return false;
   const session = value as Record<string, unknown>;
-  return (session.version === 1 || session.version === 2 || session.version === 3 || session.version === 4 || session.version === 5)
+  return (session.version === 1 || session.version === 2 || session.version === 3 || session.version === 4 || session.version === 5 || session.version === 6)
     && typeof session.id === "string"
     && typeof session.createdAt === "string"
     && typeof session.updatedAt === "string"
@@ -393,10 +402,17 @@ function isStoredSession(value: unknown): value is StoredSession {
     && session.messages.every(isMessage)
     && (session.version === 1 || session.context === undefined || isSessionContext(session.context))
     && (session.version !== 3 || session.task === undefined || isTaskBrief(session.task))
-    && (session.version !== 4 && session.version !== 5 || (typeof session.workspaceKey === "string" && (session.task === undefined || isTaskState(session.task))))
-    && (session.version !== 5 || isSkillCatalog(session.skillCatalog))
-    && (session.version !== 5 || session.capabilityActivation === undefined || isCapabilityActivation(session.capabilityActivation))
+    && (session.version < 4 || (typeof session.workspaceKey === "string" && (session.task === undefined || isTaskState(session.task))))
+    && (session.version !== 5 && session.version !== 6 || isSkillCatalog(session.skillCatalog))
+    && (session.version !== 5 && session.version !== 6 || session.capabilityActivation === undefined || isCapabilityActivation(session.capabilityActivation))
+    && (session.version !== 6 || isOptionalPlanAndMode(session))
     && (session.version !== 3 && session.version !== 4 || isSessionJournal(session.journal));
+}
+
+function isOptionalPlanAndMode(session: Record<string, unknown>): boolean {
+  if (session.workPlan !== undefined) { try { validateWorkPlan(session.workPlan); } catch { return false; } }
+  if (session.workMode !== undefined) { const mode = session.workMode as Record<string, unknown>; if (!mode || mode.version !== 1 || !['plan','act','review'].includes(String(mode.mode)) || !Number.isInteger(mode.revision) || typeof mode.updatedAt !== 'string') return false; }
+  return true;
 }
 
 function isTaskBrief(value: unknown): value is TaskBrief {

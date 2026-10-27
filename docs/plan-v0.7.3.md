@@ -53,3 +53,14 @@ Plan 包含 `planId`、revision、goal、constraints、assumptions、steps、dep
 - Plan/Act 是 Runtime 权限事实而非提示词约定。
 - 用户能在 CLI 和协议客户端查看、批准、修改和恢复计划。
 - Workspace 恢复不覆盖范围外文件，Resource 目录不参与 Checkpoint。
+
+## 当前实现记录
+
+- Work Plan 独立于旧 TaskContract，Session v6 持久化 Plan 和 Mode；旧 Session 可迁移续存。
+- `update_work_plan` 在 Plan 模式更新 revision；Host CLI `/plan approve` 只批准当前 revision，计划变更使 Act 批准失效。
+- ToolRuntime 对 Plan/Review 的写入、命令和外部副作用实施拒绝；旧直接 ChatSession 构造保持兼容。
+- Workspace Checkpoint 自动在文本文件写入前生成，排除 Git 忽略文件、凭据特征、Resource、`.git`、依赖和构建目录；CLI 支持 list / preview / 双命令确认 restore。
+- Checkpoint 保存 Git HEAD、暂存区/index 与工作区路径摘要、文本快照及排除文件路径；不恢复 Git index，也不保存二进制或超大文件。恢复只作用于工作区文件，并需单独确认。
+- Plan/Review 通过显式工具 allowlist 同时约束模型工具快照和执行时调用；Review 的 `run_command` 必须标注 `purpose=verification`。
+- 已使用 Qwen 对含故障的 clamp fixture 完成真实对话，10 项验收全通过（100%）：Plan 持久化、显式 revision 批准、Act、写入、测试、Review、checkpoint 及无秘密输出。
+- 在宣告覆盖所有原始标准前仍需评估：逐步进度自动归并/有限局部重规划，以及完整的人类可读工作区 diff UI。当前真实验收覆盖单次修复，不覆盖多步骤恢复或中断后续跑。

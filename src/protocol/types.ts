@@ -23,6 +23,9 @@ export type ProtocolRequest =
   | { readonly type: "models_list"; readonly id: string; readonly query?: string }
   | { readonly type: "models_use"; readonly id: string; readonly model: string }
   | { readonly type: "task_get"; readonly id: string }
+  | { readonly type: 'plan_get'; readonly id: string }
+  | { readonly type: 'plan_set'; readonly id: string; readonly plan: import('../core/work-plan.js').WorkPlanV1; readonly expectedRevision: number }
+  | { readonly type: 'mode_set'; readonly id: string; readonly mode: import('../core/work-plan.js').WorkMode; readonly approvePlanRevision?: number }
   | { readonly type: "sessions_list"; readonly id: string }
   | { readonly type: "skills_list"; readonly id: string }
   | { readonly type: "skill_invoke"; readonly id: string; readonly name: string; readonly text?: string }
@@ -52,6 +55,7 @@ export type ProtocolEvent =
   | { readonly type: "models_list"; readonly id: string; readonly models: readonly unknown[] }
   | { readonly type: "model_changed"; readonly id: string; readonly model: string; readonly effective: "next_start" }
   | ProtocolTaskStateEvent
+  | { readonly type: 'plan_state'; readonly id: string; readonly plan?: import('../core/work-plan.js').WorkPlanV1; readonly mode: import('../core/work-plan.js').WorkModeStateV1 }
   | { readonly type: "sessions_result"; readonly id: string; readonly sessions: readonly SessionSearchHit[]; readonly truncated: boolean }
   | { readonly type: "skills_result"; readonly id: string; readonly skills: readonly { readonly name: string; readonly description: string; readonly modelInvocable: boolean; readonly userInvocable: boolean }[] }
   | { readonly type: "mcp_result"; readonly id: string; readonly servers: readonly McpStatus[] }

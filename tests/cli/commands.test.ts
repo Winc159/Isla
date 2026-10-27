@@ -6,6 +6,8 @@ describe("CLI command registry", () => {
     expect(findCliCommand("/exit")?.inputMode).toBe("line");
     expect(findCliCommand("/new")?.inputMode).toBe("line");
     expect(findCliCommand("/sessions")?.inputMode).toBe("raw");
+    expect(findCliCommand('/plan approve')?.inputMode).toBe('line');
+    expect(findCliCommand('/checkpoint preview abc')?.inputMode).toBe('line');
     expect(findCliCommand("/memory")?.inputMode).toBe("raw");
     expect(findCliCommand("/help")?.inputMode).toBe("line");
     expect(findCliCommand("/models search qwen")?.inputMode).toBe("line");
@@ -19,6 +21,6 @@ describe("CLI command registry", () => {
   });
 
   it("lists command names in display order", () => {
-    expect(listCliCommands().map(command => command.name)).toEqual(["/new", "/sessions", "/task", "/skills", "/capabilities", "/context", "/browser", "/approval", "/memory", "/trace", "/config", "/profile", "/models", "/mcp", "/help", "/exit"]);
+    expect(listCliCommands().map(command => command.name)).toEqual(["/new", "/sessions", "/task", "/plan", "/checkpoint", "/skills", "/capabilities", "/context", "/browser", "/approval", "/memory", "/trace", "/config", "/profile", "/models", "/mcp", "/help", "/exit"]);
   });
 });

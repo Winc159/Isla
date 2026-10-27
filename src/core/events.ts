@@ -23,6 +23,8 @@ export interface TurnPhaseEvent {
 }
 
 export type SessionEvent =
+  | { readonly type: 'plan_updated'; readonly plan: import('./work-plan.js').WorkPlanV1 }
+  | { readonly type: 'workspace_checkpoint_created'; readonly checkpointId: string; readonly createdAt: string }
   | { readonly type: "user"; readonly input: string }
   | { readonly type: "tool_call"; readonly callId: string; readonly tool: string; readonly arguments: string }
   | { readonly type: "tool_result"; readonly callId: string; readonly tool: string; readonly result: ToolExecutionResult }

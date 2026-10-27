@@ -9,6 +9,10 @@ export function createControlCapability(): ToolCapability {
     instructions: 'Host 控制面：提交最终候选结果或报告当前阻塞。调用只产生提案，最终状态由 Runtime 判定。',
     tools: [
       {
+        definition: { name: 'update_work_plan', description: '在 plan 模式下创建或修订完整工作计划。Runtime 自动分配 revision；绝不可通过此工具批准 Act。', parameters: { type: 'object', additionalProperties: false, required: ['planId','goal','constraints','assumptions','steps','risks','verification','openQuestions','status'], properties: { planId:{type:'string'},goal:{type:'string'},constraints:{type:'array',items:{type:'string'}},assumptions:{type:'array',items:{type:'string'}},steps:{type:'array',items:{type:'object',additionalProperties:false,required:['id','title','status','dependencies'],properties:{id:{type:'string'},title:{type:'string'},status:{type:'string',enum:['pending','in_progress','completed','blocked']},dependencies:{type:'array',items:{type:'string'}}}}},risks:{type:'array',items:{type:'string'}},verification:{type:'array',items:{type:'string'}},openQuestions:{type:'array',items:{type:'string'}},status:{type:'string',enum:['active','blocked','completed']}} } },
+        async execute(raw) { const plan = JSON.parse(raw) as import('../core/work-plan.js').WorkPlanV1; return { content:'Plan update submitted for Runtime validation.', details:{type:'work_plan_update', plan:{...plan,version:1,revision:0,updatedAt:new Date().toISOString()} } }; },
+      },
+      {
         definition: {
           name: 'submit_result',
           description: '提交本轮最终回答候选；不要填写状态字段，Runtime 会独立判定是否完成。',

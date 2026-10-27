@@ -93,6 +93,23 @@ export interface ProtocolSessionEvents {
       writer.write({ type: "task_state", id: request.id, sessionId: options.sessionId?.() ?? "unknown", ...(task ? { task } : {}), verificationStatus: currentSession.verificationStatus });
       continue;
     }
+    if (request.type === 'plan_get') { writer.write({ type: 'plan_state', id: request.id, ...(currentSession.currentWorkPlan ? { plan: currentSession.currentWorkPlan } : {}), mode: currentSession.currentWorkMode }); continue; }
+    if (request.type === 'plan_set') {
+      if (active) { writer.write({ type: 'error', id: request.id, code: 'BUSY', message: '当前已有请求处理中', recoverable: true }); continue; }
+      try { await currentSession.updateWorkPlan(request.plan, request.expectedRevision); writer.write({ type: 'plan_state', id: request.id, plan: currentSession.currentWorkPlan, mode: currentSession.currentWorkMode } as never); }
+      catch (error) { writer.write({ type: 'error', id: request.id, code: error instanceof Error ? error.message : 'PLAN_UPDATE_FAILED', message: 'Plan 更新失败', recoverable: true }); }
+      continue;
+    }
+    if (request.type === 'mode_set') {
+      if (active) { writer.write({ type: 'error', id: request.id, code: 'BUSY', message: '当前已有请求处理中', recoverable: true }); continue; }
+      try {
+        const explicitApproval = request.mode === 'act' && request.approvePlanRevision !== undefined && request.approvePlanRevision === currentSession.currentWorkPlan?.revision;
+        if (request.mode === 'act' && !explicitApproval) throw new Error('ACT_REQUIRES_EXPLICIT_PLAN_APPROVAL');
+        await currentSession.setWorkMode(request.mode, explicitApproval);
+        writer.write({ type: 'plan_state', id: request.id, ...(currentSession.currentWorkPlan ? { plan: currentSession.currentWorkPlan } : {}), mode: currentSession.currentWorkMode });
+      } catch (error) { writer.write({ type: 'error', id: request.id, code: error instanceof Error ? error.message : 'MODE_CHANGE_FAILED', message: '模式切换失败', recoverable: true }); }
+      continue;
+    }
     if (request.type === "mcp_list") {
       writer.write({ type: "mcp_result", id: request.id, servers: options.mcpHost?.statuses() ?? [] });
       continue;

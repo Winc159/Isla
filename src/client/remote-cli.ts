@@ -98,7 +98,7 @@ export async function runRemoteCli(invocation: RemoteCliInvocation, input: Reada
   }
   const listed = await client.sessions(key);
   let sessionId = invocation.newSession || !listed.sessions.length ? (await client.createSession(key)).sessionId : listed.sessions[0]!.sessionId;
-  output.write(`Isla v0 · Resident Host · workspace=${root}\nmaster,你好，我叫（Error划掉）Isla，很高兴认识你\n当前会话 ${sessionId}\n输入 /new、/sessions、/memory、/trace、/context 或 /exit。\n\n`);
+  output.write(`Isla v0 · Resident Host · workspace=${root}\nmaster,你好，我叫（Error划掉）Isla，很高兴认识你\n当前会话 ${sessionId}\n输入 /new、/sessions、/plan、/checkpoint、/memory、/trace、/context 或 /exit。\n\n`);
   const lines = createInterface({ input, output, prompt: 'isla> ', terminal: Boolean((input as Readable & { isTTY?: boolean }).isTTY) });
   let busy = false;
   let active: { sessionId: string; turnId: string } | undefined;
@@ -123,6 +123,13 @@ export async function runRemoteCli(invocation: RemoteCliInvocation, input: Reada
     if (text.startsWith('/sessions select ')) { const result = await client.sessions(key); const choice = text.slice(17).trim(); const selected = result.sessions.find((item, index) => String(index + 1) === choice || item.sessionId === choice); if (!selected) output.write('未找到可用会话。\n'); else { sessionId = selected.sessionId; output.write(`已选择 ${sessionId}\n`); const history = await client.history(sessionId, 0, 20); for (const message of history.messages) output.write(`${message.role === 'user' ? '你' : 'Isla'}：${message.content}\n`); } lines.prompt(); return; }
     if (text === '/sessions history') { const history = await client.history(sessionId, 0, 50); for (const message of history.messages) output.write(`${message.role === 'user' ? '你' : 'Isla'}：${message.content}\n`); output.write(`（${history.messages.length}/${history.total} 条）\n`); lines.prompt(); return; }
     if (text === '/trace' || text === '/context') { writeJson(text, await client.sessionView(sessionId, text.slice(1) as 'trace' | 'context')); lines.prompt(); return; }
+    if (text === '/plan') { writeJson('/plan', await client.workPlan(sessionId)); lines.prompt(); return; }
+    if (text === '/plan approve') { const current = await client.workPlan(sessionId); if (!current.plan) output.write('当前没有可批准的计划。请先让 Isla 制定计划。\n'); else { await client.setWorkMode(sessionId, root, 'act', current.plan.revision); output.write(`已批准 Plan revision ${current.plan.revision}，进入 Act 模式。\n`); } lines.prompt(); return; }
+    if (text === '/plan mode plan' || text === '/plan mode review') { const mode = text.endsWith('review') ? 'review' : 'plan'; await client.setWorkMode(sessionId, root, mode); output.write(`当前模式：${mode}\n`); lines.prompt(); return; }
+    if(text==='/checkpoint'){writeJson('/checkpoint',await client.checkpoints(sessionId,root));lines.prompt();return;}
+    if(text.startsWith('/checkpoint preview ')){const id=text.slice(20).trim();writeJson('/checkpoint preview',await client.checkpointOperation(sessionId,root,'preview',id));lines.prompt();return;}
+    if(text.startsWith('/checkpoint restore ')){const id=text.slice(20).trim();const preview=await client.checkpointOperation(sessionId,root,'preview',id);writeJson('恢复预览（确认后再执行 /checkpoint restore-confirm <id>）',preview);lines.prompt();return;}
+    if(text.startsWith('/checkpoint restore-confirm ')){const id=text.slice(28).trim();writeJson('/checkpoint restore',await client.checkpointOperation(sessionId,root,'restore',id,true));lines.prompt();return;}
     if (text === '/memory' || text.startsWith('/memory ')) { const parts = text.split(/\s+/u); const action = parts[1] ?? 'list'; if (action === 'disable' && parts[2]) { const value = await client.memory('show', parts[2]) as { revision?: number }; if (!Number.isInteger(value.revision)) throw new Error('MEMORY_NOT_FOUND'); writeJson('/memory', await client.disableMemory(parts[2], value.revision!)); } else { const value = await client.memory(action === 'show' ? 'show' : 'list', action === 'show' ? parts[2] : undefined); writeJson('/memory', value); } lines.prompt(); return; }
     if (text === '/model' || text.startsWith('/model ')) { output.write('模型由 Resident Host 启动配置决定，远程交互中不能切换。\n'); lines.prompt(); return; }
     busy = true; cancelRequested = false; controller = new AbortController();

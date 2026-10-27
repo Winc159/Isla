@@ -123,6 +123,8 @@ export function projectStoredSession(storedSession: StoredSession): {
     ...('taskContract' in storedSession && storedSession.taskContract ? { taskContract: storedSession.taskContract } : {}),
     ...('skillCatalog' in storedSession && storedSession.skillCatalog ? { skillCatalog: storedSession.skillCatalog } : {}),
     ...('capabilityActivation' in storedSession && storedSession.capabilityActivation ? { capabilityActivation: storedSession.capabilityActivation } : {}),
+    ...('workPlan' in storedSession && storedSession.workPlan ? { workPlan: storedSession.workPlan } : {}),
+    ...('workMode' in storedSession && storedSession.workMode ? { workMode: storedSession.workMode } : {}),
   };
 }
 
@@ -186,8 +188,11 @@ export function createSessionFactory(options: SessionFactoryOptions) {
         contextReserveTokens: config.contextReserveTokens,
         modelRetries: config.modelRetries,
         enableTools: true,
+        enablePlanAct: true,
         skillCatalog: ('skillCatalog' in current && current.skillCatalog) ? current.skillCatalog : { version: 1, entries: skillCatalog.listSync().entries },
         ...('capabilityActivation' in current && current.capabilityActivation ? { capabilityActivation: current.capabilityActivation } : {}),
+        ...('workPlan' in current && current.workPlan ? { workPlan: current.workPlan } : {}),
+        ...('workMode' in current && current.workMode ? { workMode: current.workMode } : {}),
         agentLoop: true,
         ...(config.loopBudget ? { loopBudget: config.loopBudget } : {}),
         agentLoopTimeoutMs: config.timeoutMs ?? 600_000,

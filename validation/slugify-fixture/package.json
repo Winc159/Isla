@@ -1,6 +1,0 @@
-{
-  "name": "isla-slugify-fixture",
-  "private": true,
-  "type": "module",
-  "scripts": { "test": "node --test" }
-}

@@ -182,7 +182,7 @@ flowchart TD
 
 分类审批、规则存储、命令规范化、长进程、PTY、stdin、平台事实、受管依赖安装和执行 Adapter。
 
-验收：PDF 场景能批准后自动安装、执行、验证；未知副作用不盲目重试；跨 Windows/macOS/Linux 契约测试。
+验收：真实通用任务经显式 Approval 后执行 argv 命令，读取输出并核验退出状态；未知副作用不盲目重试；跨平台 Adapter 契约测试。PDF 专项验收已从该版本范围移除。
 
 ### v0.7.3 Plan / Act 与 Checkpoint
 

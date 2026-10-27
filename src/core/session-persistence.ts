@@ -5,6 +5,7 @@ import type { SessionContext } from "./context.js";
 import type { SessionJournal } from "./journal.js";
 import type { TaskStateV1 } from "./task-state.js";
 import type { TaskContractV1 } from "./task-contract.js";
+import type { WorkModeStateV1, WorkPlanV1 } from './work-plan.js';
 import type { Message } from "./types.js";
 
 export interface SessionPersistenceState {
@@ -15,6 +16,8 @@ export interface SessionPersistenceState {
   readonly taskContract?: TaskContractV1;
   readonly skillCatalog?: StoredSkillCatalogV1;
   readonly capabilityActivation?: CapabilityActivationStateV1;
+  readonly workPlan?: WorkPlanV1 | undefined;
+  readonly workMode?: WorkModeStateV1 | undefined;
 }
 
 export interface SessionPersistenceSource {
@@ -25,6 +28,8 @@ export interface SessionPersistenceSource {
   readonly taskContract?: TaskContractV1;
   readonly skillCatalog: StoredSkillCatalogV1 | undefined;
   readonly capabilityActivation: CapabilityActivationStateV1 | undefined;
+  readonly workPlan?: WorkPlanV1 | undefined;
+  readonly workMode?: WorkModeStateV1 | undefined;
 }
 
 export function buildSessionPersistenceState(source: SessionPersistenceSource): SessionPersistenceState {
@@ -36,5 +41,7 @@ export function buildSessionPersistenceState(source: SessionPersistenceSource): 
     ...(source.taskContract ? { taskContract: source.taskContract } : {}),
     ...(source.skillCatalog ? { skillCatalog: source.skillCatalog } : {}),
     ...(source.capabilityActivation ? { capabilityActivation: source.capabilityActivation } : {}),
+    ...(source.workPlan ? { workPlan: source.workPlan } : {}),
+    ...(source.workMode ? { workMode: source.workMode } : {}),
   };
 }

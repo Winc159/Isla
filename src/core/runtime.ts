@@ -20,6 +20,9 @@ export interface CreateSessionOptions {
   readonly context?: import("./context.js").SessionContext;
   readonly journal?: SessionJournal;
   readonly taskContract?: import('./task-contract.js').TaskContractV1;
+  readonly workPlan?: import('./work-plan.js').WorkPlanV1;
+  readonly workMode?: import('./work-plan.js').WorkModeStateV1;
+  readonly enablePlanAct?: boolean;
   readonly onMessagesChanged?: (messages: readonly Message[]) => Promise<void>;
   readonly skillCatalog?: import("../sessions/store.js").StoredSkillCatalogV1;
   readonly onSessionStateChanged?: (state: { readonly messages: readonly Message[]; readonly context?: import("./context.js").SessionContext; readonly journal?: SessionJournal; readonly task?: import("./agent-loop.js").TaskBrief | import("./task-state.js").TaskStateV1; readonly taskContract?: import('./task-contract.js').TaskContractV1; readonly skillCatalog?: import("../sessions/store.js").StoredSkillCatalogV1 }) => Promise<void>;

@@ -15,8 +15,10 @@ import { capabilitiesCommand } from './capabilities-command.js';
 import { contextCommand } from './context-command.js';
 import { browserCommand } from './browser-command.js';
 import { approvalCommand } from './approval-command.js';
+import { planCommand } from './plan-command.js';
+import { checkpointCommand } from './checkpoint-command.js';
 
-const registeredCommands = [newCommand, sessionsCommand, taskCommand, skillsCommand, capabilitiesCommand, contextCommand, browserCommand, approvalCommand, memoryCommand, traceCommand, configCommand, profileCommand, modelsCommand, mcpCommand, helpCommand, exitCommand];
+const registeredCommands = [newCommand, sessionsCommand, taskCommand, planCommand, checkpointCommand, skillsCommand, capabilitiesCommand, contextCommand, browserCommand, approvalCommand, memoryCommand, traceCommand, configCommand, profileCommand, modelsCommand, mcpCommand, helpCommand, exitCommand];
 const commands = new Map<string, CliCommand>(
   registeredCommands.map(command => [command.name, command]),
 );
@@ -24,7 +26,7 @@ const commands = new Map<string, CliCommand>(
 export function findCliCommand(line: string): CliCommand | undefined {
   if (line === '/skill') return commands.get('/skills');
   if (line === '/model' || line.startsWith('/model ')) return commands.get('/models');
-  return commands.get(line) ?? (line.startsWith('/skills ') || line.startsWith('/skill ') ? commands.get('/skills') : undefined) ?? (line.startsWith('/capabilities ') ? commands.get('/capabilities') : undefined) ?? (line.startsWith('/context ') ? commands.get('/context') : undefined) ?? (line.startsWith('/browser ') ? commands.get('/browser') : undefined) ?? (line.startsWith('/approval ') ? commands.get('/approval') : undefined) ?? (line.startsWith('/memory ') ? commands.get('/memory') : undefined) ?? (line.startsWith('/trace ') ? commands.get('/trace') : undefined) ?? (line.startsWith('/config ') ? commands.get('/config') : undefined) ?? (line.startsWith('/profile ') ? commands.get('/profile') : undefined) ?? (line.startsWith('/models ') ? commands.get('/models') : undefined) ?? (line.startsWith('/mcp ') ? commands.get('/mcp') : undefined);
+  return commands.get(line) ?? (line.startsWith('/skills ') || line.startsWith('/skill ') ? commands.get('/skills') : undefined) ?? (line.startsWith('/capabilities ') ? commands.get('/capabilities') : undefined) ?? (line.startsWith('/context ') ? commands.get('/context') : undefined) ?? (line.startsWith('/browser ') ? commands.get('/browser') : undefined) ?? (line.startsWith('/approval ') ? commands.get('/approval') : undefined) ?? (line.startsWith('/memory ') ? commands.get('/memory') : undefined) ?? (line.startsWith('/trace ') ? commands.get('/trace') : undefined) ?? (line.startsWith('/config ') ? commands.get('/config') : undefined) ?? (line.startsWith('/profile ') ? commands.get('/profile') : undefined) ?? (line.startsWith('/models ') ? commands.get('/models') : undefined) ?? (line.startsWith('/mcp ') ? commands.get('/mcp') : undefined) ?? (line.startsWith('/plan ') ? commands.get('/plan') : undefined) ?? (line.startsWith('/checkpoint ') ? commands.get('/checkpoint') : undefined);
 }
 
 export function listCliCommands(): readonly CliCommand[] {

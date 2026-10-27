@@ -13,6 +13,9 @@ export function parseProtocolRequest(line: string): ProtocolRequest {
   if (item.type === "models_list" && (item.query === undefined || typeof item.query === "string")) return item as ProtocolRequest;
   if (item.type === "models_use" && typeof item.model === "string" && item.model.trim()) return item as ProtocolRequest;
   if (item.type === "task_get" || item.type === "sessions_list" || item.type === "skills_list") return item as ProtocolRequest;
+  if (item.type === 'plan_get') return item as ProtocolRequest;
+  if (item.type === 'plan_set' && item.plan && typeof item.plan === 'object' && Number.isInteger(item.expectedRevision)) return item as ProtocolRequest;
+  if (item.type === 'mode_set' && ['plan','act','review'].includes(String(item.mode)) && (item.approvePlanRevision === undefined || Number.isInteger(item.approvePlanRevision))) return item as ProtocolRequest;
   if (item.type === "mcp_list" || item.type === "capabilities_list") return item as ProtocolRequest;
   if (item.type === "skill_invoke" && typeof item.name === "string" && item.name.trim() && (item.text === undefined || typeof item.text === "string")) return item as ProtocolRequest;
   if (item.type === "sessions_search" && (item.query === undefined || typeof item.query === "string") && (item.status === undefined || item.status === "active" || item.status === "blocked" || item.status === "completed")) return item as ProtocolRequest;

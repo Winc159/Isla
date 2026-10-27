@@ -111,8 +111,9 @@ describe("cli", () => {
       { role: "user", content: "u1" },
       { role: "assistant", content: "a1" },
       { role: "user", content: "u2" },
+      expect.objectContaining({ role: 'system', content: expect.stringContaining('当前工作模式=plan') }),
     ]);
-    expect(p.requests[2]?.messages).toEqual([{ role: "user", content: "u3" }]);
+    expect(p.requests[2]?.messages).toEqual([{ role: "user", content: "u3" }, expect.objectContaining({ role: 'system', content: expect.stringContaining('当前工作模式=plan') })]);
     expect(store.sessions).toHaveLength(2);
     expect(out).toContain("\x1b[2J\x1b[3J\x1b[H");
   });

@@ -4,6 +4,33 @@ import { ToolRuntime } from "../../src/tools/runtime.js";
 import { sandboxDenied } from "../../src/tools/errors.js";
 
 describe("ToolRuntime", () => {
+  it('enforces read-only plan/review modes at runtime', async () => {
+    const registry = new ToolRegistry(); let writes = 0;
+    registry.register({ definition:{name:'write_text_file',description:'',parameters:{}}, execute:async()=>{writes++;return 'ok';} });
+    const runtime = new ToolRuntime(registry, { mode:()=> 'plan' });
+    await expect(runtime.execute({id:'1',name:'write_text_file',arguments:'{}'})).resolves.toMatchObject({ok:false,code:'PERMISSION_DENIED'});
+    expect(writes).toBe(0);
+  });
+  it('allows read-only research during Plan and only verification commands during Review', async()=>{
+    const registry=new ToolRegistry();let ran=0;
+    registry.register({definition:{name:'web_search',description:'',parameters:{}},execute:async()=>{ran++;return 'ok';}});
+    const plan=new ToolRuntime(registry,{mode:()=> 'plan'});
+    await expect(plan.execute({id:'1',name:'web_search',arguments:'{}'})).resolves.toMatchObject({ok:true});
+    const commandRegistry=new ToolRegistry();commandRegistry.register({definition:{name:'run_command',description:'',parameters:{}},execute:async()=>{ran++;return 'ok';}});
+    const review=new ToolRuntime(commandRegistry,{mode:()=> 'review'});
+    await expect(review.execute({id:'2',name:'run_command',arguments:JSON.stringify({purpose:'other'})})).resolves.toMatchObject({ok:false,code:'PERMISSION_DENIED'});
+    expect(ran).toBe(1);
+  });
+
+  it('requires the current approved plan revision for Act tools', async () => {
+    const registry=new ToolRegistry();let ran=0;
+    registry.register({definition:{name:'write_text_file',description:'',parameters:{}},execute:async()=>{ran++;return 'ok';}});
+    const plan={version:1 as const,planId:'p',revision:2,goal:'g',constraints:[],assumptions:[],steps:[{id:'s',title:'step',status:'pending' as const,dependencies:[]}],risks:[],verification:['test'],openQuestions:[],status:'active' as const,updatedAt:new Date().toISOString(),approvedRevision:1};
+    const runtime=new ToolRuntime(registry,{mode:()=> 'act',plan:()=>plan,actApproved:()=>false});
+    await expect(runtime.execute({id:'1',name:'write_text_file',arguments:'{}'})).resolves.toMatchObject({ok:false,code:'PERMISSION_DENIED'});
+    expect(ran).toBe(0);
+  });
+
   it("normalizes success and unknown tools", async () => {
     const registry = new ToolRegistry();
     registry.register({ definition: { name: "echo", description: "", parameters: {} }, execute: async () => "ok" });

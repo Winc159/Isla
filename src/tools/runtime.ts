@@ -5,16 +5,23 @@ import type { ApprovalPolicy, ApprovalRequestOptions, ApprovalService } from "..
 import { allowsWithoutApproval, type PermissionPreset } from "../approval/presets.js";
 import { ToolFailure } from "./errors.js";
 import { evaluatePolicy, type PolicyRuleV1 } from '../approval/policy.js';
+import { classifyTool } from './catalog.js';
+import { reviewCommandIsVerification, toolAllowedInMode } from './mode-policy.js';
 
 export class ToolRuntime {
   constructor(
     private readonly registry: ToolRegistry,
-    private readonly options: { readonly approvalPolicy?: ApprovalPolicy | undefined; readonly approvalService?: ApprovalService | undefined; readonly permissionPreset?: PermissionPreset | undefined; readonly onApproved?: ((toolName: string) => void) | undefined; readonly policyRules?: readonly PolicyRuleV1[]; readonly workspace?: string } = {},
+    private readonly options: { readonly approvalPolicy?: ApprovalPolicy | undefined; readonly approvalService?: ApprovalService | undefined; readonly permissionPreset?: PermissionPreset | undefined; readonly onApproved?: ((toolName: string) => void) | undefined; readonly policyRules?: readonly PolicyRuleV1[]; readonly workspace?: string; readonly mode?: () => 'plan' | 'act' | 'review'; readonly plan?: () => import('../core/work-plan.js').WorkPlanV1 | undefined; readonly actApproved?: () => boolean } = {},
   ) {}
   async execute(call: ToolCall, options: { readonly signal?: AbortSignal; readonly webFetchAllowedUrls?: readonly string[]; readonly toolCallId?: string } = {}): Promise<ToolExecutionResult> {
     if (options.signal?.aborted) return cancelledResult();
     const tool = this.registry.get(call.name);
     if (!tool) return { ok: false, code: "UNKNOWN_TOOL", message: `Unknown tool: ${call.name}` };
+    const boundary = classifyTool(call.name).boundary;
+    const mode = this.options.mode?.() ?? 'act';
+    if (mode !== 'act' && !toolAllowedInMode(call.name,mode)) return { ok: false, code: 'PERMISSION_DENIED', message: `当前 ${mode} 模式禁止执行 ${call.name}` };
+    if (mode === 'review' && call.name === 'run_command' && !reviewCommandIsVerification(call.arguments)) return { ok: false, code: 'PERMISSION_DENIED', message: 'Review 模式只允许执行 verification 命令' };
+    if (mode === 'act' && this.options.plan && (!this.options.plan() || !this.options.actApproved?.())) return { ok: false, code: 'PERMISSION_DENIED', message: 'Act 模式需要当前计划版本的明确用户批准' };
     let summary = `Execute ${call.name}`;
     let networkHost: string | undefined;
     try {
@@ -53,6 +60,7 @@ export class ToolRuntime {
     }
   }
 }
+
 
 function extractCommandPolicy(toolName: string, argumentsJson: string): { readonly argv?: readonly string[]; readonly workspace?: string } {
   if (toolName !== 'run_command' && toolName !== 'exec_start') return {};
