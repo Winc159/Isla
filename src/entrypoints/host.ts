@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createApplication, createStderrDiagnosticSink } from '../runtime/application.js';
 import { ResidentHost } from '../host/server.js';
 import { defaultLocalRuntimeConfigPath, loadOrCreateLocalRuntimeConfig } from '../config/local-runtime.js';
@@ -25,6 +26,10 @@ const host = new ResidentHost({
   provider: loaded.config.provider,
   model: loaded.config.model,
   sessionStore: application.sessions,
+  uiDirectory: join(dirname(fileURLToPath(import.meta.url)), '../../dist/agent-ui'),
+  defaultWorkspaceRoot: workspaceRoot,
+  resourceBridge,
+  ...(loaded.mcpHost ? { mcpStatuses: () => loaded.mcpHost!.statuses() } : {}),
   ...(application.memory.store ? { memoryStore: application.memory.store } : {}),
   contextLimits: { maxContextTurns: loaded.config.maxContextTurns, maxContextChars: loaded.config.maxContextChars, maxContextTokens: loaded.config.maxContextTokens, maxOutputTokens: loaded.config.maxOutputTokens, contextReserveTokens: loaded.config.contextReserveTokens, contextRetainTurns: loaded.config.contextRetainTurns },
   createSession: (stored, requestedWorkspace, events) => requestedWorkspace
@@ -34,6 +39,7 @@ const host = new ResidentHost({
   capabilitySnapshot: factory.capabilitySnapshot,
   agentRegistry: application.agents,
   eventStore: application.events,
+  executionProcesses: application.processes,
   ...(loaded.worker ? { structuredInference: loaded.worker.inference } : {}),
 });
 

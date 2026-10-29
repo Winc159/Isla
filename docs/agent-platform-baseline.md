@@ -190,23 +190,23 @@ flowchart TD
 
 验收：Plan 不能写；Act 继承已批准计划；失败可重规划；Checkpoint 可预览和恢复。
 
-### v0.8.0 主 Agent Web UI
+### v0.8.0.0 主 Agent Web UI
 
 会话、实时 Turn、审批、Plan、工具、Artifact、Job、Memory、MCP、设置和诊断。
 
 验收：核心操作与 CLI 等价；刷新/重连不丢状态；秘密不进入浏览器持久缓存。
 
-### v0.8.1 MCP 完整客户端
+### v0.8.1.0 评估、安全与发布门禁
+
+真实任务套件、故障注入、性能/资源门禁、迁移测试、插件兼容测试和安全回归。
+
+### v0.8.2 MCP 完整客户端
 
 HTTP/OAuth/resources/prompts/elicitation、健康状态、lazy start、热重载和按 Server/Tool 审批。
 
-### v0.8.2 Job 与 Subagent
+### v0.8.3 Job 与 Subagent
 
 通用持久 Job、通知订阅、一层 Subagent、预算、取消和汇总。
-
-### v0.9.0 评估与发布门禁
-
-真实任务套件、故障注入、性能/资源门禁、迁移测试、插件兼容测试和安全回归。
 
 ## 迁移规则
 

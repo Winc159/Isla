@@ -1,4 +1,4 @@
-# Isla v0.8.2：Persistent Job 与受限 Subagent
+# Isla v0.8.3：Persistent Job 与受限 Subagent
 
 ## 设计目标
 

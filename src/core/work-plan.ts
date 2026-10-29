@@ -3,7 +3,7 @@ export type WorkPlanStatus = 'active' | 'blocked' | 'completed';
 export type WorkPlanStepKind = 'inspect' | 'change' | 'verify' | 'other';
 export interface WorkPlanStep { readonly id: string; readonly title: string; readonly status: 'pending' | 'in_progress' | 'completed' | 'blocked'; readonly dependencies: readonly string[]; readonly kind?: WorkPlanStepKind; readonly evidenceCallIds?: readonly string[]; }
 export interface WorkPlanV1 { readonly version: 1; readonly planId: string; readonly revision: number; readonly progressRevision?: number; readonly replanCount?: number; readonly replanReason?: string; readonly goal: string; readonly constraints: readonly string[]; readonly assumptions: readonly string[]; readonly steps: readonly WorkPlanStep[]; readonly risks: readonly string[]; readonly verification: readonly string[]; readonly openQuestions: readonly string[]; readonly status: WorkPlanStatus; readonly approvedRevision?: number; readonly updatedAt: string; }
-export interface WorkPlanEvidence { readonly callId: string; readonly success: boolean; readonly kind: 'tool' | 'change' | 'verification'; }
+export interface WorkPlanEvidence { readonly callId: string; readonly success: boolean; readonly kind: 'tool' | 'change' | 'verification'; readonly tool?: string; }
 export interface WorkModeStateV1 { readonly version: 1; readonly mode: WorkMode; readonly revision: number; readonly actApprovedRevision?: number; readonly updatedAt: string; }
 export function validateWorkPlan(value: unknown): WorkPlanV1 {
   if (!value || typeof value !== 'object') throw new Error('PLAN_INVALID');

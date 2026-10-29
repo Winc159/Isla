@@ -137,6 +137,10 @@ export class ExecutionProcessRegistry {
       ...(entry.signal !== undefined ? { signal: entry.signal } : {}), ...(entry.errorCode ? { errorCode: entry.errorCode } : {}), outputCursor: entry.sequence, outputBytes: entry.totalOutputBytes };
   }
 
+  list(ownerId: string): ManagedProcessStatus[] {
+    return [...this.processes.keys()].map(processId => this.status(processId, ownerId)).filter((status): status is ManagedProcessStatus => status !== undefined);
+  }
+
   async close(): Promise<void> {
     if (this.closed) return; this.closed = true;
     await this.terminateEntries([...this.processes.entries()]);

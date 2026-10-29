@@ -79,8 +79,9 @@ export interface StoredSessionV5 extends Omit<StoredSessionV4, "version"> {
 }
 
 export interface StoredSessionV6 extends Omit<StoredSessionV5, "version"> { readonly version: 6; readonly workPlan?: WorkPlanV1; readonly workMode?: WorkModeStateV1; }
+export interface StoredSessionV7 extends Omit<StoredSessionV6, "version"> { readonly version: 7; readonly archivedAt?: string; }
 
-export type StoredSession = StoredSessionV1 | StoredSessionV2 | StoredSessionV3 | StoredSessionV4 | StoredSessionV5 | StoredSessionV6;
+export type StoredSession = StoredSessionV1 | StoredSessionV2 | StoredSessionV3 | StoredSessionV4 | StoredSessionV5 | StoredSessionV6 | StoredSessionV7;
 
 export interface SessionState {
   readonly messages: readonly Message[];
@@ -96,6 +97,7 @@ export interface SessionState {
 export interface SessionStore {
   list(provider: string, model: string): Promise<StoredSession[]>;
   listAll?: () => Promise<StoredSession[]>;
+  setArchived?: (sessionId: string, archived: boolean) => Promise<StoredSession | undefined>;
   loadLatest(provider: string, model: string, currentWorkspaceKey?: string): Promise<StoredSession | undefined>;
   create(provider: string, model: string, messages: readonly Message[], currentWorkspaceKey?: string): Promise<StoredSession>;
   save(session: StoredSession, state: SessionState): Promise<StoredSession>;
@@ -125,7 +127,7 @@ export class JsonSessionStore implements SessionStore {
 
   async loadLatest(provider: string, model: string, currentWorkspaceKey?: string): Promise<StoredSession | undefined> {
     const sessions = await this.list(provider, model);
-    return sessions.find(session => currentWorkspaceKey === undefined || ((session.version === 4 || session.version === 5 || session.version === 6) && session.workspaceKey === currentWorkspaceKey));
+    return sessions.find(session => !('archivedAt' in session && session.archivedAt) && (currentWorkspaceKey === undefined || ('workspaceKey' in session && session.workspaceKey === currentWorkspaceKey)));
   }
 
   async listAll(): Promise<StoredSession[]> {
@@ -140,6 +142,17 @@ export class JsonSessionStore implements SessionStore {
       }
     }
     return sessions.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  async setArchived(sessionId: string, archived: boolean): Promise<StoredSession | undefined> {
+    if (!/^[\w.-]{1,200}$/u.test(sessionId)) return undefined;
+    const path = join(this.directory, `${sessionId}.json`);
+    let session: StoredSession;
+    try { session = parseSession(await readFile(path, "utf8")); } catch { return undefined; }
+    if (!('workspaceKey' in session)) return undefined;
+    const next: StoredSessionV7 = { ...session, version: 7, skillCatalog: 'skillCatalog' in session ? session.skillCatalog : { version: 1, entries: [] }, updatedAt: nextUpdatedAt(session.updatedAt), ...(archived ? { archivedAt: ('archivedAt' in session && session.archivedAt) || new Date().toISOString() } : {}) };
+    if (!archived) delete (next as { archivedAt?: string }).archivedAt;
+    return this.write(next, session.updatedAt);
   }
 
   async create(provider: string, model: string, messages: readonly Message[], currentWorkspaceKey?: string, skillCatalog?: StoredSkillCatalogV1): Promise<StoredSession> {
@@ -172,27 +185,28 @@ export class JsonSessionStore implements SessionStore {
   async save(session: StoredSession, state: SessionState): Promise<StoredSession> {
     const updatedAt = nextUpdatedAt(session.updatedAt);
     const next = {
-      version: session.version >= 5 || state.skillCatalog !== undefined || state.workPlan !== undefined || state.workMode !== undefined ? 6 : 4,
+      version: session.version >= 7 ? 7 : session.version >= 5 || state.skillCatalog !== undefined || state.workPlan !== undefined || state.workMode !== undefined ? 6 : 4,
       id: session.id,
       createdAt: session.createdAt,
       updatedAt,
       provider: session.provider,
       model: session.model,
-      workspaceKey: session.version === 4 || session.version === 5 || session.version === 6 ? session.workspaceKey : "legacy",
+      workspaceKey: 'workspaceKey' in session ? session.workspaceKey : "legacy",
       messages: [...state.messages],
       ...(state.context ? { context: state.context } : {}),
+      ...('archivedAt' in session && session.archivedAt ? { archivedAt: session.archivedAt } : {}),
       ...(state.task ? { task: isTaskState(state.task) ? state.task : migrateTaskBrief(state.task, state.messages) } : {}),
       ...('taskContract' in state && state.taskContract ? { taskContract: state.taskContract } : {}),
       journal: state.journal ?? ('journal' in session ? session.journal : emptyJournal()),
-      ...((session.version >= 5 || state.skillCatalog !== undefined || state.workPlan !== undefined || state.workMode !== undefined) ? { skillCatalog: state.skillCatalog ?? (session.version === 5 || session.version === 6 ? session.skillCatalog : { version: 1, entries: [] }) } : {}),
-      ...(state.capabilityActivation ? { capabilityActivation: state.capabilityActivation } : ((session.version === 5 || session.version === 6) && session.capabilityActivation ? { capabilityActivation: session.capabilityActivation } : {})),
+      ...((session.version >= 5 || state.skillCatalog !== undefined || state.workPlan !== undefined || state.workMode !== undefined) ? { skillCatalog: state.skillCatalog ?? ('skillCatalog' in session ? session.skillCatalog : { version: 1, entries: [] }) } : {}),
+      ...(state.capabilityActivation ? { capabilityActivation: state.capabilityActivation } : ('capabilityActivation' in session && session.capabilityActivation ? { capabilityActivation: session.capabilityActivation } : {})),
       ...('workPlan' in state && state.workPlan ? { workPlan: state.workPlan } : ('workPlan' in session && session.workPlan ? { workPlan: session.workPlan } : {})),
       ...('workMode' in state && state.workMode ? { workMode: state.workMode } : ('workMode' in session && session.workMode ? { workMode: session.workMode } : {})),
-    } as StoredSessionV4 | StoredSessionV5 | StoredSessionV6;
+    } as StoredSessionV4 | StoredSessionV5 | StoredSessionV6 | StoredSessionV7;
     return this.write(next, session.updatedAt);
   }
 
-  private async write(session: StoredSessionV4 | StoredSessionV5 | StoredSessionV6, expectedUpdatedAt?: string): Promise<StoredSessionV4 | StoredSessionV5 | StoredSessionV6> {
+  private async write(session: StoredSessionV4 | StoredSessionV5 | StoredSessionV6 | StoredSessionV7, expectedUpdatedAt?: string): Promise<StoredSessionV4 | StoredSessionV5 | StoredSessionV6 | StoredSessionV7> {
     await mkdir(this.directory, { recursive: true });
     const path = join(this.directory, `${session.id}.json`);
     const temporaryPath = `${path}.${randomUUID()}.tmp`;
@@ -373,7 +387,7 @@ export function parseStoredSession(source: string): StoredSession {
     ...(value.taskContract ? { taskContract: value.taskContract } : {}),
     ...(value.capabilityActivation ? { capabilityActivation: value.capabilityActivation } : {}),
   };
-  if (value.version === 6) return { ...value, journal };
+  if (value.version === 6 || value.version === 7) return { ...value, journal };
   return {
     version: 3,
     id: value.id,
@@ -392,7 +406,7 @@ function parseSession(source: string): StoredSession { return parseStoredSession
 function isStoredSession(value: unknown): value is StoredSession {
   if (!value || typeof value !== "object") return false;
   const session = value as Record<string, unknown>;
-  return (session.version === 1 || session.version === 2 || session.version === 3 || session.version === 4 || session.version === 5 || session.version === 6)
+  return (session.version === 1 || session.version === 2 || session.version === 3 || session.version === 4 || session.version === 5 || session.version === 6 || session.version === 7)
     && typeof session.id === "string"
     && typeof session.createdAt === "string"
     && typeof session.updatedAt === "string"
@@ -403,9 +417,10 @@ function isStoredSession(value: unknown): value is StoredSession {
     && (session.version === 1 || session.context === undefined || isSessionContext(session.context))
     && (session.version !== 3 || session.task === undefined || isTaskBrief(session.task))
     && (session.version < 4 || (typeof session.workspaceKey === "string" && (session.task === undefined || isTaskState(session.task))))
-    && (session.version !== 5 && session.version !== 6 || isSkillCatalog(session.skillCatalog))
-    && (session.version !== 5 && session.version !== 6 || session.capabilityActivation === undefined || isCapabilityActivation(session.capabilityActivation))
-    && (session.version !== 6 || isOptionalPlanAndMode(session))
+    && (session.version < 5 || isSkillCatalog(session.skillCatalog))
+    && (session.version < 5 || session.capabilityActivation === undefined || isCapabilityActivation(session.capabilityActivation))
+    && (session.version < 6 || isOptionalPlanAndMode(session))
+    && (session.version !== 7 || session.archivedAt === undefined || typeof session.archivedAt === 'string')
     && (session.version !== 3 && session.version !== 4 || isSessionJournal(session.journal));
 }
 

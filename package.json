@@ -19,8 +19,9 @@
   "scripts": {
     "dev": "tsx --env-file-if-exists=.env src/entrypoints/cli.ts",
     "clean": "node scripts/clean.mjs",
-    "build": "npm run clean && tsc -p tsconfig.json && node node_modules/vite/bin/vite.js build --config resource-ui/vite.config.ts && node scripts/mark-entrypoints-executable.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json && node node_modules/vite/bin/vite.js build --config resource-ui/vite.config.ts && node node_modules/vite/bin/vite.js build --config agent-ui/vite.config.ts && node scripts/mark-entrypoints-executable.mjs",
     "resource:ui:build": "node node_modules/vite/bin/vite.js build --config resource-ui/vite.config.ts",
+    "agent:ui:build": "node node_modules/vite/bin/vite.js build --config agent-ui/vite.config.ts",
     "install:browser": "node scripts/install-browser.mjs",
     "install:deps": "node scripts/install-dependencies.mjs",
     "install:all": "node scripts/install-all.mjs",

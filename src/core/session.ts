@@ -46,6 +46,7 @@ import { createToolBatchExecutionInput } from './tool-batch-contract.js';
 import type { UserQuestionService } from "../user-questions/types.js";
 import { WorkspaceCheckpointStore } from '../checkpoints/workspace-checkpoint.js';
 import { toolAllowedInMode } from '../tools/mode-policy.js';
+import { classifyTool } from '../tools/catalog.js';
 export const DEFAULT_MAX_CONTEXT_TURNS = 20;
 export const DEFAULT_MAX_TOOL_ROUNDS = 12;
 type ModelRequestPhase = "legacy" | "agent_step";
@@ -278,11 +279,43 @@ export class ChatSession {
   private collectWorkPlanEvidence(): Map<string, WorkPlanEvidence> {
     const evidence = new Map<string, WorkPlanEvidence>();
     for (const turn of this.journal.turns) for (const action of turn.actions) {
-      if (action.type === 'tool' && !evidence.has(action.callId)) evidence.set(action.callId, { callId: action.callId, success: action.ok, kind: 'tool' });
-      else if (action.type === 'workspace_mutation') evidence.set(action.callId, { callId: action.callId, success: true, kind: 'change' });
-      else if (action.type === 'verification') evidence.set(action.callId, { callId: action.callId, success: action.outcome === 'passed', kind: 'verification' });
+      if (action.type === 'tool' && !evidence.has(action.callId)) evidence.set(action.callId, { callId: action.callId, success: action.ok, kind: 'tool', tool: action.tool });
+      else if (action.type === 'workspace_mutation') evidence.set(action.callId, { callId: action.callId, success: true, kind: 'change', tool: action.tool });
+      else if (action.type === 'verification') evidence.set(action.callId, { callId: action.callId, success: action.outcome === 'passed', kind: 'verification', tool: 'run_command' });
     }
     return evidence;
+  }
+
+  private async completeWorkPlanFromEvidence(): Promise<boolean> {
+    const plan = this.workPlan;
+    if (!plan || this.workMode.mode !== 'act' || plan.status !== 'active') return false;
+    const evidence = this.collectWorkPlanEvidence();
+    const claimed = new Set<string>();
+    const completed = new Set(plan.steps.filter(step => step.status === 'completed').map(step => step.id));
+    const assignments: Array<{ stepId: string; callId: string }> = [];
+    const nonControlTools = new Set(['update_work_plan', 'submit_result', 'report_blocked', 'propose_replan']);
+
+    for (const step of plan.steps) {
+      if (step.status === 'completed') {
+        for (const id of step.evidenceCallIds ?? []) claimed.add(id);
+        continue;
+      }
+      if (step.status === 'blocked' || !step.dependencies.every(id => completed.has(id))) return false;
+      const candidate = [...evidence.values()].find(item => {
+        if (!item.success || claimed.has(item.callId)) return false;
+        if (step.kind === 'inspect') return item.kind === 'tool' && !!item.tool && classifyTool(item.tool).boundary === 'read';
+        if (step.kind === 'change') return item.kind === 'change';
+        if (step.kind === 'verify') return item.kind === 'verification';
+        return !!item.tool && !nonControlTools.has(item.tool);
+      });
+      if (!candidate) return false;
+      claimed.add(candidate.callId);
+      completed.add(step.id);
+      assignments.push({ stepId: step.id, callId: candidate.callId });
+    }
+    if (completed.size !== plan.steps.length) return false;
+    for (const assignment of assignments) await this.updateWorkPlanStep(assignment.stepId, 'completed', [assignment.callId]);
+    return this.workPlan?.status === 'completed';
   }
 
   private async enterPlanForReplan(reason: string): Promise<boolean> {
@@ -420,6 +453,13 @@ export class ChatSession {
       this.setTurnPhase("model", { round });
       const response = await this.generateModel({ messages: current, tools, ...(requiredToolChoice ? { toolChoice: { name: requiredToolChoice } } : {}) }, true, signal, "agent_step");
       if (!response.toolCalls?.length && !mustSearch && !mustFetch) {
+        // A natural-language final answer does not need to be wrapped in a
+        // submit_result tool call to settle evidence-backed Act progress.
+        // Let Runtime derive completion from successful actions in this Turn
+        // before the completion gate checks the approved plan.
+        if (this.workMode.mode === 'act' && this.workPlan?.status === 'active') {
+          await this.completeWorkPlanFromEvidence();
+        }
         const verificationStatus = deriveVerificationStatus(this.journal);
         if (verificationStatus === "not_run" && !completionRejections.includes("verification_missing_after_mutation")) {
           completionRejections.push("verification_missing_after_mutation");
@@ -600,9 +640,12 @@ export class ChatSession {
           const proposal = execution.details.proposal;
           if (proposal.kind === 'submit' && proposal.text?.trim()) {
             if (this.workMode.mode === 'act' && this.workPlan && (this.workPlan.status !== 'completed' || this.workPlan.steps.some(step => step.status !== 'completed' || !step.evidenceCallIds?.length))) {
-              execution = { ok: false, code: 'EXECUTION_FAILED', message: 'PLAN_STEPS_INCOMPLETE' };
-              terminalResponse = undefined;
-            } else {
+              if (!(await this.completeWorkPlanFromEvidence())) {
+                execution = { ok: false, code: 'EXECUTION_FAILED', message: 'PLAN_STEPS_INCOMPLETE: Runtime could not match successful tool evidence to every approved Plan step.' };
+                terminalResponse = undefined;
+              }
+            }
+            if (execution.ok) {
             // The model may only submit a candidate. Runtime owns the terminal
             // outcome; v0.6.1 accepts a non-empty candidate after tool results
             // have been observed and never trusts a model-supplied status.

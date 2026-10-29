@@ -89,6 +89,8 @@ describe('ExecutionProcessRegistry', () => {
   it('isolates process access by session owner', async () => {
     const { workspace: root, registry: processes } = await setup();
     const started = await processes.start({ workspaceRoot: root, ownerId: 'session-a', executable: process.execPath, argv: ['-e', 'setInterval(() => {}, 1000)'] });
+    expect(processes.list('session-a').map(item => item.processId)).toContain(started.processId);
+    expect(processes.list('session-b')).toEqual([]);
     expect(processes.status(started.processId, 'session-b')).toBeUndefined();
     expect(() => processes.read(started.processId, 0, 100, 'session-b')).toThrow('PROCESS_NOT_FOUND');
     await expect(processes.cancel(started.processId, 'session-b')).rejects.toThrow('PROCESS_NOT_FOUND');

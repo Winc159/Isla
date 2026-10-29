@@ -7,6 +7,7 @@ import { createCommandExecutionCapability } from "../../src/tools/command-execut
 import { createTaskStateCapability } from "../../src/tools/task-state.js";
 import { createControlCapability } from "../../src/tools/control.js";
 import type { WorkPlanV1 } from '../../src/core/work-plan.js';
+import type { ToolCapability } from '../../src/tools/types.js';
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -105,6 +106,44 @@ describe("session", () => {
     }
     const response = await new ChatSession(new SubmitProvider([]), { enableTools: true, capabilities: [createControlCapability()] }).send("完成这个问题");
     expect(response).toMatchObject({ text: "已完成", outcome: "completed" });
+  });
+  it('settles an Act plan from matching successful evidence even when the model omits progress updates', async () => {
+    const plan: WorkPlanV1 = { version:1,planId:'evidence-settlement',revision:1,progressRevision:0,replanCount:0,goal:'Inspect, change and verify',constraints:[],assumptions:[],steps:[{id:'inspect',title:'Read source',kind:'inspect',status:'pending',dependencies:[]},{id:'change',title:'Modify source',kind:'change',status:'pending',dependencies:['inspect']},{id:'verify',title:'Run tests',kind:'verify',status:'pending',dependencies:['change']}],risks:[],verification:['Tests pass'],openQuestions:[],status:'active',approvedRevision:1,updatedAt:new Date().toISOString() };
+    const tools: ToolCapability = { id:'project-files',instructions:'test tools',tools:[
+      { definition:{name:'read_text_file',description:'read',parameters:{type:'object'}},execute:async()=> 'source read' },
+      { definition:{name:'edit_text_file',description:'change',parameters:{type:'object'}},execute:async()=> 'source changed' },
+      { definition:{name:'run_command',description:'verify',parameters:{type:'object'}},execute:async()=>({content:'5 tests passed',details:{type:'command_execution',shell:'direct',workdir:sessionRoot,exitCode:0,signal:null,timedOut:false,aborted:false,purpose:'verification',stdoutTruncated:false,stderrTruncated:false}}) },
+    ]};
+    const toolResponses: ToolResponse[] = [
+      {text:'',toolCalls:[{id:'inspect-evidence',name:'read_text_file',arguments:'{}'}]},
+      {text:'',toolCalls:[{id:'change-evidence',name:'edit_text_file',arguments:'{}'}]},
+      {text:'',toolCalls:[{id:'verify-evidence',name:'run_command',arguments:'{}'}]},
+      {text:'',toolCalls:[{id:'submit-evidence',name:'submit_result',arguments:JSON.stringify({text:'已验证 5 项测试全部通过。'})}]},
+    ];
+    const provider = new class extends FakeProvider {
+      async generateWithTools(request: ModelRequest): Promise<ToolResponse> { this.requests.push(request); return toolResponses.shift() ?? {text:'No more fake responses'}; }
+    }([]);
+    const session = new ChatSession(provider,{enableTools:true,capabilities:[tools,createControlCapability()],workPlan:plan,workMode:{version:1,mode:'act',revision:1,actApprovedRevision:1,updatedAt:new Date().toISOString()}});
+    await expect(session.send('复核、修改并验证')).resolves.toMatchObject({text:'已验证 5 项测试全部通过。',outcome:'completed'});
+    expect(session.currentWorkPlan).toMatchObject({status:'completed',progressRevision:3,steps:[{id:'inspect',status:'completed',evidenceCallIds:['inspect-evidence']},{id:'change',status:'completed',evidenceCallIds:['change-evidence']},{id:'verify',status:'completed',evidenceCallIds:['verify-evidence']} ]});
+  });
+  it('settles an evidence-backed Act plan before a direct final answer without submit_result', async () => {
+    const plan: WorkPlanV1 = { version:1,planId:'direct-final-plan',revision:1,progressRevision:0,replanCount:0,goal:'Inspect and verify',constraints:[],assumptions:[],steps:[{id:'inspect',title:'Read source',kind:'inspect',status:'pending',dependencies:[]},{id:'verify',title:'Run tests',kind:'verify',status:'pending',dependencies:['inspect']}],risks:[],verification:['Tests pass'],openQuestions:[],status:'active',approvedRevision:1,updatedAt:new Date().toISOString() };
+    const tools: ToolCapability = { id:'project-files',instructions:'test tools',tools:[
+      { definition:{name:'read_text_file',description:'read',parameters:{type:'object'}},execute:async()=> 'source read' },
+      { definition:{name:'run_command',description:'verify',parameters:{type:'object'}},execute:async()=>({content:'5 tests passed',details:{type:'command_execution',shell:'direct',workdir:sessionRoot,exitCode:0,signal:null,timedOut:false,aborted:false,purpose:'verification',stdoutTruncated:false,stderrTruncated:false}}) },
+    ]};
+    const toolResponses: ToolResponse[] = [
+      {text:'',toolCalls:[{id:'direct-inspect',name:'read_text_file',arguments:'{}'}]},
+      {text:'',toolCalls:[{id:'direct-verify',name:'run_command',arguments:'{}'}]},
+      {text:'检查和测试均已完成。'},
+    ];
+    const provider = new class extends FakeProvider {
+      async generateWithTools(request: ModelRequest): Promise<ToolResponse> { this.requests.push(request); return toolResponses.shift() ?? {text:'unexpected'}; }
+    }([]);
+    const session = new ChatSession(provider,{enableTools:true,capabilities:[tools,createControlCapability()],workPlan:plan,workMode:{version:1,mode:'act',revision:1,actApprovedRevision:1,updatedAt:new Date().toISOString()}});
+    await expect(session.send('只读检查并运行测试')).resolves.toMatchObject({text:'检查和测试均已完成。'});
+    expect(session.currentWorkPlan).toMatchObject({status:'completed',progressRevision:2,steps:[{id:'inspect',status:'completed',evidenceCallIds:['direct-inspect']},{id:'verify',status:'completed',evidenceCallIds:['direct-verify']} ]});
   });
   it("fails closed before spending a tool step when external search is unavailable", async () => {
     const provider = { id: "fake", model: "fake", async generateWithTools(): Promise<ToolResponse> { throw new Error("should not call model"); } };

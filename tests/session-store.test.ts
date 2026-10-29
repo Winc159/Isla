@@ -47,6 +47,22 @@ describe("JSON session store", () => {
     expect((await readdir(directory)).filter(file => file.endsWith(".tmp") || file.endsWith(".lock"))).toEqual([]);
   });
 
+  it("persists archive state, excludes archived sessions from resume, and restores them", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "isla-session-"));
+    directories.push(directory);
+    const store = new JsonSessionStore(directory);
+    const session = await store.create("deepseek", "m1", [], "workspace-key");
+
+    const archived = await store.setArchived(session.id, true);
+    expect(archived).toMatchObject({ version: 7, archivedAt: expect.any(String), skillCatalog: { version: 1, entries: [] } });
+    await expect(store.loadLatest("deepseek", "m1", "workspace-key")).resolves.toBeUndefined();
+    await expect(store.listAll()).resolves.toMatchObject([{ id: session.id, archivedAt: expect.any(String) }]);
+
+    const restored = await store.setArchived(session.id, false);
+    expect(restored).not.toHaveProperty("archivedAt");
+    await expect(store.loadLatest("deepseek", "m1", "workspace-key")).resolves.toMatchObject({ id: session.id, version: 7 });
+  });
+
   it("skips an invalid session file and reports a warning", async () => {
     const directory = await mkdtemp(join(tmpdir(), "isla-session-"));
     directories.push(directory);

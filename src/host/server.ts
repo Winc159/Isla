@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Server } from 'node:http';
-import { open, unlink } from 'node:fs/promises';
+import { open, readFile, stat, unlink } from 'node:fs/promises';
+import { extname, relative, resolve, sep } from 'node:path';
 import type { ChatSession } from '../core/session.js';
 import type { SessionStore, StoredSession } from '../sessions/store.js';
 import type { CapabilitySnapshot } from '../capabilities/snapshot.js';
@@ -16,6 +17,7 @@ import { resolveWorkspace } from '../config/workspace.js';
 import { measureContextBudget, DEFAULT_CONTEXT_RETAIN_TURNS, DEFAULT_MAX_CONTEXT_CHARS } from '../core/context.js';
 import { estimateRequestTokens } from '../core/token-budget.js';
 import { DEFAULT_MAX_CONTEXT_TURNS } from '../core/session.js';
+import { isRuntimeError } from '../core/errors.js';
 import type { AgentRegistry } from '../core/service-kernel.js';
 import type { FileEventStore } from '../core/event-store.js';
 
@@ -30,11 +32,16 @@ export interface ResidentHostOptions {
   readonly capabilitySnapshot?: () => CapabilitySnapshot;
   readonly agentRegistry?: AgentRegistry;
   readonly eventStore?: FileEventStore;
+  readonly executionProcesses?: import('../tools/process-registry.js').ExecutionProcessRegistry;
   readonly maxActiveTurns?: number;
   readonly lockPath?: string;
   readonly structuredInference?: (request: StructuredInferenceRequestV1, signal: AbortSignal) => Promise<StructuredInferenceSuccessV1<unknown>>;
   readonly initialMessages?: readonly Message[];
   readonly memoryStore?: import('../memory/store.js').MemoryStore;
+  readonly uiDirectory?: string;
+  readonly defaultWorkspaceRoot?: string;
+  readonly resourceBridge?: import('../resource/bridge-client.js').ResourceBridgeClient;
+  readonly mcpStatuses?: () => readonly import('../mcp/types.js').McpStatus[];
   readonly contextLimits?: { readonly maxContextTurns: number; readonly maxContextChars: number; readonly maxContextTokens: number; readonly maxOutputTokens: number; readonly contextReserveTokens: number; readonly contextRetainTurns: number };
 }
 
@@ -48,7 +55,7 @@ export type HostTurnObservers = {
 };
 
 export type HostTurnEvent =
-  | { readonly type: 'turn_start'; readonly sessionId: string; readonly turnId: string }
+  | { readonly type: 'turn_start'; readonly sessionId: string; readonly turnId: string; readonly followUpId?: string }
   | ModelStepEvent
   | { readonly type: 'tool_start'; readonly tool: string; readonly callId: string }
   | { readonly type: 'tool_end'; readonly tool: string; readonly callId: string; readonly ok: boolean; readonly code?: string }
@@ -56,12 +63,19 @@ export type HostTurnEvent =
   | { readonly type: 'question_requested'; readonly questionId: string; readonly questions: UserQuestionRequest['questions'] }
   | { readonly type: 'turn_completed'; readonly sessionId: string; readonly turnId: string; readonly text: string; readonly outcome: string }
   | { readonly type: 'turn_failed'; readonly sessionId: string; readonly turnId: string; readonly code: string }
-  | { readonly type: 'turn_cancelled'; readonly sessionId: string; readonly turnId: string };
+  | { readonly type: 'turn_cancelled'; readonly sessionId: string; readonly turnId: string }
+  | { readonly type: 'follow_up_dropped'; readonly count: number };
 
-type ActiveTurn = { readonly turnId: string; readonly session: ChatSession; readonly interactions: RemoteInteractions };
+type BufferedTurnEvent = { readonly sequence: number; readonly event: HostTurnEvent | ModelStepEvent };
+type QueuedFollowUp = { readonly id: string; readonly text: string };
+type ActiveTurn = { readonly turnId: string; readonly session: ChatSession; readonly interactions: RemoteInteractions; followUps?: QueuedFollowUp[]; readonly followUpId?: string; readonly events?: BufferedTurnEvent[]; readonly startedAt?: string; nextEventSequence?: number; bufferBytes?: number; truncated?: boolean; settled?: boolean; acceptingFollowUps?: boolean };
 const MAX_EVENT_BYTES = 64 * 1024;
 const MAX_STREAM_BUFFER_BYTES = 1024 * 1024;
 const MAX_REQUEST_BYTES = 1024 * 1024;
+const MAX_TURN_EVENT_BYTES = 256 * 1024;
+const MAX_TURN_EVENTS = 4096;
+const MAX_RECENT_TURNS = 24;
+const MAX_QUEUED_FOLLOW_UPS = 20;
 
 export class ResidentHost {
   readonly token: string;
@@ -69,6 +83,7 @@ export class ResidentHost {
   private readonly port: number;
   private readonly maxActiveTurns: number;
   private readonly active = new Map<string, ActiveTurn>();
+  private readonly recentTurns = new Map<string, ActiveTurn>();
   private server: Server | undefined;
   private closed = false;
   private lockHandle: Awaited<ReturnType<typeof open>> | undefined;
@@ -107,22 +122,118 @@ export class ResidentHost {
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     response.setHeader('content-type', 'application/json; charset=utf-8');
     if (request.method === 'GET' && request.url === '/health') { this.send(response, 200, { ok: true, apiVersion: 2, ready: Boolean(this.server), active: this.active.size }); return; }
+    let url: URL;
+    try { url = new URL(request.url ?? '/', `http://${this.host}`); } catch { this.send(response, 400, { error: 'INVALID_URL' }); return; }
+    if (request.method === 'GET' && url.pathname === '/ui/bootstrap') {
+      if (!sameOriginBrowserRequest(request)) { this.send(response, 403, { error: 'SAME_ORIGIN_REQUIRED' }); return; }
+      response.setHeader('cache-control', 'no-store');
+      this.send(response, 200, { token: this.token, defaultWorkspaceRoot: this.options.defaultWorkspaceRoot ?? process.cwd() });
+      return;
+    }
+    if (this.options.uiDirectory && (request.method === 'GET' || request.method === 'HEAD') && isUiAssetPath(url.pathname)) {
+      await this.serveUiAsset(url.pathname, response, request.method === 'HEAD');
+      return;
+    }
     if (!this.authorized(request)) { this.send(response, 401, { error: 'UNAUTHORIZED' }); return; }
     try {
-      const url = new URL(request.url ?? '/', `http://${this.host}`);
       if (request.method === 'GET' && url.pathname === '/api/v1/inference/status') { this.send(response, 200, { configured: Boolean(this.options.structuredInference) }); return; }
       if (request.method === 'POST' && url.pathname === '/api/v1/inference/structured') { await this.structuredInference(request, response); return; }
       if (request.method === 'GET' && url.pathname === '/capabilities') { this.send(response, 200, this.options.capabilitySnapshot?.() ?? { version: 1, hash: '', entries: [] }); return; }
-      if (request.method === 'GET' && url.pathname === '/sessions') { this.send(response, 200, { sessions: await this.list(url.searchParams.get('workspaceKey') ?? undefined) }); return; }
+      if (request.method === 'GET' && url.pathname === '/mcp/status') { this.send(response, 200, { servers: this.options.mcpStatuses?.() ?? [] }); return; }
+      if (request.method === 'GET' && url.pathname === '/resource/jobs') { if (!this.options.resourceBridge) { this.send(response, 503, { error: 'RESOURCE_UNAVAILABLE' }); return; } try { const jobs = await this.options.resourceBridge.list(undefined, 50); this.send(response, 200, { jobs }); } catch { this.send(response, 503, { error: 'RESOURCE_UNAVAILABLE' }); } return; }
+      if (request.method === 'GET' && url.pathname === '/sessions') { this.send(response, 200, { sessions: await this.list(url.searchParams.get('workspaceKey') ?? undefined, url.searchParams.get('q') ?? '', url.searchParams.get('archived') === 'true') }); return; }
+      if (request.method === 'POST' && url.pathname === '/workspace/resolve') { const body = await readJson(request); if (typeof body.workspaceRoot !== 'string' || !body.workspaceRoot.trim()) { this.send(response, 400, { error: 'WORKSPACE_REQUIRED' }); return; } const root = await resolveWorkspace(body.workspaceRoot, undefined, process.cwd()); this.send(response, 200, { workspaceRoot: root, workspaceKey: workspaceKey(root) }); return; }
       if (request.method === 'POST' && url.pathname === '/quick') { await this.quick(await readJson(request), response, request.headers.accept?.includes('application/x-ndjson') === true, request); return; }
       if (request.method === 'POST' && url.pathname === '/sessions') { const body = await readJson(request); if (typeof body.workspaceKey !== 'string' || !body.workspaceKey) { this.send(response, 400, { error: 'WORKSPACE_REQUIRED' }); return; } const session = await this.options.sessionStore.create(this.options.provider, this.options.model, this.options.initialMessages ?? [], body.workspaceKey); this.send(response, 201, { sessionId: session.id }); return; }
       if (request.method === 'GET' && url.pathname === '/memory') { const store = this.options.memoryStore; if (!store) { this.send(response, 503, { error: 'MEMORY_UNAVAILABLE' }); return; } const action = url.searchParams.get('action') ?? 'list'; const id = url.searchParams.get('id'); const status = url.searchParams.get('status'); if (action === 'list') { this.send(response, 200, { records: store.list(status ? { status } : {}).slice(0, 100).map(record => ({ id: record.id, scope: record.scope, kind: record.kind, status: record.status, revision: record.revision, updatedAt: record.updatedAt })) }); return; } if (action === 'show' && id) { const record = store.get(id); this.send(response, record ? 200 : 404, record ? { id: record.id, scope: record.scope, kind: record.kind, status: record.status, content: record.content.slice(0, 4000), revision: record.revision, updatedAt: record.updatedAt } : { error: 'MEMORY_NOT_FOUND' }); return; } this.send(response, 400, { error: 'INVALID_MEMORY_QUERY' }); return; }
       if (request.method === 'POST' && url.pathname.startsWith('/memory/')) { const id = decodeURIComponent(url.pathname.slice('/memory/'.length)); const body = await readJson(request); const record = this.options.memoryStore?.get(id); if (!record) { this.send(response, 404, { error: 'MEMORY_NOT_FOUND' }); return; } if (!Number.isInteger(body.expectedRevision)) { this.send(response, 400, { error: 'REVISION_REQUIRED' }); return; } const updated = this.options.memoryStore!.disable(id, body.expectedRevision as number); this.send(response, 200, { id: updated.id, status: updated.status, revision: updated.revision }); return; }
-      const match = url.pathname.match(/^\/sessions\/([^/]+)(?:\/(prompt|cancel|events|history|trace|context|plan|checkpoints|interactions\/([^/]+)))?$/);
+      const match = url.pathname.match(/^\/sessions\/([^/]+)(?:\/(prompt|cancel|events|history|trace|context|plan|checkpoints|archive|interactions\/([^/]+)))?$/);
+      const turnMatch = url.pathname.match(/^\/sessions\/([^/]+)\/turns(?:\/([^/]+)(?:\/(events|cancel|follow-up))?)?$/);
+      if (turnMatch) {
+        const turnSession = await this.find(decodeURIComponent(turnMatch[1]!));
+        if (!turnSession) { this.send(response, 404, { error: 'SESSION_NOT_FOUND' }); return; }
+        if (request.method === 'GET' && turnMatch[2] === 'active') {
+          const turn = this.recentTurns.get(turnSession.id);
+          this.send(response, 200, turn ? { turnId: turn.turnId, startedAt: turn.startedAt, active: !turn.settled, queuedFollowUps: turn.followUps?.length ?? 0, followUps: turn.followUps ?? [], nextEventSequence: turn.nextEventSequence ?? 0, truncated: turn.truncated === true } : { active: false });
+          return;
+        }
+        if (request.method === 'GET' && turnMatch[3] === 'events') {
+          const turn = this.recentTurns.get(turnSession.id);
+          if (!turn || turn.turnId !== turnMatch[2]) { this.send(response, 404, { error: 'TURN_NOT_FOUND' }); return; }
+          const after = Math.max(0, Number(url.searchParams.get('after') ?? 0) || 0);
+          const events = (turn.events ?? []).filter(item => item.sequence > after);
+          this.send(response, 200, { sessionId: turnSession.id, turnId: turn.turnId, events, nextSequence: turn.nextEventSequence ?? 0, firstSequence: turn.events?.[0]?.sequence ?? (turn.nextEventSequence ?? 0) + 1, truncated: turn.truncated === true, active: !turn.settled });
+          return;
+        }
+        if (request.method === 'POST' && turnMatch[2] === undefined) {
+          if ('archivedAt' in turnSession && turnSession.archivedAt) { this.send(response, 409, { error: 'SESSION_ARCHIVED' }); return; }
+          const body = await readJson(request);
+          if (typeof body.text !== 'string' || !body.text.trim()) { this.send(response, 400, { error: 'PROMPT_REQUIRED' }); return; }
+          if (typeof body.workspaceRoot !== 'string') { this.send(response, 400, { error: 'WORKSPACE_REQUIRED' }); return; }
+          const root = await resolveWorkspace(body.workspaceRoot, undefined, process.cwd());
+          if (!('workspaceKey' in turnSession) || workspaceKey(root) !== turnSession.workspaceKey) { this.send(response, 400, { error: 'WORKSPACE_MISMATCH' }); return; }
+          if (this.active.size >= this.maxActiveTurns) { this.send(response, 429, { error: 'HOST_BUSY' }); return; }
+          if (this.active.has(turnSession.id)) { this.send(response, 409, { error: 'SESSION_BUSY' }); return; }
+          const turn = this.startResumableTurn(turnSession, body.text, root);
+          this.send(response, 202, { sessionId: turnSession.id, turnId: turn.turnId });
+          return;
+        }
+        if (request.method === 'POST' && turnMatch[3] === 'follow-up') {
+          const body = await readJson(request);
+          const turn = this.active.get(turnSession.id);
+          if (!turn || turn.turnId !== turnMatch[2] || turn.settled || turn.acceptingFollowUps === false) { this.send(response, 409, { error: 'TURN_NOT_ACTIVE' }); return; }
+          if (typeof body.text !== 'string' || !body.text.trim()) { this.send(response, 400, { error: 'PROMPT_REQUIRED' }); return; }
+          if (typeof body.id !== 'string' || !/^[0-9a-f-]{36}$/iu.test(body.id)) { this.send(response, 400, { error: 'FOLLOW_UP_ID_REQUIRED' }); return; }
+          const queue = turn.followUps ?? (turn.followUps = []);
+          const existing = queue.findIndex(item => item.id === body.id);
+          if (existing >= 0) { this.send(response, 202, { accepted: true, duplicate: true, queuePosition: existing + 1 }); return; }
+          if (queue.length >= MAX_QUEUED_FOLLOW_UPS) { this.send(response, 429, { error: 'FOLLOW_UP_QUEUE_FULL' }); return; }
+          queue.push({ id: body.id, text: body.text.trim().slice(0, 20_000) });
+          this.send(response, 202, { accepted: true, duplicate: false, queuePosition: queue.length });
+          return;
+        }
+        if (request.method === 'POST' && turnMatch[3] === 'cancel') {
+          const turn = this.active.get(turnSession.id);
+          const accepted = Boolean(turn && turn.turnId === turnMatch[2] && turn.session.cancelActiveTurn({ kind: 'user' }));
+          this.send(response, 200, { accepted });
+          return;
+        }
+        this.send(response, 405, { error: 'METHOD_NOT_ALLOWED' });
+        return;
+      }
+      const processMatch = url.pathname.match(/^\/sessions\/([^/]+)\/processes(?:\/([^/]+)\/output)?$/);
+      if (processMatch) {
+        const processSession = await this.find(decodeURIComponent(processMatch[1]!));
+        if (!processSession) { this.send(response, 404, { error: 'SESSION_NOT_FOUND' }); return; }
+        const rootPath = url.searchParams.get('workspaceRoot');
+        const root = rootPath ? await resolveWorkspace(rootPath, undefined, process.cwd()) : undefined;
+        if (!root || !('workspaceKey' in processSession) || workspaceKey(root) !== processSession.workspaceKey) { this.send(response, 400, { error: 'WORKSPACE_MISMATCH' }); return; }
+        if (request.method !== 'GET') { this.send(response, 405, { error: 'METHOD_NOT_ALLOWED' }); return; }
+        if (!processMatch[2]) {
+          const processes = this.options.executionProcesses?.list(processSession.id) ?? [];
+          this.send(response, 200, { processes: processes.map(item => safeProcess(item, root)) }); return;
+        }
+        if (!this.options.executionProcesses) { this.send(response, 503, { error: 'PROCESS_VIEW_UNAVAILABLE' }); return; }
+        try {
+          const afterCursor = Math.max(0, Number(url.searchParams.get('after') ?? 0) || 0);
+          const limitBytes = Math.min(64_000, Math.max(4_096, Number(url.searchParams.get('limitBytes') ?? 16_000) || 16_000));
+          this.send(response, 200, this.options.executionProcesses.read(decodeURIComponent(processMatch[2]), afterCursor, limitBytes, processSession.id));
+        } catch { this.send(response, 404, { error: 'PROCESS_NOT_FOUND' }); }
+        return;
+      }
       if (!match) { this.send(response, 404, { error: 'NOT_FOUND' }); return; }
       const session = await this.find(match[1]!);
       if (!session) { this.send(response, 404, { error: 'SESSION_NOT_FOUND' }); return; }
       if (request.method === 'GET' && !match[2]) { this.send(response, 200, safeSession(session)); return; }
+      if (request.method === 'POST' && match[2] === 'archive') {
+        if (this.active.has(session.id)) { this.send(response, 409, { error: 'SESSION_BUSY' }); return; }
+        if (typeof this.options.sessionStore.setArchived !== 'function') { this.send(response, 501, { error: 'SESSION_ARCHIVE_UNAVAILABLE' }); return; }
+        const body = await readJson(request);
+        if (typeof body.archived !== 'boolean') { this.send(response, 400, { error: 'ARCHIVE_STATE_REQUIRED' }); return; }
+        const updated = await this.options.sessionStore.setArchived(session.id, body.archived);
+        if (!updated) { this.send(response, 409, { error: 'SESSION_UPDATE_CONFLICT' }); return; }
+        this.send(response, 200, safeSession(updated)); return;
+      }
       if (request.method === 'GET' && match[2] === 'plan') { this.send(response, 200, { plan: 'workPlan' in session ? session.workPlan : undefined, mode: 'workMode' in session ? session.workMode : undefined }); return; }
       if (request.method === 'GET' && match[2] === 'checkpoints') { const root=url.searchParams.get('workspaceRoot'); if(!root||!('workspaceKey'in session)||workspaceKey(await resolveWorkspace(root,undefined,process.cwd()))!==session.workspaceKey){this.send(response,400,{error:'WORKSPACE_MISMATCH'});return;}const work=this.options.createSession(session,root);try{this.send(response,200,{checkpoints:await work.listWorkspaceCheckpoints()});}finally{await work.close();}return; }
       if (request.method === 'POST' && match[2] === 'checkpoints') { const body=await readJson(request);const root=typeof body.workspaceRoot==='string'?await resolveWorkspace(body.workspaceRoot,undefined,process.cwd()):undefined;if(!root||!('workspaceKey'in session)||workspaceKey(root)!==session.workspaceKey){this.send(response,400,{error:'WORKSPACE_MISMATCH'});return;}const work=this.options.createSession(session,root);try{if(body.action==='preview'&&typeof body.id==='string'){this.send(response,200,await work.previewWorkspaceCheckpoint(body.id));return;}if(body.action==='restore'&&typeof body.id==='string'&&body.approved===true){await work.restoreWorkspaceCheckpoint(body.id,true);this.send(response,200,{restored:true,id:body.id});return;}this.send(response,400,{error:body.action==='restore'?'CHECKPOINT_RESTORE_REQUIRES_APPROVAL':'INVALID_CHECKPOINT_OPERATION'});}finally{await work.close();}return;}
@@ -145,7 +256,7 @@ export class ResidentHost {
       if (request.method === 'GET' && match[2] === 'context') { const limits = this.options.contextLimits ?? { maxContextTurns: DEFAULT_MAX_CONTEXT_TURNS, maxContextChars: DEFAULT_MAX_CONTEXT_CHARS, maxContextTokens: 0, maxOutputTokens: 0, contextReserveTokens: 0, contextRetainTurns: DEFAULT_CONTEXT_RETAIN_TURNS }; const checkpoint = 'context' in session ? session.context?.checkpoint : undefined; const report = measureContextBudget(session.messages, { maxTurns: limits.maxContextTurns, maxChars: limits.maxContextChars }, checkpoint); const estimatedTokens = estimateRequestTokens({ messages: session.messages }); this.send(response, 200, { ...report, estimatedTokens, maxContextTokens: limits.maxContextTokens, maxOutputTokens: limits.maxOutputTokens, contextReserveTokens: limits.contextReserveTokens, retainTurns: limits.contextRetainTurns }); return; }
       if (request.method === 'GET' && match[2] === 'events') { const after = Math.max(0, Number(url.searchParams.get('after') ?? 0) || 0); const events = this.options.eventStore ? await this.options.eventStore.read(session.id, after) : []; response.statusCode = 200; response.setHeader('content-type', 'text/event-stream; charset=utf-8'); response.setHeader('cache-control', 'no-cache'); response.setHeader('connection', 'keep-alive'); response.write(`event: session\ndata: ${JSON.stringify(safeSession(session))}\n\n`); if (events.length) response.write(`event: events\ndata: ${JSON.stringify({ sessionId: session.id, cursor: events.at(-1)!.sequence, events })}\n\n`); response.end(); return; }
       if (request.method === 'POST' && match[2] === 'cancel') { const body = await readJson(request); const active = this.active.get(session.id); const accepted = Boolean(active && body.turnId === active.turnId && active.session.cancelActiveTurn({ kind: 'user' })); this.send(response, 200, { accepted }); return; }
-      if (request.method === 'POST' && match[2] === 'prompt') { const body = await readJson(request); let root: string | undefined; if (typeof body.workspaceRoot === 'string') { root = await resolveWorkspace(body.workspaceRoot, undefined, process.cwd()); if (!('workspaceKey' in session) || workspaceKey(root) !== session.workspaceKey) { this.send(response, 400, { error: 'WORKSPACE_MISMATCH' }); return; } } await this.prompt(session, body, response, root, request.headers.accept?.includes('application/x-ndjson') === true, request, true); return; }
+      if (request.method === 'POST' && match[2] === 'prompt') { if ('archivedAt' in session && session.archivedAt) { this.send(response, 409, { error: 'SESSION_ARCHIVED' }); return; } const body = await readJson(request); let root: string | undefined; if (typeof body.workspaceRoot === 'string') { root = await resolveWorkspace(body.workspaceRoot, undefined, process.cwd()); if (!('workspaceKey' in session) || workspaceKey(root) !== session.workspaceKey) { this.send(response, 400, { error: 'WORKSPACE_MISMATCH' }); return; } } await this.prompt(session, body, response, root, request.headers.accept?.includes('application/x-ndjson') === true, request, true); return; }
       if (request.method === 'POST' && match[2]?.startsWith('interactions/') && match[3]) { const body = await readJson(request); const active = this.active.get(session.id); const accepted = Boolean(active && body.turnId === active.turnId && active.interactions.respond(match[3], body)); this.send(response, accepted ? 200 : 409, { accepted }); return; }
       this.send(response, 405, { error: 'METHOD_NOT_ALLOWED' });
     } catch (error) { this.send(response, 400, { error: error instanceof Error ? error.message : 'HOST_REQUEST_FAILED' }); }
@@ -206,7 +317,7 @@ export class ResidentHost {
     const sessions = this.options.sessionStore.listAll ? await this.options.sessionStore.listAll() : await this.options.sessionStore.list(this.options.provider, this.options.model);
     const stored = body.newSession === true
       ? await this.options.sessionStore.create(this.options.provider, this.options.model, this.options.initialMessages ?? [], body.workspaceKey)
-      : sessions.find(item => item.provider === this.options.provider && item.model === this.options.model && (item.version === 4 || item.version === 5) && item.workspaceKey === body.workspaceKey)
+      : sessions.find(item => item.provider === this.options.provider && item.model === this.options.model && 'workspaceKey' in item && item.workspaceKey === body.workspaceKey && !('archivedAt' in item && item.archivedAt))
         ?? await this.options.sessionStore.create(this.options.provider, this.options.model, this.options.initialMessages ?? [], body.workspaceKey);
     await this.prompt(stored, { text: body.text }, response, root, stream, request);
   }
@@ -233,7 +344,98 @@ export class ResidentHost {
     }
   }
 
-  private async list(workspace?: string): Promise<readonly object[]> { const sessions = this.options.sessionStore.listAll ? await this.options.sessionStore.listAll() : await this.options.sessionStore.list(this.options.provider, this.options.model); return sessions.filter(item => item.provider === this.options.provider && item.model === this.options.model && (!workspace || ('workspaceKey' in item && item.workspaceKey === workspace))).slice(0, 100).map(safeSession); }
+  private startResumableTurn(stored: StoredSession, text: string, workspaceRoot: string, followUps: QueuedFollowUp[] = [], followUpId?: string): ActiveTurn {
+    const turnId = randomUUID();
+    let active!: ActiveTurn;
+    const emit = (event: HostTurnEvent | ModelStepEvent) => {
+      const events = active.events!;
+      events.push({ sequence: ++active.nextEventSequence!, event });
+      active.bufferBytes = (active.bufferBytes ?? 0) + Buffer.byteLength(JSON.stringify(event), 'utf8');
+      while (events.length > MAX_TURN_EVENTS || (active.bufferBytes ?? 0) > MAX_TURN_EVENT_BYTES) {
+        const removed = events.shift();
+        if (removed) active.bufferBytes = Math.max(0, (active.bufferBytes ?? 0) - Buffer.byteLength(JSON.stringify(removed.event), 'utf8'));
+        active.truncated = true;
+      }
+    };
+    const interactions = new RemoteInteractions(emit);
+    const session = this.options.createSession(stored, workspaceRoot, {
+      turnId,
+      onModelStepEvent: emit,
+      onToolStarted: (tool, callId) => emit({ type: 'tool_start', tool, callId }),
+      onToolFinished: (tool, callId, result) => emit({ type: 'tool_end', tool, callId, ok: result.ok, ...(!result.ok ? { code: safeCode(result.code) } : {}) }),
+      approvalService: interactions,
+      userQuestionService: interactions,
+    });
+    active = { turnId, session, interactions, events: [], nextEventSequence: 0, bufferBytes: 0, startedAt: new Date().toISOString(), settled: false, acceptingFollowUps: true, followUps, ...(followUpId ? { followUpId } : {}) };
+    this.active.set(stored.id, active);
+    this.recentTurns.delete(stored.id);
+    this.recentTurns.set(stored.id, active);
+    while (this.recentTurns.size > MAX_RECENT_TURNS) this.recentTurns.delete(this.recentTurns.keys().next().value!);
+    emit({ type: 'turn_start', sessionId: stored.id, turnId, ...(followUpId ? { followUpId } : {}) });
+    void (async () => {
+      let completed = false;
+      try {
+        const result = await session.send(text);
+        active.acceptingFollowUps = false;
+        emit({ type: 'turn_completed', sessionId: stored.id, turnId, text: result.text, outcome: result.outcome ?? 'completed' });
+        completed = (result.outcome ?? 'completed') === 'completed';
+      } catch (error) {
+        active.acceptingFollowUps = false;
+        if (session.currentTurnPhase === 'cancelled') emit({ type: 'turn_cancelled', sessionId: stored.id, turnId });
+        else emit({ type: 'turn_failed', sessionId: stored.id, turnId, code: safeTurnErrorCode(error) });
+      } finally {
+        await this.options.agentRegistry?.disposeSession(stored.id).catch(() => undefined);
+        interactions.close();
+        if (completed && active.followUps?.length) {
+          const next = active.followUps.shift()!;
+          const latest = await this.find(stored.id);
+          if (latest) { active.settled = true; this.startResumableTurn(latest, next.text, workspaceRoot, active.followUps, next.id); }
+          else { const count = active.followUps.length + 1; active.followUps.length = 0; emit({ type: 'follow_up_dropped', count }); active.settled = true; if (this.active.get(stored.id) === active) this.active.delete(stored.id); }
+        } else {
+          if (active.followUps?.length) {
+            const count = active.followUps.length;
+            active.followUps.length = 0;
+            emit({ type: 'follow_up_dropped', count });
+          }
+          active.settled = true;
+          if (this.active.get(stored.id) === active) this.active.delete(stored.id);
+        }
+      }
+    })();
+    return active;
+  }
+
+  private async serveUiAsset(pathname: string, response: ServerResponse, headOnly: boolean): Promise<void> {
+    const root = resolve(this.options.uiDirectory!);
+    let relative: string;
+    try { relative = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1)); }
+    catch { this.send(response, 400, { error: 'INVALID_UI_PATH' }); return; }
+    const target = resolve(root, relative);
+    if (target !== root && !target.startsWith(`${root}${sep}`)) { this.send(response, 404, { error: 'NOT_FOUND' }); return; }
+    let content: Buffer;
+    try { const info = await stat(target); if (!info.isFile()) throw new Error('NOT_FILE'); content = await readFile(target); }
+    catch { this.send(response, 404, { error: 'UI_ASSET_NOT_FOUND' }); return; }
+    response.statusCode = 200;
+    response.setHeader('content-type', uiMimeType(extname(target)));
+    response.setHeader('x-content-type-options', 'nosniff');
+    response.setHeader('referrer-policy', 'no-referrer');
+    if (target.endsWith('index.html')) {
+      response.setHeader('cache-control', 'no-store');
+      response.setHeader('content-security-policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
+    } else response.setHeader('cache-control', 'public, max-age=31536000, immutable');
+    response.setHeader('content-length', String(content.byteLength));
+    if (headOnly) response.end(); else response.end(content);
+  }
+
+  private async list(workspace?: string, query = '', archived = false): Promise<readonly object[]> {
+    const sessions = this.options.sessionStore.listAll ? await this.options.sessionStore.listAll() : await this.options.sessionStore.list(this.options.provider, this.options.model);
+    const needle = query.trim().slice(0, 200).toLocaleLowerCase();
+    return sessions.filter(item => {
+      const isArchived = 'archivedAt' in item && Boolean(item.archivedAt);
+      if (item.provider !== this.options.provider || item.model !== this.options.model || isArchived !== archived || (workspace && (!('workspaceKey' in item) || item.workspaceKey !== workspace))) return false;
+      return !needle || item.id.toLocaleLowerCase().includes(needle) || item.messages.some(message => message.content.toLocaleLowerCase().includes(needle));
+    }).slice(0, 100).map(item => safeSession(item, needle));
+  }
   private async find(id: string): Promise<StoredSession | undefined> { const sessions = this.options.sessionStore.listAll ? await this.options.sessionStore.listAll() : await this.options.sessionStore.list(this.options.provider, this.options.model); return sessions.find(item => item.id === id && item.provider === this.options.provider && item.model === this.options.model); }
   private authorized(request: IncomingMessage): boolean { const value = request.headers.authorization; if (!value?.startsWith('Bearer ')) return false; const provided = Buffer.from(value.slice(7)); const expected = Buffer.from(this.token); return provided.length === expected.length && timingSafeEqual(provided, expected); }
   private send(response: ServerResponse, status: number, body: unknown): void { response.statusCode = status; response.end(JSON.stringify(body)); }
@@ -255,7 +457,7 @@ class RemoteInteractions implements ApprovalService, UserQuestionService {
   }
   respond(id: string, body: Record<string, unknown>): boolean {
     const pending = this.pending.get(id); if (!pending) return false;
-    if (pending.kind === 'approval') { if (typeof body.approved !== 'boolean' || body.remember !== undefined) return false; this.pending.delete(id); pending.cleanup(); pending.resolve(body.approved ? { approved: true } : { approved: false, reason: '用户拒绝了工具调用' }); return true; }
+    if (pending.kind === 'approval') { if (typeof body.approved !== 'boolean' || body.remember !== undefined) return false; pending.resolve(body.approved ? { approved: true } : { approved: false, reason: '用户拒绝了工具调用' }); return true; }
     if (!Array.isArray(body.answers)) return false; const answers = body.answers as UserQuestionAnswer[]; const ids = answers.map(answer => answer?.id); if (answers.some(answer => !answer || typeof answer.id !== 'string' || !Array.isArray(answer.selected) || answer.selected.some(value => typeof value !== 'string') || answer.custom !== undefined && typeof answer.custom !== 'string') || ids.length !== pending.ids.length || new Set(ids).size !== ids.length || pending.ids.some(value => !ids.includes(value))) return false;
     this.pending.delete(id); pending.cleanup(); pending.resolve({ answers }); return true;
   }
@@ -265,10 +467,42 @@ function safeLabel(value: string): string { return /^[a-z0-9_.-]{1,64}$/iu.test(
 function safeSummary(value: string): string { return value.replaceAll(/[\r\n\t]/gu, ' ').replaceAll(/(?:[A-Za-z]:\\|\\\\)[^\s"']+/gu, '[路径已隐藏]').replaceAll(/\/(?:Users|home|private|root)\/[^\s"']+/gu, '[路径已隐藏]').slice(0, 500); }
 
 function isLoopback(host: string): boolean { return host === '127.0.0.1' || host === '::1' || host === 'localhost'; }
-function safeSession(session: StoredSession): { readonly sessionId: string; readonly provider: string; readonly model: string; readonly updatedAt: string } { return { sessionId: session.id, provider: session.provider, model: session.model, updatedAt: session.updatedAt }; }
+function sameOriginBrowserRequest(request: IncomingMessage): boolean {
+  if (request.headers['sec-fetch-site'] !== 'same-origin' || typeof request.headers.host !== 'string') return false;
+  try {
+    const host = request.headers.host;
+    if (!isLoopback(new URL(`http://${host}`).hostname.replace(/^\[|\]$/gu, ''))) return false;
+    const origin = request.headers.origin;
+    return origin === undefined || origin === `http://${host}`;
+  } catch { return false; }
+}
+function isUiAssetPath(pathname: string): boolean { return pathname === '/' || pathname === '/favicon.svg' || pathname === '/manifest.webmanifest' || pathname.startsWith('/assets/'); }
+function uiMimeType(extension: string): string {
+  switch (extension.toLowerCase()) {
+    case '.html': return 'text/html; charset=utf-8';
+    case '.js': case '.mjs': return 'text/javascript; charset=utf-8';
+    case '.css': return 'text/css; charset=utf-8';
+    case '.svg': return 'image/svg+xml';
+    case '.png': return 'image/png';
+    case '.webp': return 'image/webp';
+    case '.woff2': return 'font/woff2';
+    case '.webmanifest': return 'application/manifest+json; charset=utf-8';
+    default: return 'application/octet-stream';
+  }
+}
+function safeSession(session: StoredSession, query = ''): { readonly sessionId: string; readonly provider: string; readonly model: string; readonly updatedAt: string; readonly archivedAt?: string; readonly match?: string } {
+  const matchingMessage = query ? session.messages.find(message => message.content.toLocaleLowerCase().includes(query)) : undefined;
+  const index = matchingMessage?.content.toLocaleLowerCase().indexOf(query) ?? -1;
+  return { sessionId: session.id, provider: session.provider, model: session.model, updatedAt: session.updatedAt, ...('archivedAt' in session && session.archivedAt ? { archivedAt: session.archivedAt } : {}), ...(matchingMessage && index >= 0 ? { match: matchingMessage.content.slice(Math.max(0, index - 60), index + query.length + 100).replaceAll(/[\r\n\t]+/gu, ' ') } : {}) };
+}
+function safeProcess(process: import('../tools/process-registry.js').ManagedProcessStatus, workspaceRoot: string): object {
+  const workdir = relative(workspaceRoot, process.workdir).replaceAll('\\', '/');
+  return { processId: process.processId, state: process.state, adapter: process.adapter, tty: process.tty, elapsedMs: process.elapsedMs, outputBytes: process.outputBytes, workdir: workdir || '.', startedAt: process.startedAt, ...(process.endedAt ? { endedAt: process.endedAt } : {}), ...(process.exitCode !== undefined ? { exitCode: process.exitCode } : {}), ...(process.signal !== undefined ? { signal: process.signal } : {}), ...(process.errorCode ? { errorCode: safeCode(process.errorCode) } : {}), outputCursor: process.outputCursor };
+}
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> { const chunks: Buffer[] = []; let bytes = 0; for await (const chunk of request) { const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk); bytes += value.length; if (bytes > MAX_REQUEST_BYTES) throw new Error('REQUEST_TOO_LARGE'); chunks.push(value); } const value = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('INVALID_JSON'); return value as Record<string, unknown>; }
 function safeInferenceMessage(code: string): string { return code === 'ROLE_NOT_CONFIGURED' ? 'resource-worker 未配置。' : code === 'MODEL_RESPONSE_INVALID' ? 'Worker 返回内容不符合结构化契约。' : '结构化 Worker 请求失败。'; }
 function safeTurnErrorCode(error: unknown): string {
+  if (isRuntimeError(error)) return error.code;
   if (error instanceof Error && /^[A-Z][A-Z0-9_]{1,63}$/u.test(error.message)) return error.message;
   return 'TURN_FAILED';
 }

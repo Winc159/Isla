@@ -169,7 +169,7 @@ Resource Service 使用独立配置、SQLite Job、Scheduler 和受管目录边�
 
 所有输入和输出都经过有界 schema 校验。规则事实优先于模型建议；Worker 建议仍需名称清理、路径与事实一致性检查以及必要的人工确认。Worker 未配置、不可用、超时或输出非法时，不回退占用 primary 模型，也不使已有规则路径失效。
 
-`src/web/` 与 Resource Web UI 是两个不同概念：前者是主 Agent 可使用的联网搜索、抓取、传输与网络策略能力；`resource-ui/` 构建的是 Resource Service 提供的本地操作页面。当前没有主 Agent 聊天 Web UI。Resource Service 不再保留内嵌旧页面；静态产物缺失时会返回明确诊断。
+`src/web/`、主 Agent Web UI 与 Resource Web UI 是三个不同概念：`src/web/` 提供主 Agent 可用的联网搜索、抓取、传输与网络策略能力；`agent-ui/` 是通过 Resident Host App Server API 交互的本地主 Agent 工作台，构建产物由 Host 按配置静态托管，loopback bootstrap 只向同源页面提供本机 Bearer token；`resource-ui/` 则是 Resource Service 的独立操作页面。主 Agent Web UI 已提供会话搜索与归档/恢复，归档时间保存在 Session JSON v7，归档会话不参与默认恢复或新 Turn；follow-up 由 Host 暂存于活动 Turn，在前一 Turn 成功后以新 Turn ID 串行执行，并以请求 ID 去重，Host 重启不恢复队列。执行器状态和有界 cursor 输出通过 owner/session/workspace 校验投影到 Agent UI，不暴露执行 argv 或绝对路径。当前仍缺远程 steer、Artifact 预览、完整配置管理、多客户端一致性验收和自动化浏览器安全测试，不能视为与 CLI 能力完整等价。Act 的最终提交仅在 Runtime 能将每个计划步骤映射到不同的成功工具证据时自动结算进度；change/verify 步骤分别要求实际文件变更/通过的验证证据，证据不足仍拒绝完成。Resource Service 不再保留内嵌旧页面；静态产物缺失时会返回明确诊断。
 
 ## 安全与审批
 
@@ -188,14 +188,13 @@ Resource Service 使用独立配置、SQLite Job、Scheduler 和受管目录边�
 
 ## 当前尚未实现但已进入架构基线
 
-- 主 Agent 聊天 Web UI；
 - 运行期间动态切换 Provider/Model；
 - 在线插件安装、任意代码动态加载和热更新；
 - MCP 远程 transport、OAuth、resources、prompts 和 elicitation；
 - Embedding 或独立模型驱动的能力路由；
 - 并行 Tool、一层受限 Subagent 和通用持久 Job；
 - Worker Session、Memory、Tool、文件系统权限或开放式 Agent Loop；
-- Service/Scope/Effect 插件内核、Event Session、可恢复 App Server、Plan/Act、长进程和 Workspace Checkpoint。
+- Service/Scope/Effect 插件内核、完整可恢复 App Server、Plan/Act 贯通闭环、长进程和 Workspace Checkpoint。
 
 公网多用户、无边界 Agent Team、任意递归和自主演化仍不属于个人 Agent 基线。
 
