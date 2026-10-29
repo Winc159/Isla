@@ -11,12 +11,13 @@ import type { TaskBrief } from "./agent-loop.js";
 import { preflightAgentLoop } from './agent-loop-preflight.js';
 import { migrateTaskBrief, summarizeTaskState, updateTaskState, type TaskStateV1 } from "./task-state.js";
 import type { TaskContractV1 } from './task-contract.js';
-import { advanceWorkPlanProgress, normalizeWorkPlan, validateWorkPlan, type WorkMode, type WorkModeStateV1, type WorkPlanV1, type WorkPlanEvidence } from './work-plan.js';
+import { advanceWorkPlanProgress, normalizeWorkPlan, validateWorkPlan, workPlanEvidenceSatisfiesStep, type WorkMode, type WorkModeStateV1, type WorkPlanV1, type WorkPlanEvidence } from './work-plan.js';
 import { evaluateCompletionGate, type CompletionRejectionReason } from "./completion-gate.js";
 import { ModelStepRunner } from "./model-step.js";
 import { RequestContextBuilder } from "./request-context.js";
 import { createRequestSnapshot } from "./request-snapshot.js";
 import { validateAndCleanCitations } from "./citations.js";
+import { checkLocalFileCitations } from './source-citation-check.js';
 import { deriveVerificationStatus } from "./verification.js";
 import { renderSkillContent } from "../skills/render.js";
 import type { ModelStepEvent, SessionEvent, TurnPhase, TurnPhaseEvent } from "./events.js";
@@ -50,6 +51,8 @@ import { classifyTool } from '../tools/catalog.js';
 export const DEFAULT_MAX_CONTEXT_TURNS = 20;
 export const DEFAULT_MAX_TOOL_ROUNDS = 12;
 type ModelRequestPhase = "legacy" | "agent_step";
+type ActionFailureGroup = 'workspace_change' | 'command_execution' | 'plan_control';
+interface AgentTurnProgress { readonly unresolvedFailures: Set<ActionFailureGroup>; failedPlanProposals: number; }
 export interface ChatSessionOptions {
   readonly systemPrompt?: string;
   readonly messages?: readonly Message[];
@@ -100,6 +103,28 @@ export interface ChatSessionOptions {
 function sameTaskState(current: TaskStateV1, next: Omit<TaskStateV1, "revision" | "version" | "updatedAt">): boolean {
   return JSON.stringify({ goal: current.goal, status: current.status, constraints: current.constraints, assumptions: current.assumptions, openQuestions: current.openQuestions, steps: current.steps, blockers: current.blockers })
     === JSON.stringify({ goal: next.goal, status: next.status, constraints: next.constraints, assumptions: next.assumptions, openQuestions: next.openQuestions, steps: next.steps, blockers: next.blockers });
+}
+function actionFailureGroup(tool: string): ActionFailureGroup | undefined {
+  if (tool === 'write_text_file' || tool === 'edit_text_file') return 'workspace_change';
+  if (['run_command', 'exec_start', 'dependency_install', 'dependency_uninstall'].includes(tool)) return 'command_execution';
+  if (tool === 'propose_work_plan' || tool === 'update_work_plan_progress') return 'plan_control';
+  return undefined;
+}
+function localCitationRejectionMessage(mismatch: { readonly path: string; readonly line?: number }): string {
+  return `[citation_rejected] ${mismatch.path}${mismatch.line ? `:${mismatch.line}` : ''} 的引用未能与本轮成功读取的原文核对。请重新读取该来源并修正引用或删除不准确的引文；不要重复未核实的数字或原文。`;
+}
+function resolvesActionFailure(tool: string, group: ActionFailureGroup, execution: Extract<ToolExecutionResult, { readonly ok: true }>): boolean {
+  if (group === 'command_execution') {
+    const details = execution.details;
+    return details?.type === 'command_execution'
+      && details.exitCode === 0
+      && details.signal === null
+      && !details.timedOut
+      && !details.aborted;
+  }
+  if (group === 'workspace_change') return tool === 'write_text_file' || tool === 'edit_text_file';
+  if (group === 'plan_control') return execution.details?.type === 'work_plan_proposal' || execution.details?.type === 'work_plan_progress';
+  return false;
 }
 function optionsHasWorkContext(mode: WorkModeStateV1, plan: WorkPlanV1 | undefined): boolean { return mode.revision > 0 || plan !== undefined; }
 export class ChatSession {
@@ -254,7 +279,7 @@ export class ChatSession {
       const refs = step.evidenceCallIds ?? [];
       if (step.status === 'pending' && refs.length) throw new Error('PLAN_REVISION_PROGRESS_INVALID');
       if (step.status !== 'completed') continue;
-      if (!refs.length || refs.some(id => !evidence.get(id)?.success)) throw new Error('PLAN_COMPLETION_EVIDENCE_REQUIRED');
+      if (!refs.length || refs.some(id => !workPlanEvidenceSatisfiesStep(step, evidence.get(id)))) throw new Error('PLAN_COMPLETION_EVIDENCE_REQUIRED');
       if (step.kind === 'change' && !refs.some(id => evidence.get(id)?.kind === 'change')) throw new Error('PLAN_CHANGE_EVIDENCE_REQUIRED');
       if (step.kind === 'verify' && !refs.some(id => evidence.get(id)?.kind === 'verification')) throw new Error('PLAN_VERIFICATION_EVIDENCE_REQUIRED');
       if (step.dependencies.some(id => !plan.steps.find(candidate => candidate.id === id && candidate.status === 'completed'))) throw new Error('PLAN_DEPENDENCY_PENDING');
@@ -279,9 +304,9 @@ export class ChatSession {
   private collectWorkPlanEvidence(): Map<string, WorkPlanEvidence> {
     const evidence = new Map<string, WorkPlanEvidence>();
     for (const turn of this.journal.turns) for (const action of turn.actions) {
-      if (action.type === 'tool' && !evidence.has(action.callId)) evidence.set(action.callId, { callId: action.callId, success: action.ok, kind: 'tool', tool: action.tool });
-      else if (action.type === 'workspace_mutation') evidence.set(action.callId, { callId: action.callId, success: true, kind: 'change', tool: action.tool });
-      else if (action.type === 'verification') evidence.set(action.callId, { callId: action.callId, success: action.outcome === 'passed', kind: 'verification', tool: 'run_command' });
+      if (action.type === 'tool' && !evidence.has(action.callId)) evidence.set(action.callId, { callId: action.callId, success: action.ok, executed: action.ok, kind: 'tool', tool: action.tool });
+      else if (action.type === 'workspace_mutation') evidence.set(action.callId, { callId: action.callId, success: true, executed: true, kind: 'change', tool: action.tool });
+      else if (action.type === 'verification') evidence.set(action.callId, { callId: action.callId, success: action.outcome === 'passed', executed: true, kind: 'verification', tool: 'run_command' });
     }
     return evidence;
   }
@@ -293,7 +318,7 @@ export class ChatSession {
     const claimed = new Set<string>();
     const completed = new Set(plan.steps.filter(step => step.status === 'completed').map(step => step.id));
     const assignments: Array<{ stepId: string; callId: string }> = [];
-    const nonControlTools = new Set(['update_work_plan', 'submit_result', 'report_blocked', 'propose_replan']);
+    const nonControlTools = new Set(['propose_work_plan', 'update_work_plan_progress', 'submit_result', 'report_blocked', 'propose_replan']);
 
     for (const step of plan.steps) {
       if (step.status === 'completed') {
@@ -386,11 +411,13 @@ export class ChatSession {
     const failures = new Map<string, number>();
     const completionRejections: CompletionRejectionReason[] = [];
     const successfulWrites = new Set<string>();
+    const turnProgress: AgentTurnProgress = { unresolvedFailures: new Set(), failedPlanProposals: 0 };
     let tools: readonly ToolDefinition[] = this.selectToolDefinitions(current.map(message => message.content).join("\n"));
     const loopBudget = new LoopBudgetState(this.loopBudget);
     const loopStartedAt = Date.now();
     let wrapUpSent = false;
     let readOnlyObservationRounds = 0;
+    let localCitationRejections = 0;
     this.setTurnPhase("preflight");
     const preflight = preflightAgentLoop({ messages: current, tools, maxInputTokens: this.tokenBudget.maxInputTokens });
     if (preflight.researchGap) return { text: preflight.researchGap, outcome: 'blocked', model: provider.model };
@@ -424,15 +451,22 @@ export class ChatSession {
       const mustSearch = requiredTool === "web_search" && !evidence.some(item => item.startsWith("web_search:"));
       const mustFetch = requiredTool === "web_search" && !mustSearch && !evidence.some(item => item.startsWith("web_fetch:")) && tools.some(tool => tool.name === "web_fetch");
       const requiredToolChoice = mustSearch ? requiredTool : mustFetch ? "web_fetch" : undefined;
-      const loopRequest = { messages: current, tools, ...(requiredToolChoice ? { toolChoice: { name: requiredToolChoice } as const } : {}) };
-      const loopEstimate = estimateRequestTokens(loopRequest);
+      let loopRequest = { messages: current, tools, ...(requiredToolChoice ? { toolChoice: { name: requiredToolChoice } as const } : {}) };
+      let loopEstimate = estimateRequestTokens(loopRequest);
       if (loopEstimate > Math.floor(this.tokenBudget.maxInputTokens * 0.82)) {
         this.setTurnPhase("compacting", { round, detail: `estimatedTokens=${loopEstimate}` });
         const before = this.context?.checkpoint?.throughMessageIndex ?? -1;
         await this.compactIfNeeded(signal, true);
         const after = this.context?.checkpoint?.throughMessageIndex ?? -1;
         if (after > before) {
-          current = this.requestContextBuilder.build(this.messages, "agent_step", undefined, this.task).messages;
+          current = this.requestContextBuilder.build(
+            this.messages,
+            "agent_step",
+            undefined,
+            this.task,
+            deriveVerificationStatus(this.journal),
+            optionsHasWorkContext(this.workMode, this.workPlan) ? { plan: this.workPlan, mode: this.workMode } : undefined,
+          ).messages;
           this.onDiagnostic?.({ code: "AGENT_LOOP_CONTEXT_COMPACTED", component: "context", severity: "debug", detail: `estimated=${loopEstimate};through=${after}` });
         }
         const postCompaction = preflightAgentLoop({ messages: current, tools, maxInputTokens: this.tokenBudget.maxInputTokens });
@@ -440,7 +474,18 @@ export class ChatSession {
           current = postCompaction.messages;
           this.onDiagnostic?.({ code: "AGENT_LOOP_CONTEXT_TRIMMED", component: "context", severity: "warning", detail: `estimated=${loopEstimate};messages=${current.length}` });
         }
+        // Re-select schemas against the reduced context. Act mode may expose
+        // many tools that are irrelevant to the current request; keeping them
+        // after trimming can leave the request just over budget and force an
+        // evidence-only answer before the planned action runs.
+        tools = this.selectToolDefinitions(current.map(message => message.content).join("\n"));
+        const toolTrimmed = preflightAgentLoop({ messages: current, tools, maxInputTokens: this.tokenBudget.maxInputTokens });
+        if (toolTrimmed.trimmed) current = toolTrimmed.messages;
+        loopRequest = { ...loopRequest, messages: current, tools };
       }
+      loopEstimate = estimateRequestTokens(loopRequest);
+      // Compaction and preflight trimming may have reduced the current request;
+      // never use a pre-compaction estimate to force evidence-only synthesis.
       if (loopEstimate > this.tokenBudget.maxInputTokens && readOnlyObservationRounds >= 2 && evidence.length > 0) {
         const bounded = current.filter(message => message.role === 'user' || (message.role === 'system' && message.content.includes('[[evidence_cards]]'))).slice(-24);
         const boundedPrompt = { role: 'system' as const, content: '上下文预算不足，必须立即停止工具调用并基于下方已持久化证据卡片作简短报告。不要补充未被证据直接支持的能力结论；每条当前事实标注 [证据: 路径或工具名]，其余放入未验证。' };
@@ -453,6 +498,13 @@ export class ChatSession {
       this.setTurnPhase("model", { round });
       const response = await this.generateModel({ messages: current, tools, ...(requiredToolChoice ? { toolChoice: { name: requiredToolChoice } } : {}) }, true, signal, "agent_step");
       if (!response.toolCalls?.length && !mustSearch && !mustFetch) {
+        const citationMismatch = checkLocalFileCitations(response.text, this.messages)[0];
+        if (citationMismatch) {
+          if (localCitationRejections >= 1) return { text: '当前回答中的本地文件引用无法与已读取原文一致核验，已停止提交未经证实的结论。', outcome: 'blocked', evidence, model: response.model ?? provider.model };
+          localCitationRejections += 1;
+          current = [...current, { role: 'system', content: localCitationRejectionMessage(citationMismatch) }];
+          continue;
+        }
         // A natural-language final answer does not need to be wrapped in a
         // submit_result tool call to settle evidence-backed Act progress.
         // Let Runtime derive completion from successful actions in this Turn
@@ -479,6 +531,8 @@ export class ChatSession {
           toolCallIds,
           toolResultIds,
           verificationStatus: deriveVerificationStatus(this.journal),
+          unresolvedActionFailure: turnProgress.unresolvedFailures.size > 0,
+          planApprovalRequired: this.workMode.mode === 'plan' && !!this.workPlan && this.workPlan.status === 'active' && this.workPlan.approvedRevision !== this.workPlan.revision,
           priorRejections: completionRejections,
           ...(this.workMode.mode === 'act' && this.workPlan ? { workPlan: this.workPlan } : {}),
           ...(this.taskContract ? { contract: this.taskContract } : {}),
@@ -488,7 +542,8 @@ export class ChatSession {
           this.onDiagnostic?.({ code: "COMPLETION_REJECTED", component: "agent_loop", severity: "warning", detail: `reason=${completion.reason}` });
           const observation = { role: "system" as const, content: completion.observation };
           current = [...current, observation];
-          if (completion.terminal) return { text: "当前回合无法安全完成，已停止继续执行。", outcome: "blocked", model: response.model ?? provider.model };
+          if (completion.terminal === 'needs_user') return { text: completion.observation.replace('[needs_user] ', ''), outcome: 'needs_user', model: response.model ?? provider.model };
+          if (completion.terminal === 'blocked') return { text: "当前回合无法安全完成，已停止继续执行。", outcome: "blocked", model: response.model ?? provider.model };
           continue;
         }
         return { ...response, ...(evidence.length ? { evidence } : {}), ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}) };
@@ -498,7 +553,7 @@ export class ChatSession {
       const assistantToolMessage = { role: "assistant" as const, content: response.assistantContent ?? "", toolCalls: batchInput.calls };
       const next = [...current, assistantToolMessage];
       await this.appendMessage(assistantToolMessage);
-      const batch = await this.executeToolBatch({ calls: batchInput.calls, round, responseModel: response.model ?? provider.model, signal, next, evidence, searchResultUrls, failures, successfulWrites, loopBudget, readOnlyObservationRounds });
+      const batch = await this.executeToolBatch({ calls: batchInput.calls, round, responseModel: response.model ?? provider.model, signal, next, evidence, searchResultUrls, failures, successfulWrites, loopBudget, readOnlyObservationRounds, turnProgress, completionRejections });
       current = batch.next;
       readOnlyObservationRounds = batch.readOnlyObservationRounds;
       if (batch.response) return batch.response;
@@ -510,7 +565,16 @@ export class ChatSession {
         if (synthesis.text.length > 160 && !/[。！？.!?）)\]】」』`}]$/u.test(synthesis.text.trim())) {
           synthesis = await this.generateModel({ messages: [...synthesisMessages, { role: "system", content: "上一版回答疑似被截断。请重新输出一份完整、简洁、以结论句收尾的报告，不要调用工具。" }], tools: [] }, false, signal, "agent_step");
         }
-        if (synthesis.text.trim()) return { ...synthesis, evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}) };
+        if (synthesis.text.trim()) {
+          const citationMismatch = checkLocalFileCitations(synthesis.text, this.messages)[0];
+          if (citationMismatch) {
+            if (localCitationRejections >= 1) return { text: '当前回答中的本地文件引用无法与已读取原文一致核验，已停止提交未经证实的结论。', outcome: 'blocked', evidence, model: synthesis.model ?? provider.model };
+            localCitationRejections += 1;
+            current = [...current, { role: 'system', content: localCitationRejectionMessage(citationMismatch) }];
+            continue;
+          }
+          return { ...synthesis, evidence, ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}) };
+        }
         return { text: `只读观察连续多次没有产生新的证据，已停止继续扫描。当前已记录 ${evidence.length} 条证据、${this.projectSourceReferences.size} 个项目来源。`, outcome: "blocked", model: provider.model };
       }
       const verificationStatus = deriveVerificationStatus(this.journal);
@@ -561,6 +625,8 @@ export class ChatSession {
     readonly successfulWrites: Set<string>;
     readonly loopBudget: LoopBudgetState;
     readonly readOnlyObservationRounds: number;
+    readonly turnProgress: AgentTurnProgress;
+    readonly completionRejections: CompletionRejectionReason[];
   }): Promise<{ readonly next: Message[]; readonly readOnlyObservationRounds: number; readonly response?: ModelResponse }> {
     let readOnlyObservationRounds = input.readOnlyObservationRounds;
     const controlNames = new Set(['submit_result', 'report_blocked', 'propose_replan']);
@@ -618,15 +684,22 @@ export class ChatSession {
           try {
             const currentTask = this.task && "version" in this.task ? this.task : this.task ? migrateTaskBrief(this.task, this.messages) : undefined;
             const nextState = { ...execution.details.state, steps: execution.details.state.steps.map((step, index) => ({ ...step, id: step.id ?? `step-${index + 1}` })) };
-            this.task = currentTask && sameTaskState(currentTask, nextState) ? currentTask : updateTaskState(currentTask, nextState, currentTask?.revision ?? 0, this.messages);
+            const changed = !currentTask || !sameTaskState(currentTask, nextState);
+            this.task = changed ? updateTaskState(currentTask, nextState, currentTask?.revision ?? 0, this.messages) : currentTask;
             const summary = summarizeTaskState(this.task);
-            execution = { ...execution, content: `任务状态已保存：${summary.status}，步骤 ${summary.completedSteps}/${summary.totalSteps}，阻塞 ${summary.blockerCount}。` };
+            execution = { ...execution, content: changed
+              ? `任务状态已保存：${summary.status}，步骤 ${summary.completedSteps}/${summary.totalSteps}，阻塞 ${summary.blockerCount}。`
+              : `任务状态未变化（revision=${this.task.revision}）。请勿重复提交；继续执行下一项工作或给出当前结果。`,
+              details: { ...execution.details, changed } };
           } catch (error) { execution = { ok: false, code: "EXECUTION_FAILED", message: error instanceof Error ? error.message : "TaskState update failed" }; }
         }
-        if (execution.ok && execution.details?.type === 'work_plan_update') {
+        if (execution.ok && execution.details?.type === 'work_plan_proposal') {
           try {
             await this.updateWorkPlan(execution.details.plan, this.workPlan?.revision ?? 0);
             execution = { ...execution, content: this.workMode.mode === 'act' ? `Plan 进度已保存：progressRevision=${this.workPlan!.progressRevision ?? 0}。结构 revision ${this.workPlan!.revision} 的用户批准仍有效。` : `Plan 已保存，revision=${this.workPlan!.revision}。用户仍需显式批准后才能进入 Act。` };
+            input.turnProgress.unresolvedFailures.delete('plan_control');
+            input.turnProgress.failedPlanProposals = 0;
+            if (this.workMode.mode === 'plan') terminalResponse = { text: `工作计划已保存（revision ${this.workPlan!.revision}），当前 Turn 已暂停。请在 CLI 执行 /plan approve，或在 Host/Web UI 明确批准该 revision；批准后再发送“继续”开始执行。`, outcome: 'needs_user', ...(input.responseModel ? { model: input.responseModel } : {}) };
           }
           catch (error) { execution = { ok: false, code: 'EXECUTION_FAILED', message: error instanceof Error ? error.message : 'PLAN_UPDATE_FAILED' }; }
         }
@@ -634,28 +707,45 @@ export class ChatSession {
           try {
             await this.updateWorkPlanStep(execution.details.stepId, execution.details.status, execution.details.evidenceCallIds);
             execution = { ...execution, content: `Plan 步骤 ${execution.details.stepId} 已保存为 ${execution.details.status}；progressRevision=${this.workPlan!.progressRevision ?? 0}。` };
+            input.turnProgress.unresolvedFailures.delete('plan_control');
           } catch (error) { execution = { ok: false, code: 'EXECUTION_FAILED', message: error instanceof Error ? error.message : 'PLAN_PROGRESS_UPDATE_FAILED' }; }
         }
         if (execution.ok && execution.details?.type === "settlement_proposal") {
           const proposal = execution.details.proposal;
           if (proposal.kind === 'submit' && proposal.text?.trim()) {
-            if (this.workMode.mode === 'act' && this.workPlan && (this.workPlan.status !== 'completed' || this.workPlan.steps.some(step => step.status !== 'completed' || !step.evidenceCallIds?.length))) {
-              if (!(await this.completeWorkPlanFromEvidence())) {
-                execution = { ok: false, code: 'EXECUTION_FAILED', message: 'PLAN_STEPS_INCOMPLETE: Runtime could not match successful tool evidence to every approved Plan step.' };
-                terminalResponse = undefined;
+            const citationMismatch = checkLocalFileCitations(proposal.text, this.messages)[0];
+            if (citationMismatch) {
+              execution = { ok: false, code: 'EXECUTION_FAILED', message: localCitationRejectionMessage(citationMismatch) };
+            } else {
+              if (this.workMode.mode === 'act' && this.workPlan?.status === 'active') await this.completeWorkPlanFromEvidence();
+              const gate = evaluateCompletionGate({
+                toolCallIds: input.next.flatMap(message => message.toolCalls?.map(call => call.id) ?? []),
+                toolResultIds: [...input.next.filter(message => message.role === 'tool' && message.toolCallId).map(message => message.toolCallId!), call.id],
+                verificationStatus: deriveVerificationStatus(this.journal),
+                unresolvedActionFailure: input.turnProgress.unresolvedFailures.size > 0,
+                planApprovalRequired: this.workMode.mode === 'plan' && !!this.workPlan && this.workPlan.status === 'active' && this.workPlan.approvedRevision !== this.workPlan.revision,
+                priorRejections: input.completionRejections,
+                ...(this.workMode.mode === 'act' && this.workPlan ? { workPlan: this.workPlan } : {}),
+                ...(this.taskContract ? { contract: this.taskContract } : {}),
+              });
+              if (gate.accepted) {
+                // The model may only submit a candidate. Runtime owns the terminal
+                // outcome and checks the current execution contract first.
+                terminalResponse = {
+                  text: proposal.text.trim(),
+                  outcome: 'completed',
+                  ...(input.evidence.length ? { evidence: input.evidence } : {}),
+                  ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}),
+                  ...(input.responseModel ? { model: input.responseModel } : {}),
+                };
+              } else if (gate.terminal === 'needs_user') {
+                terminalResponse = { text: gate.observation.replace('[needs_user] ', ''), outcome: 'needs_user', ...(input.responseModel ? { model: input.responseModel } : {}) };
+              } else if (gate.terminal === 'blocked') {
+                terminalResponse = { text: gate.observation.replace('[completion_rejected] ', ''), outcome: 'blocked', evidence: input.evidence, ...(input.responseModel ? { model: input.responseModel } : {}) };
+              } else {
+                input.completionRejections.push(gate.reason);
+                execution = { ok: false, code: 'EXECUTION_FAILED', message: gate.observation };
               }
-            }
-            if (execution.ok) {
-            // The model may only submit a candidate. Runtime owns the terminal
-            // outcome; v0.6.1 accepts a non-empty candidate after tool results
-            // have been observed and never trusts a model-supplied status.
-            terminalResponse = {
-              text: proposal.text.trim(),
-              outcome: 'completed',
-              ...(input.evidence.length ? { evidence: input.evidence } : {}),
-              ...(this.projectSourceReferences.size ? { projectSources: [...this.projectSourceReferences.values()] } : {}),
-              ...(input.responseModel ? { model: input.responseModel } : {}),
-            };
             }
           } else if (proposal.kind === 'blocked' && proposal.reason?.trim() && proposal.attempts?.length) {
             const detail = proposal.needsUser ? `${proposal.reason.trim()}；需要用户：${proposal.needsUser.trim()}` : proposal.reason.trim();
@@ -706,6 +796,21 @@ export class ChatSession {
         this.onToolFinished?.(call.name, call.id, execution);
         await this.onSessionEvent?.({ type: "tool_result", callId: call.id, tool: call.name, result: execution });
       }
+      if (!execution.ok) {
+        const failureGroup = actionFailureGroup(call.name);
+        // Once the approved plan is already complete, a rejected extra progress
+        // update is a no-op. Keep the completed evidence-backed state terminal
+        // instead of forcing the model to replay verification just to clear it.
+        const redundantCompletedPlanUpdate = call.name === 'update_work_plan_progress' && this.workPlan?.status === 'completed';
+        if (failureGroup && !redundantCompletedPlanUpdate) input.turnProgress.unresolvedFailures.add(failureGroup);
+        if (call.name === 'propose_work_plan') {
+          input.turnProgress.failedPlanProposals += 1;
+          if (input.turnProgress.failedPlanProposals >= 2) terminalResponse = { text: `工作计划连续两次未通过 Runtime 校验（${execution.message.slice(0, 180)}）。已停止重试，请检查当前 Plan 要求后重新发起。`, outcome: 'blocked', ...(input.responseModel ? { model: input.responseModel } : {}) };
+        }
+      } else {
+        const successGroup = actionFailureGroup(call.name);
+        if (successGroup && resolvesActionFailure(call.name, successGroup, execution)) input.turnProgress.unresolvedFailures.delete(successGroup);
+      }
       if (!execution.ok && execution.code === "TURN_CANCELLED") throw new RuntimeError({ code: "TURN_CANCELLED", recoverable: false, message: "当前回合已取消。" });
       this.onToolsUsed?.([call.name]);
       const preparedResult = prepareToolResultMessage(call.id, execution, this.workMode.revision > 0);
@@ -726,8 +831,8 @@ export class ChatSession {
         return { next: input.next, readOnlyObservationRounds, response: terminalResponse };
       }
       const progress = evaluateToolProgress(call.name, execution);
-      if (progress.kind === 'observation' && execution.ok) readOnlyObservationRounds += 1;
-      else if (progress.changed || progress.kind === 'evidence' || progress.kind === 'task_update' || progress.kind === 'verification') readOnlyObservationRounds = 0;
+      if (execution.ok && !progress.changed) readOnlyObservationRounds += 1;
+      else if (progress.changed) readOnlyObservationRounds = 0;
       input.loopBudget.record({ action: `${call.name}:${call.arguments}`, result: execution.ok ? `${progress.kind}:${execution.content.slice(0, 500)}` : execution.message, changed: progress.changed, ...(execution.ok ? {} : { errorCode: execution.code }) });
       if (execution.ok && input.loopBudget.hasRepeatedTool(call.name)) {
         const turn = this.journal.turns.at(-1);
@@ -877,7 +982,14 @@ export class ChatSession {
   }
 
   private async runAgentLoop(history: readonly Message[], memoryContext: string | undefined, signal: AbortSignal): Promise<ModelResponse> {
-    const request = this.requestContextBuilder.build(history, "agent_step", memoryContext, this.task);
+    const request = this.requestContextBuilder.build(
+      history,
+      "agent_step",
+      memoryContext,
+      this.task,
+      deriveVerificationStatus(this.journal),
+      optionsHasWorkContext(this.workMode, this.workPlan) ? { plan: this.workPlan, mode: this.workMode } : undefined,
+    );
     const turn = this.journal.turns.at(-1);
     if (turn) (turn.actions as TurnActionRecord[]).push({ type: "phase", phase: "agent_step" });
     if (this.decisionPhase) {
@@ -908,7 +1020,7 @@ export class ChatSession {
       (browserIntent && tool.name.startsWith("browser_"))
       || (fileIntent && /file|directory|project_search/i.test(tool.name))
       || (commandIntent && /command|shell|run/i.test(tool.name))
-      || /ask_user|user_question|task/i.test(tool.name),
+      || /ask_user|user_question|task|work_plan|submit_result|report_blocked|propose_replan/i.test(tool.name),
     );
     if (selected.length) {
       this.onDiagnostic?.({ code: "TOOL_SCHEMA_MINIMAL_FALLBACK", component: "context", severity: "warning", detail: `tools=${selected.length}/${tools.length}` });

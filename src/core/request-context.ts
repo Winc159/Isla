@@ -10,7 +10,7 @@ export interface RequestContextBuilderOptions {
   readonly capabilities: readonly ToolCapability[];
 }
 
-/** 集中构造模型可见请求；不调用 Provider，也不修改 Session。 */
+/** Centralizes model-visible context without calling a Provider or mutating Session state. */
 export class RequestContextBuilder {
   constructor(private readonly options: RequestContextBuilderOptions) {}
 
@@ -22,7 +22,12 @@ export class RequestContextBuilder {
     const verificationContext = verificationStatus
       ? [{ role: "system" as const, content: `当前工作区验证状态（仅供本步骤判断，不是用户事实）：${verificationStatus}` }]
       : [];
-    const workContext = work ? [{ role: 'system' as const, content: `当前工作模式=${work.mode.mode}。plan 模式只调查并制定计划，不得修改文件或执行命令；使用 update_work_plan(action=revise) 提交完整计划。Plan 中只有已实际完成且能引用成功 Tool Call ID 的只读调查步骤可标为 completed；新提出的 change/verify 步骤必须是 pending，严禁预先标记完成或伪造证据。每个成功工具结果末尾会显示 Evidence Tool Call ID；提交计划或进度时原样引用该 ID。review 模式仅验证和审阅差异；act 模式仅在当前计划 revision 获得用户批准时执行。Act 中每一步开始/完成/阻塞都使用 update_work_plan(action=progress, stepId, stepStatus) 更新单一步骤；change 步骤必须引用成功 write/edit Tool 的 ID，verify 步骤必须引用 purpose=verification 且通过的 callId。不能改变已批准计划的结构；若确需重规划，只能调用 propose_replan/等待 Runtime 切回 Plan，再提交新 revision 并等待用户重新批准。\n当前 Plan：${JSON.stringify(work.plan ?? null)}` }] : [];
+    const workContext = work ? [{ role: 'system' as const, content: [
+      `当前工作模式=${work.mode.mode}。`,
+      "plan 模式只调查并制定计划，不得修改文件或执行命令。需要执行的工作必须调用 propose_work_plan 提交目标、步骤类型 (inspect/change/verify/other) 和依赖；不要提供 planId、revision、step status 或证据，Runtime 会将新步骤全部置为 pending。有效计划会立即结束当前 Turn 并返回 needs_user；用户通过 CLI /plan approve、Host mode_set 或 Web UI 批准该 revision 后，才可在下一 Turn 执行。plan 模式下禁止调用 update_work_plan_progress。",
+      "review 模式仅验证和审阅差异；act 模式仅在当前计划 revision 获得用户批准时执行。Act 中每一步开始/完成/阻塞都使用 update_work_plan_progress 更新单一步骤；change 步骤必须引用成功 write/edit Tool 的 ID，verify 步骤必须引用 purpose=verification 且通过的 callId。不能改变已批准计划的结构；若确需重规划，只能调用 propose_replan，等待 Runtime 切回 Plan，再提交新计划并等待用户重新批准。",
+      `当前 Plan：${JSON.stringify(work.plan ?? null)}`,
+    ].join("\n") }] : [];
     const messages = composeRequestMessages(
       [...history, ...taskContext, ...verificationContext, ...workContext],
       this.options.capabilities,

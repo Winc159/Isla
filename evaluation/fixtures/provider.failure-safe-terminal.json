@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "provider.failure-safe-terminal",
+  "capability": "Provider error terminal behavior",
+  "prompt": "Inject a provider failure and confirm the Host returns a safe error and terminal event.",
+  "workspace": { "kind": "test-managed", "seed": "synthetic" },
+  "network": "local-test-only",
+  "timeoutMs": 120000,
+  "expectedApprovals": [],
+  "expectedFacts": ["safe RuntimeError code is preserved in failed turn events"],
+  "contractTests": { "files": ["tests/host.test.ts"], "namePattern": "preserves safe RuntimeError codes in failed turn events" },
+  "gateClass": "security",
+  "rubricProfile": "agent-task-v1",
+  "cleanup": "test-managed-cleanup"
+}

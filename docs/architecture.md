@@ -61,6 +61,7 @@ Resource 是独立工具子系统，不是主 Agent Runtime 的第二套实现�
 | `src/runtime/application.ts` | 聚合 Runtime、Session Store、Memory、诊断与关闭生命周期。 |
 | `src/runtime/session-factory.ts` | 按 workspace 和当前会话组装 Session、能力目录、Browser、MCP、Memory 与持久化回调。 |
 | `src/core/session.ts` | 会话事实、Agent Loop、请求投影、工具轮次、完成门禁、压缩、终态与持久化。 |
+| `src/core/work-plan.ts`、`src/tools/control.ts` | Runtime-owned Plan identity/status、分离的 plan proposal/progress 输入、revision 精确用户批准和证据校验后的结算。 |
 | `src/core/model-step.ts` | 单次 Provider 调用、流式/非流式选择、重试事件与候选结果。 |
 | `src/capabilities/catalog.ts` | Host-owned manifest、可用性、检索与能力 Provider。 |
 | `src/capabilities/routing.ts` | 确定性预选、Task 激活状态、逐 Model Step Tool Snapshot 和能力元工具。 |

@@ -31,6 +31,14 @@ describe('work plan contract', () => {
     const completed=advanceWorkPlanProgress(plan,{...plan,steps:[{...plan.steps[0]!,status:'completed',evidenceCallIds:['read-ok']},plan.steps[1]!] },new Map([['read-ok',{callId:'read-ok',success:true,kind:'tool'} as WorkPlanEvidence]]));
     expect(completed.steps[0]).toMatchObject({status:'completed',evidenceCallIds:['read-ok']});
   });
+  it('allows a failed baseline check to complete an inspect step but not a verify step', () => {
+    const plan = normalizeWorkPlan({ ...valid, steps:[{ ...valid.steps[0]!, kind:'inspect' as const }, { ...valid.steps[1]!, kind:'verify' as const }] });
+    const failedBaseline = { callId:'baseline', success:false, executed:true, kind:'verification' as const, tool:'run_command' };
+    const inspected = advanceWorkPlanProgress(plan, { ...plan, steps:[{ ...plan.steps[0]!, status:'completed', evidenceCallIds:['baseline'] }, plan.steps[1]!] }, new Map([['baseline', failedBaseline]]));
+    expect(inspected.steps[0]).toMatchObject({ status:'completed', evidenceCallIds:['baseline'] });
+    const verifyPlan = normalizeWorkPlan({ ...valid, steps:[{ ...valid.steps[0]!, kind:'inspect' as const, status:'completed' as const, evidenceCallIds:['read'] }, { ...valid.steps[1]!, kind:'verify' as const, status:'in_progress' as const }] });
+    expect(() => advanceWorkPlanProgress(verifyPlan, { ...verifyPlan, steps:[verifyPlan.steps[0]!, { ...verifyPlan.steps[1]!, status:'completed', evidenceCallIds:['baseline'] }] }, new Map([['read',{callId:'read',success:true,executed:true,kind:'tool'}],['baseline',failedBaseline]]))).toThrow('PLAN_COMPLETION_EVIDENCE_REQUIRED');
+  });
   it('rejects changes to approved structure during an Act progress update', () => {
     const plan=normalizeWorkPlan({...valid,approvedRevision:1});
     expect(()=>advanceWorkPlanProgress(plan,{...plan,goal:'changed'} as typeof plan,new Map())).toThrow('PLAN_PROGRESS_STRUCTURE_CHANGED');

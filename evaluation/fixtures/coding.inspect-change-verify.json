@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "coding.inspect-change-verify",
+  "capability": "coding loop and verification evidence",
+  "prompt": "Inspect a synthetic workspace change and verify the requested outcome.",
+  "workspace": { "kind": "test-managed", "seed": "synthetic" },
+  "network": "local-test-only",
+  "timeoutMs": 120000,
+  "expectedApprovals": [],
+  "expectedFacts": ["successful Act plan is settled from matching evidence"],
+  "contractTests": { "files": ["tests/core/session.test.ts"], "namePattern": "settles an Act plan from matching successful evidence" },
+  "gateClass": "behavior",
+  "rubricProfile": "agent-task-v1",
+  "cleanup": "test-managed-cleanup"
+}

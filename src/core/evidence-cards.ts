@@ -35,7 +35,7 @@ export function buildEvidenceCards(call: ToolCall, result: ToolExecutionResult):
   if (result.details?.type === 'web_search') for (const source of result.details.sources) cards.push({ kind: 'web-search', source: result.details.provider, locator: source.url, claim: 'public source returned by configured web search', status: 'confirmed', confidence: 'medium' });
   if (result.details?.type === 'web_fetch') cards.push({ kind: 'web-fetch', source: call.name, locator: result.details.finalUrl, claim: `HTTP ${result.details.statusCode} content was fetched`, status: result.details.statusCode >= 200 && result.details.statusCode < 300 ? 'confirmed' : 'failed', confidence: 'high' });
   if (result.details?.type === 'command_execution') cards.push({ kind: 'command', source: call.name, locator: result.details.workdir, claim: `command completed with exit code ${result.details.exitCode ?? 'null'}`, status: result.details.exitCode === 0 && !result.details.timedOut && !result.details.aborted ? 'confirmed' : 'failed', confidence: 'high' });
-  if (result.details?.type === 'task_state_update') cards.push({ kind: 'task', source: call.name, claim: `task state updated to ${result.details.state.status}`, status: 'confirmed', confidence: 'high' });
+  if (result.details?.type === 'task_state_update' && result.details.changed !== false) cards.push({ kind: 'task', source: call.name, claim: `task state updated to ${result.details.state.status}`, status: 'confirmed', confidence: 'high' });
   if (!cards.length) cards.push({ kind: 'observation', source: call.name, claim: 'tool completed successfully', status: 'confirmed', confidence: 'medium' });
   return cards.map(card => ({ ...card, id: cardId(card) }));
 }

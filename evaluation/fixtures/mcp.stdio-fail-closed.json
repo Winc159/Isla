@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "mcp.stdio-fail-closed",
+  "capability": "MCP stdio transport failure boundary",
+  "prompt": "Close a synthetic MCP stdio transport and verify that its tool catalog is withdrawn.",
+  "workspace": { "kind": "test-managed", "seed": "synthetic" },
+  "network": "local-test-only",
+  "timeoutMs": 120000,
+  "expectedApprovals": [],
+  "expectedFacts": ["ready catalog is withdrawn after the stdio transport closes"],
+  "contractTests": { "files": ["tests/mcp-host.test.ts"], "namePattern": "withdraws a ready catalog after the stdio transport closes" },
+  "gateClass": "security",
+  "rubricProfile": "agent-task-v1",
+  "cleanup": "test-managed-cleanup"
+}

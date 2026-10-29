@@ -54,6 +54,10 @@
 - [DSH Architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md) — durable Session Event、live Agent Event 与 Capability Event 的职责域，以及 request freeze、assistant settlement 和 UI observation；v0.2.9 采用事实/观察分离和 attempt settlement，不复制 Event Map、Agent Registry 或 waterfall，查看日期 2026-09-15。
 - [DSH Core](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/core.md) — Agent Loop、Session、System Prompt、Tool Registry 和 LLM seam 的所有权边界；v0.2.9 只提取 Isla 已出现的 Model Step 与 Request Context 内部职责，拒绝 Cordis 和完整 Agent handle，查看日期 2026-09-15。
 - [DSH Compaction](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/compaction.md) — token pressure、Tool Pair 边界、pruning、summary 与 overflow recovery；v0.2.9 记录为后续重评依据，本版因缺少真实上下文压力而暂缓，查看日期 2026-09-15。
+- [Aider benchmark harness](https://github.com/Aider-AI/aider/blob/main/benchmark/README.md) — 端到端代码任务、执行生成代码前的 Docker 隔离、可复现的模型/代码版本/结果元数据和可独立汇总报告；v0.8.1.0 采用评估拆分与结果追溯原则，拒绝复制 Exercism 数据集、Python/Bash harness 或强制 Docker 运行架构；查看日期 2026-10-29。
+- [OpenHands benchmark repository](https://github.com/OpenHands/benchmarks) — 当前 V1 evaluation harness 的任务集与执行/分析分离思路；v0.8.1.0 采用场景身份、版本可追溯及分层评估，不引入大规模 SWE-bench/GAIA 云端 worker 或其 SDK；查看日期 2026-10-29。
+- [Cline checkpoints](https://github.com/cline/cline/blob/main/docs/core-workflows/checkpoints.mdx) — 工具变更检查点、diff/restore 与对话保留的安全交互；v0.8.1.0 将 checkpoint 覆盖范围/恢复结果加入硬否决 Fixture，继续使用 Isla Checkpoint 实现，不复制 shadow Git repo；查看日期 2026-10-29。
+- [Cline permission handling](https://github.com/cline/cline/blob/main/docs/sdk/guides/permission-handling.mdx) — 工具启用、自动批准和交互审批是不同策略维度；v0.8.1.0 采用此区分来组织测试断言，拒绝照搬 Cline 默认策略，Isla Policy/Sandbox/Approval 保持事实权威；查看日期 2026-10-29。
 - [LangGraph Memory](https://langchain-ai.github.io/langgraph/how-tos/memory/manage-conversation-history/) — Thread 持久化、裁剪和滚动摘要；采用派生摘要，拒绝 Graph 编排和删除原文；查看日期 2026-09-11。
 - [Letta Memory Architecture](https://github.com/letta-ai/skills/blob/main/letta/letta-api-client/memory-architecture.md) — Core Memory、消息窗口、归档和语义检索分层；直接影响 v0.2.1 的四层记忆模型；查看日期 2026-09-11。
 

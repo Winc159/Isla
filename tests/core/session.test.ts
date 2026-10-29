@@ -6,6 +6,7 @@ import { createProjectFilesCapability } from "../../src/tools/project-files.js";
 import { createCommandExecutionCapability } from "../../src/tools/command-execution.js";
 import { createTaskStateCapability } from "../../src/tools/task-state.js";
 import { createControlCapability } from "../../src/tools/control.js";
+import { ToolFailure } from '../../src/tools/errors.js';
 import type { WorkPlanV1 } from '../../src/core/work-plan.js';
 import type { ToolCapability } from '../../src/tools/types.js';
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -18,6 +19,110 @@ beforeEach(async () => {
 });
 afterEach(async () => { await rm(sessionRoot, { recursive: true, force: true }); });
 describe("session", () => {
+  it('ends a valid Plan proposal at the approval boundary with Runtime-owned state', async () => {
+    class PlanProvider extends FakeProvider {
+      calls = 0;
+      override async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+        this.requests.push(request); this.calls += 1;
+        return { text: '', toolCalls: [{ id: 'plan-proposal', name: 'propose_work_plan', arguments: JSON.stringify({
+          goal: '修复并验证 slugify',
+          steps: [
+            { id: 'inspect', title: '检查现状', kind: 'inspect', dependencies: [] },
+            { id: 'change', title: '修改实现', kind: 'change', dependencies: ['inspect'] },
+            { id: 'verify', title: '运行测试', kind: 'verify', dependencies: ['change'] },
+          ],
+          verification: ['Node 测试通过'],
+        }) }] };
+      }
+    }
+    const provider = new PlanProvider([]);
+    const session = new ChatSession(provider, { enableTools: true, enablePlanAct: true, capabilities: [createControlCapability()] });
+    const response = await session.send('请修复并测试当前项目');
+    expect(response.outcome).toBe('needs_user');
+    expect(response.text).toContain('revision 1');
+    expect(provider.calls).toBe(1);
+    expect(session.currentWorkMode.mode).toBe('plan');
+    expect(session.currentWorkPlan).toMatchObject({ revision: 1, status: 'active', steps: [{ status: 'pending' }, { status: 'pending' }, { status: 'pending' }] });
+    await session.setWorkMode('act', true);
+    expect(session.currentWorkMode).toMatchObject({ mode: 'act', actApprovedRevision: 1 });
+  });
+
+  it('includes the approved Work Plan in the initial Act model request', async () => {
+    class ActProvider extends FakeProvider {
+      override async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+        this.requests.push(request);
+        return { text: '尚未执行。' };
+      }
+    }
+    const plan: WorkPlanV1 = { version:1,planId:'act-context',revision:1,progressRevision:0,replanCount:0,goal:'修复 slugify 并通过测试',constraints:['只改实现文件'],assumptions:[],steps:[{id:'inspect',title:'运行基线测试',kind:'inspect',status:'pending',dependencies:[]},{id:'change',title:'修复实现',kind:'change',status:'pending',dependencies:['inspect']},{id:'verify',title:'运行回归测试',kind:'verify',status:'pending',dependencies:['change']}],risks:[],verification:['全部测试通过'],openQuestions:[],status:'active',approvedRevision:1,updatedAt:new Date().toISOString() };
+    const provider = new ActProvider([]);
+    const session = new ChatSession(provider, { enableTools:true, enablePlanAct:true, workPlan:plan, workMode:{version:1,mode:'act',revision:2,actApprovedRevision:1,updatedAt:new Date().toISOString()}, capabilities:[createControlCapability()] });
+    await session.send('继续执行已批准计划');
+    expect(provider.requests[0]?.messages).toContainEqual(expect.objectContaining({ role:'system', content:expect.stringContaining('当前工作模式=act') }));
+    expect(provider.requests[0]?.messages.some(message => message.role === 'system' && message.content.includes('修复 slugify 并通过测试'))).toBe(true);
+  });
+
+  it('prevents a denied command from being followed by a false completed response', async () => {
+    class DeniedCommandProvider extends FakeProvider {
+      calls = 0;
+      override async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+        this.requests.push(request); this.calls += 1;
+        if (this.calls === 1) return { text: '', toolCalls: [{ id: 'denied-command', name: 'run_command', arguments: JSON.stringify({ executable: 'node', argv: ['--test'], purpose: 'verification' }) }] };
+        return { text: '已经修复并通过测试。' };
+      }
+    }
+    const provider = new DeniedCommandProvider([]);
+    const command: ToolCapability = { id: 'command', instructions: 'test command', tools: [{ definition: { name: 'run_command', description: 'Run command', parameters: { type: 'object' } }, execute: async () => 'should not execute' }] };
+    const response = await new ChatSession(provider, { enableTools: true, enablePlanAct: true, capabilities: [command] }).send('修复并测试');
+    expect(response.outcome).toBe('blocked');
+    expect(response.text).not.toContain('已经修复');
+    expect(response.text).toContain('无法安全完成');
+    expect(provider.calls).toBe(3);
+  });
+
+  it('does not clear a command failure when the next command has no successful exit', async () => {
+    class RetryCommandProvider extends FakeProvider {
+      calls = 0;
+      override async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+        this.requests.push(request);
+        this.calls += 1;
+        if (this.calls === 1) return { text: '', toolCalls: [{ id: 'command-fails', name: 'run_command', arguments: JSON.stringify({ executable: 'node', argv: ['--test'], purpose: 'verification' }) }] };
+        if (this.calls === 2) return { text: '', toolCalls: [{ id: 'command-no-exit', name: 'run_command', arguments: JSON.stringify({ executable: 'npm', argv: ['run', 'test'], purpose: 'verification' }) }] };
+        return { text: '已经修复并通过测试。' };
+      }
+    }
+    const provider = new RetryCommandProvider([]);
+    let commandCount = 0;
+    const command: ToolCapability = { id: 'command', instructions: 'test command', tools: [{
+      definition: { name: 'run_command', description: 'Run command', parameters: { type: 'object' } },
+      execute: async () => {
+        commandCount += 1;
+        if (commandCount === 1) throw new ToolFailure('COMMAND_EXECUTION_FAILED', 'spawn EPERM');
+        return { content: 'stdout: no output', details: { type: 'command_execution', shell: 'direct', workdir: '.', exitCode: null, signal: null, timedOut: false, aborted: false, purpose: 'verification', stdoutTruncated: false, stderrTruncated: false } };
+      },
+    }] };
+    const response = await new ChatSession(provider, { enableTools: true, capabilities: [command] }).send('修复并测试');
+    expect(response.outcome).toBe('blocked');
+    expect(response.text).toContain('无法安全完成');
+    expect(provider.requests.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('stops after two invalid plan proposals even when their arguments differ', async () => {
+    class InvalidPlanProvider extends FakeProvider {
+      calls = 0;
+      override async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+        this.requests.push(request); this.calls += 1;
+        return { text: '', toolCalls: [{ id: `bad-plan-${this.calls}`, name: 'propose_work_plan', arguments: JSON.stringify({ goal: '计划', steps: [] , verification: ['测试'] }) }] };
+      }
+    }
+    const provider = new InvalidPlanProvider([]);
+    const response = await new ChatSession(provider, { enableTools: true, enablePlanAct: true, capabilities: [createControlCapability()] }).send('请计划一个任务');
+    expect(response.outcome).toBe('blocked');
+    expect(response.text).toContain('连续两次');
+    expect(provider.calls).toBe(2);
+    expect(provider.requests[1]?.messages).toContainEqual(expect.objectContaining({ role: 'tool', toolCallId: 'bad-plan-1', content: expect.stringContaining('WORK_PLAN_STEPS_INVALID') }));
+  });
+
   it('persists evidence-backed progress without invalidating Act approval', async () => {
     const plan: WorkPlanV1 = { version:1,planId:'progress-plan',revision:1,progressRevision:0,replanCount:0,goal:'Fix and verify',constraints:[],assumptions:[],steps:[{id:'inspect',title:'Inspect',kind:'inspect',status:'pending',dependencies:[]},{id:'change',title:'Change',kind:'change',status:'pending',dependencies:['inspect']},{id:'verify',title:'Verify',kind:'verify',status:'pending',dependencies:['change']}],risks:[],verification:['tests pass'],openQuestions:[],status:'active',approvedRevision:1,updatedAt:new Date().toISOString() };
     const journal = { version:1 as const, turns:[{id:'evidence-turn',sequence:1,startedAt:new Date().toISOString(),endedAt:new Date().toISOString(),status:'completed' as const,userMessageIndex:0,assistantMessageIndex:1,attempts:[],actions:[{type:'tool' as const,step:1,callId:'inspect-call',tool:'read_text_file',ok:true},{type:'workspace_mutation' as const,step:2,callId:'change-call',tool:'edit_text_file' as const},{type:'tool' as const,step:2,callId:'change-call',tool:'edit_text_file',ok:true},{type:'verification' as const,step:3,callId:'verify-call',outcome:'passed' as const},{type:'tool' as const,step:3,callId:'verify-call',tool:'run_command',ok:true}]}] };
@@ -127,6 +232,31 @@ describe("session", () => {
     await expect(session.send('复核、修改并验证')).resolves.toMatchObject({text:'已验证 5 项测试全部通过。',outcome:'completed'});
     expect(session.currentWorkPlan).toMatchObject({status:'completed',progressRevision:3,steps:[{id:'inspect',status:'completed',evidenceCallIds:['inspect-evidence']},{id:'change',status:'completed',evidenceCallIds:['change-evidence']},{id:'verify',status:'completed',evidenceCallIds:['verify-evidence']} ]});
   });
+  it('does not block settlement on a rejected progress update after an Act plan is already completed', async () => {
+    const plan: WorkPlanV1 = { version:1,planId:'completed-plan-extra-update',revision:1,progressRevision:0,replanCount:0,goal:'Inspect, change and verify',constraints:[],assumptions:[],steps:[{id:'inspect',title:'Read source',kind:'inspect',status:'pending',dependencies:[]},{id:'change',title:'Modify source',kind:'change',status:'pending',dependencies:['inspect']},{id:'verify',title:'Run tests',kind:'verify',status:'pending',dependencies:['change']}],risks:[],verification:['Tests pass'],openQuestions:[],status:'active',approvedRevision:1,updatedAt:new Date().toISOString() };
+    const tools: ToolCapability = { id:'project-files',instructions:'test tools',tools:[
+      { definition:{name:'read_text_file',description:'read',parameters:{type:'object'}},execute:async()=> 'source read' },
+      { definition:{name:'edit_text_file',description:'change',parameters:{type:'object'}},execute:async()=> 'source changed' },
+      { definition:{name:'run_command',description:'verify',parameters:{type:'object'}},execute:async()=>({content:'5 tests passed',details:{type:'command_execution',shell:'direct',workdir:sessionRoot,exitCode:0,signal:null,timedOut:false,aborted:false,purpose:'verification',stdoutTruncated:false,stderrTruncated:false}}) },
+    ]};
+    const progress = (id: string, stepId: string, stepStatus: string, evidenceCallIds?: string[]) => ({text:'',toolCalls:[{id,name:'update_work_plan_progress',arguments:JSON.stringify({stepId,stepStatus,...(evidenceCallIds ? {evidenceCallIds} : {})})}]});
+    const toolResponses: ToolResponse[] = [
+      {text:'',toolCalls:[{id:'read-after-completion',name:'read_text_file',arguments:'{}'}]},
+      {text:'',toolCalls:[{id:'change-after-completion',name:'edit_text_file',arguments:'{}'}]},
+      {text:'',toolCalls:[{id:'verify-after-completion',name:'run_command',arguments:'{}'}]},
+      progress('complete-inspect','inspect','completed',['read-after-completion']),
+      progress('complete-change','change','completed',['change-after-completion']),
+      progress('complete-verify','verify','completed',['verify-after-completion']),
+      progress('stale-progress','inspect','in_progress'),
+      {text:'',toolCalls:[{id:'settle-after-stale-progress',name:'submit_result',arguments:JSON.stringify({text:'目标完成，验证通过。'})}]},
+    ];
+    const provider = new class extends FakeProvider {
+      async generateWithTools(request: ModelRequest): Promise<ToolResponse> { this.requests.push(request); return toolResponses.shift() ?? {text:'No more fake responses'}; }
+    }([]);
+    const session = new ChatSession(provider,{enableTools:true,capabilities:[tools,createControlCapability()],workPlan:plan,workMode:{version:1,mode:'act',revision:1,actApprovedRevision:1,updatedAt:new Date().toISOString()}});
+    await expect(session.send('复核、修改并验证')).resolves.toMatchObject({text:'目标完成，验证通过。',outcome:'completed'});
+    expect(session.currentWorkPlan).toMatchObject({status:'completed',steps:[{id:'inspect',status:'completed'},{id:'change',status:'completed'},{id:'verify',status:'completed'}]});
+  });
   it('settles an evidence-backed Act plan before a direct final answer without submit_result', async () => {
     const plan: WorkPlanV1 = { version:1,planId:'direct-final-plan',revision:1,progressRevision:0,replanCount:0,goal:'Inspect and verify',constraints:[],assumptions:[],steps:[{id:'inspect',title:'Read source',kind:'inspect',status:'pending',dependencies:[]},{id:'verify',title:'Run tests',kind:'verify',status:'pending',dependencies:['inspect']}],risks:[],verification:['Tests pass'],openQuestions:[],status:'active',approvedRevision:1,updatedAt:new Date().toISOString() };
     const tools: ToolCapability = { id:'project-files',instructions:'test tools',tools:[
@@ -144,6 +274,42 @@ describe("session", () => {
     const session = new ChatSession(provider,{enableTools:true,capabilities:[tools,createControlCapability()],workPlan:plan,workMode:{version:1,mode:'act',revision:1,actApprovedRevision:1,updatedAt:new Date().toISOString()}});
     await expect(session.send('只读检查并运行测试')).resolves.toMatchObject({text:'检查和测试均已完成。'});
     expect(session.currentWorkPlan).toMatchObject({status:'completed',progressRevision:2,steps:[{id:'inspect',status:'completed',evidenceCallIds:['direct-inspect']},{id:'verify',status:'completed',evidenceCallIds:['direct-verify']} ]});
+  });
+  it('rejects and retries a local citation whose quoted text conflicts with the observed file', async () => {
+    const fileText = '<path>docs/current-policy.md</path>\n<type>file</type>\n<content>\n1: # Policy\n2: Status: current\n3: The maximum upload size is **25 MB per file**.\n</content>';
+    const files: ToolCapability = { id:'citation-fixture',instructions:'Read the requested project file.',tools:[
+      { definition:{name:'read_text_file',description:'Read a project file.',parameters:{type:'object'}},execute:async()=>fileText },
+    ]};
+    const responses: ToolResponse[] = [
+      {text:'',toolCalls:[{id:'citation-read',name:'read_text_file',arguments:JSON.stringify({path:'docs/current-policy.md'})}]},
+      {text:'The limit is 100 MB. [source: docs/current-policy.md:3] — `The maximum upload size is **100 MB per file**.`'},
+      {text:'The limit is 25 MB. [source: docs/current-policy.md:3] — `The maximum upload size is **25 MB per file**.`'},
+    ];
+    const provider = new class extends FakeProvider {
+      async generateWithTools(request: ModelRequest): Promise<ToolResponse> { this.requests.push(request); return responses.shift() ?? {text:'unexpected'}; }
+    }([]);
+    const session = new ChatSession(provider,{enableTools:true,agentLoop:true,projectRoot:sessionRoot,capabilities:[files]});
+    await expect(session.send('读取本地策略，提供准确值、行号和直接引文')).resolves.toMatchObject({text:'The limit is 25 MB. [source: docs/current-policy.md:3] — `The maximum upload size is **25 MB per file**.`'});
+    expect(provider.requests).toHaveLength(3);
+    expect(provider.requests[2]?.messages.some(message => message.content.includes('[citation_rejected] docs/current-policy.md:3'))).toBe(true);
+  });
+  it('validates citations in submit_result candidates before Runtime settlement', async () => {
+    const fileText = '<path>docs/current-policy.md</path>\n<type>file</type>\n<content>\n3: The maximum upload size is **25 MB per file**.\n</content>';
+    const files: ToolCapability = { id:'citation-settlement-fixture',instructions:'Read the requested project file.',tools:[
+      { definition:{name:'read_text_file',description:'Read a project file.',parameters:{type:'object'}},execute:async()=>fileText },
+    ]};
+    const responses: ToolResponse[] = [
+      {text:'',toolCalls:[{id:'settlement-citation-read',name:'read_text_file',arguments:JSON.stringify({path:'docs/current-policy.md'})}]},
+      {text:'',toolCalls:[{id:'bad-citation-submit',name:'submit_result',arguments:JSON.stringify({text:'The limit is 100 MB. [docs/current-policy.md:3] — `The maximum upload size is **100 MB per file**.`'})}]},
+      {text:'',toolCalls:[{id:'good-citation-submit',name:'submit_result',arguments:JSON.stringify({text:'The limit is 25 MB. [docs/current-policy.md:3] — `The maximum upload size is **25 MB per file**.`'})}]},
+    ];
+    const provider = new class extends FakeProvider {
+      async generateWithTools(request: ModelRequest): Promise<ToolResponse> { this.requests.push(request); return responses.shift() ?? {text:'unexpected'}; }
+    }([]);
+    const session = new ChatSession(provider,{enableTools:true,capabilities:[files,createControlCapability()]});
+    await expect(session.send('读取本地策略并通过引用提交准确结论')).resolves.toMatchObject({text:'The limit is 25 MB. [docs/current-policy.md:3] — `The maximum upload size is **25 MB per file**.`'});
+    expect(provider.requests).toHaveLength(3);
+    expect(provider.requests[2]?.messages.some(message => message.role === 'tool' && message.content.includes('[citation_rejected]'))).toBe(true);
   });
   it("fails closed before spending a tool step when external search is unavailable", async () => {
     const provider = { id: "fake", model: "fake", async generateWithTools(): Promise<ToolResponse> { throw new Error("should not call model"); } };
@@ -280,6 +446,23 @@ describe("session", () => {
     }).send("开始任务");
     expect(new Set(revisions.filter(revision => revision > 0))).toEqual(new Set([1]));
   });
+  it("stops repeated identical task updates as no-progress instead of exhausting the turn budget", async () => {
+    const state = { goal: "完成任务", status: "active" as const, constraints: [], assumptions: [], openQuestions: [], steps: [{ title: "实现", status: "in_progress" as const }], blockers: [] };
+    class RepeatingTaskProvider extends FakeProvider {
+      calls = 0;
+      async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+        this.requests.push(request);
+        this.calls += 1;
+        return { text: "", toolCalls: [{ id: `task-${this.calls}`, name: "update_task_state", arguments: JSON.stringify(state) }] };
+      }
+    }
+    const provider = new RepeatingTaskProvider([]);
+    const response = await new ChatSession(provider, { enableTools: true, capabilities: [createTaskStateCapability()] }).send("开始任务");
+    expect(response.outcome).toBe("blocked");
+    expect(response.text).toContain("连续进行了多次无进展");
+    expect(provider.calls).toBe(5);
+    expect(provider.requests[2]?.messages).toContainEqual(expect.objectContaining({ role: "tool", toolCallId: "task-2", content: expect.stringContaining("任务状态未变化") }));
+  });
   it("persists tool calls and results as canonical messages", async () => {
     class ToolProvider extends FakeProvider {
       private calls = 0;
@@ -334,7 +517,7 @@ describe("session", () => {
     expect(response).toMatchObject({ outcome: "completed", text: "写入已完成，已停止重复写入。" });
     expect(provider.toolCalls).toBe(2);
   });
-  it("lets the model finish naturally after a successful write", async () => {
+  it("does not settle a workspace write as complete until verification is observed", async () => {
     class SingleWriteProvider extends FakeProvider {
       requestsWithTools: ModelRequest[] = [];
       async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
@@ -354,7 +537,8 @@ describe("session", () => {
         approvalService: { request: async () => ({ approved: true }) },
       });
       const response = await session.send("创建文件");
-      expect(response.text).toBe("写入完成");
+      expect(response.outcome).toBe("blocked");
+      expect(response.text).toContain("无法安全完成");
       expect(provider.requestsWithTools[0]?.toolChoice).toBeUndefined();
       expect(provider.requestsWithTools[1]?.toolChoice).toBeUndefined();
     } finally {

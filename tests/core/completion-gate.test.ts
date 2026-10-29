@@ -30,7 +30,16 @@ describe("completion gate", () => {
   it("requires one verification opportunity after a mutation", () => {
     const input = { verificationStatus: "not_run" } as const;
     expect(evaluateCompletionGate(input)).toMatchObject({ accepted: false, reason: "verification_missing_after_mutation" });
-    expect(evaluateCompletionGate({ ...input, priorRejections: ["verification_missing_after_mutation"] })).toEqual({ accepted: true });
+    expect(evaluateCompletionGate({ ...input, priorRejections: ["verification_missing_after_mutation"] })).toMatchObject({ accepted: false, terminal: "blocked" });
+  });
+
+  it("never settles a completed answer after an unresolved action failure", () => {
+    expect(evaluateCompletionGate({ unresolvedActionFailure: true })).toMatchObject({ accepted: false, reason: 'unresolved_action_failure' });
+    expect(evaluateCompletionGate({ unresolvedActionFailure: true, priorRejections: ['unresolved_action_failure'] })).toMatchObject({ accepted: false, terminal: 'blocked' });
+  });
+
+  it("returns to the user for an unapproved Plan instead of settling it", () => {
+    expect(evaluateCompletionGate({ planApprovalRequired: true })).toMatchObject({ accepted: false, reason: 'plan_approval_required', terminal: 'needs_user' });
   });
 
   it("blocks repeated completion after a failed verification", () => {

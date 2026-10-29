@@ -31,17 +31,19 @@
 
 ```bash
 npm run verify
+npm run evaluate:offline -- --all
 npm run check
 npm run pack:check
 git diff --check
 ```
 
-- `npm run verify`：依次执行清理、TypeScript 类型检查、Runtime 构建、默认 Vitest 离线套件和 Resource UI 构建；真实 PTY 由 `npm run test:pty` 独立执行，避免与高并发默认测试争用 Windows ConPTY。
+- `npm run verify`：依次执行清理、TypeScript 类型检查、Runtime 构建、默认 Vitest 离线套件、固定离线评估 Fixture 与 Resource/Agent UI 构建；真实 PTY 由 `npm run test:pty` 独立执行，避免与高并发默认测试争用 Windows ConPTY。
+- `npm run evaluate:offline -- --all`：顺序运行仓库固定的离线契约测试，子进程不继承 Provider 凭据，原始测试输出只写入 `.isla-local/evaluations/<runId>/`；报告清楚标记真实模型评测未运行。可通过 `--list` 查看 Fixture 或用 `--fixture <id>` 运行单项；不接受任意命令，也不调用 Provider。Fixture 可使用测试自身管理的本机 loopback 依赖；该 Runner 不是 OS 网络沙箱。
 - `npm run check`：执行 `typecheck` 和 `test`，不单独构建。
-- `npm run pack:check`：执行 `npm pack --dry-run`，核对发布白名单；当前包只应包含 `dist`、`README.md`、`LICENSE` 和 npm 元数据。
+- `npm run pack:check`：执行 `npm pack --dry-run --json` 并自动校验发布白名单；当前包只应包含 `dist`、`README.md`、`LICENSE` 和 npm 元数据。
 - `git diff --check`：检查空白错误，不改变 Git 状态。
 
-CI 在 Node.js 24 上对 Ubuntu、Windows 和 macOS 执行 `npm ci`、`npm run check`、`npm run build` 和 `npm run pack:check`。
+CI 在 Node.js 24 上对 Ubuntu、Windows 和 macOS 执行 `npm ci`、`npm run check`、离线 Fixture、`npm run build` 和 `npm run pack:check`。
 
 ## 真实网络与本机依赖
 
@@ -73,6 +75,8 @@ CI 在 Node.js 24 上对 Ubuntu、Windows 和 macOS 执行 `npm ci`、`npm run c
 
 ## 主 Agent Runtime 关键回归面
 
+- Plan 生命周期：模型提案 schema 不含 Runtime 状态，计划状态由 Runtime 创建；有效提案以 `needs_user` 结束；仅显式批准准确 revision 才能进入 Act；未恢复动作失败、未验证修改或无效提案不得伪装成 completed；
+- `update_task_state` 仅在 Runtime 实际改变持久任务快照时计为进展；相同快照保持幂等并返回“未变化”，连续重复提交由循环预算停止，避免任务记账掩盖工具空转；
 - Catalog manifest 校验、稳定 ID、检索、availability 和 policy；
 - Task 激活持久化、重复激活与新任务重置；
 - 每步 Snapshot 的工具集合、hash、预算和下一步生效语义；

@@ -1,4 +1,5 @@
 import type { ToolCapability } from './types.js';
+import { randomUUID } from 'node:crypto';
 
 const MAX_TEXT = 12000;
 const MAX_ITEM = 1000;
@@ -10,58 +11,88 @@ export function createControlCapability(): ToolCapability {
     tools: [
       {
         definition: {
-          name: 'update_work_plan',
-          description: 'Plan 模式使用 action=revise 提交完整计划；Act 模式使用 action=progress 更新一个步骤的状态。completed/blocked 必须引用已成功/失败的真实 Tool Call ID。结构修改由 Runtime 增加 revision 并撤销批准；进度更新只增加 progressRevision。',
+          name: 'propose_work_plan',
+          description: '在 Plan 模式提交待用户审批的完整工作计划。只提供目标和步骤结构；Runtime 生成 planId/revision 并将全部步骤初始化为 pending。不要提交步骤状态或证据。成功后本 Turn 会暂停等待用户批准。',
           parameters: {
             type: 'object',
             additionalProperties: false,
-            required: ['action'],
+            required: ['goal','steps','verification'],
             properties: {
-              action: { type: 'string', enum: ['revise','progress'] },
-              stepId: { type: 'string' },
-              stepStatus: { type: 'string', enum: ['pending','in_progress','completed','blocked'] },
-              evidenceCallIds: { type: 'array', items: { type: 'string' }, uniqueItems: true },
-              planId: { type: 'string' },
               goal: { type: 'string' },
               constraints: { type: 'array', items: { type: 'string' } },
               assumptions: { type: 'array', items: { type: 'string' } },
               steps: {
                 type: 'array',
+                minItems: 1,
+                maxItems: 32,
                 items: {
                   type: 'object', additionalProperties: false,
-                  required: ['id','title','status','dependencies'],
+                  required: ['id','title','kind','dependencies'],
                   properties: {
                     id: { type: 'string' }, title: { type: 'string' },
-                    status: { type: 'string', enum: ['pending','in_progress','completed','blocked'] },
                     dependencies: { type: 'array', items: { type: 'string' } },
                     kind: { type: 'string', enum: ['inspect','change','verify','other'] },
-                    evidenceCallIds: { type: 'array', items: { type: 'string' }, uniqueItems: true },
                   },
                 },
               },
               risks: { type: 'array', items: { type: 'string' } },
               verification: { type: 'array', items: { type: 'string' } },
               openQuestions: { type: 'array', items: { type: 'string' } },
-              status: { type: 'string', enum: ['active','blocked','completed'] },
             },
           },
         },
         async execute(raw) {
           const args = parseObject(raw);
-          if (args.action === 'progress') {
-            const stepId = requiredString(args.stepId, MAX_ITEM);
-            const status = args.stepStatus;
-            if (!['pending','in_progress','completed','blocked'].includes(String(status))) throw new Error('WORK_PLAN_PROGRESS_INVALID');
-            const evidenceCallIds = optionalStrings(args.evidenceCallIds, MAX_ITEM) ?? [];
-            return { content: 'Work Plan progress submitted for Runtime evidence validation.', details: { type: 'work_plan_progress', stepId, status: status as import('../core/work-plan.js').WorkPlanStep['status'], evidenceCallIds } };
-          }
-          if (args.action !== 'revise') throw new Error('WORK_PLAN_ACTION_INVALID');
-          if (args.planId === undefined || args.goal === undefined || args.steps === undefined) throw new Error('WORK_PLAN_REVISION_INVALID');
-          if (args.verification === undefined) args.verification = ['Run the relevant automated tests and inspect the resulting diff.'];
-          const defaults = { constraints: [], assumptions: [], risks: [], openQuestions: [], status: 'active' };
-          for (const [key, value] of Object.entries(defaults)) if (args[key] === undefined) args[key] = value;
-          const plan = args as unknown as import('../core/work-plan.js').WorkPlanV1;
-          return { content:'Plan update submitted for Runtime validation.', details:{type:'work_plan_update', plan:{...plan,version:1,revision:0,updatedAt:new Date().toISOString()} } };
+          rejectUnknownKeys(args, ['goal','constraints','assumptions','steps','risks','verification','openQuestions']);
+          const goal = requiredString(args.goal, MAX_ITEM);
+          if (!Array.isArray(args.steps) || args.steps.length < 1 || args.steps.length > 32) throw new Error('WORK_PLAN_STEPS_INVALID');
+          const steps = args.steps.map(value => {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('WORK_PLAN_STEP_INVALID');
+            const step = value as Record<string, unknown>;
+            rejectUnknownKeys(step, ['id','title','kind','dependencies']);
+            if (!Array.isArray(step.dependencies) || !['inspect','change','verify','other'].includes(String(step.kind))) throw new Error('WORK_PLAN_STEP_INVALID');
+            return {
+              id: requiredString(step.id, 128),
+              title: requiredString(step.title, MAX_ITEM),
+              kind: step.kind as import('../core/work-plan.js').WorkPlanStepKind,
+              dependencies: optionalStrings(step.dependencies, 128) ?? [],
+              status: 'pending' as const,
+            };
+          });
+          const verification = optionalStrings(args.verification, MAX_ITEM);
+          if (!verification?.length) throw new Error('WORK_PLAN_VERIFICATION_REQUIRED');
+          const list = (key: 'constraints'|'assumptions'|'risks'|'openQuestions', fallback: readonly string[] = []): readonly string[] => optionalStrings(args[key], MAX_ITEM) ?? fallback;
+          const plan: import('../core/work-plan.js').WorkPlanV1 = {
+            version: 1, planId: randomUUID(), revision: 0, goal,
+            constraints: list('constraints'), assumptions: list('assumptions'), steps,
+            risks: list('risks'), verification, openQuestions: list('openQuestions'),
+            status: 'active', updatedAt: new Date().toISOString(),
+          };
+          return { content: 'Plan proposal submitted; Runtime will validate it and wait for explicit user approval.', details: { type: 'work_plan_proposal', plan } };
+        },
+      },
+      {
+        definition: {
+          name: 'update_work_plan_progress',
+          description: 'Act 模式只更新一个已批准计划步骤的状态。completed/blocked 必须引用可验证的真实 Tool Call ID；Runtime 检查证据、依赖和状态迁移。',
+          parameters: {
+            type: 'object', additionalProperties: false,
+            required: ['stepId','stepStatus'],
+            properties: {
+              stepId: { type: 'string' },
+              stepStatus: { type: 'string', enum: ['in_progress','completed','blocked'] },
+              evidenceCallIds: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+            },
+          },
+        },
+        async execute(raw) {
+          const args = parseObject(raw);
+          rejectUnknownKeys(args, ['stepId','stepStatus','evidenceCallIds']);
+          const stepId = requiredString(args.stepId, 128);
+          const status = args.stepStatus;
+          if (!['in_progress','completed','blocked'].includes(String(status))) throw new Error('WORK_PLAN_PROGRESS_INVALID');
+          const evidenceCallIds = optionalStrings(args.evidenceCallIds, MAX_ITEM) ?? [];
+          return { content: 'Work Plan progress submitted for Runtime evidence validation.', details: { type: 'work_plan_progress', stepId, status: status as import('../core/work-plan.js').WorkPlanStep['status'], evidenceCallIds } };
         },
       },
       {
@@ -115,6 +146,9 @@ function parseObject(raw: string): Record<string, unknown> {
   const value: unknown = JSON.parse(raw);
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('CONTROL_ARGUMENTS_INVALID');
   return value as Record<string, unknown>;
+}
+function rejectUnknownKeys(value: Record<string, unknown>, allowed: readonly string[]): void {
+  if (Object.keys(value).some(key => !allowed.includes(key))) throw new Error('CONTROL_ARGUMENTS_INVALID');
 }
 function requiredString(value: unknown, max: number): string {
   if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error('CONTROL_ARGUMENTS_INVALID');

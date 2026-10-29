@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "resource.bridge-readonly-regression",
+  "capability": "Resource bridge narrow boundary regression",
+  "prompt": "Verify Resource bridge path inputs and unknown operations are rejected before any request.",
+  "workspace": { "kind": "test-managed", "seed": "synthetic" },
+  "network": "local-test-only",
+  "timeoutMs": 120000,
+  "expectedApprovals": [],
+  "expectedFacts": ["absolute paths and unknown Resource operations are rejected before request"],
+  "contractTests": { "files": ["tests/resource/bridge-client.test.ts"], "namePattern": "rejects absolute paths and unknown resource operations before making a request" },
+  "gateClass": "security",
+  "rubricProfile": "agent-task-v1",
+  "cleanup": "test-managed-cleanup"
+}

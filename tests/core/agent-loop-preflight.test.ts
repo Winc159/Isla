@@ -7,4 +7,17 @@ describe('agent loop preflight', () => {
     const result = preflightAgentLoop({ messages, tools: [], maxInputTokens: 500 });
     expect(result.trimmed).toBe(true); expect(result.messages[0]).toMatchObject({ content: 'policy' }); expect(result.messages.at(-1)).toMatchObject({ content: 'latest' });
   });
+  it('preserves the current approved work contract when trimming oversized history', () => {
+    const contract = { role: 'system' as const, content: '当前工作模式=act。当前 Plan：{"revision":1,"approvedRevision":1,"goal":"修复模块"}' };
+    const messages = [
+      { role: 'system' as const, content: 'runtime policy' },
+      ...Array.from({ length: 30 }, (_, index) => ({ role: 'user' as const, content: `${index}-`.repeat(500) })),
+      contract,
+      { role: 'user' as const, content: '继续执行已批准计划' },
+    ];
+    const result = preflightAgentLoop({ messages, tools: [], maxInputTokens: 500 });
+    expect(result.trimmed).toBe(true);
+    expect(result.messages).toContainEqual(contract);
+    expect(result.messages.at(-1)).toMatchObject({ content: '继续执行已批准计划' });
+  });
 });

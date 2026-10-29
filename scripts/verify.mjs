@@ -8,6 +8,7 @@ const commands = [
   ['build-runtime', ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.json']],
   ['mark-entrypoints', ['scripts/mark-entrypoints-executable.mjs']],
   ['tests', ['node_modules/vitest/vitest.mjs', 'run', '--pool=forks', '--exclude', 'tests/pty/**']],
+  ['offline-evaluation', ['scripts/evaluate-offline.mjs', '--all']],
   ['build-resource-ui', ['node_modules/vite/bin/vite.js', 'build', '--config', 'resource-ui/vite.config.ts']],
   ['build-agent-ui', ['node_modules/vite/bin/vite.js', 'build', '--config', 'agent-ui/vite.config.ts']],
 ];

@@ -8,7 +8,9 @@ export type CompletionRejectionReason =
   | "verification_failed_after_mutation"
   | "deliverable_missing"
   | "task_step_pending"
-  | "contract_evidence_missing";
+  | "contract_evidence_missing"
+  | "unresolved_action_failure"
+  | "plan_approval_required";
 
 import type { VerificationStatus } from "./verification.js";
 export type { VerificationStatus } from "./verification.js";
@@ -22,6 +24,8 @@ export interface CompletionGateInput {
   readonly unapprovedActionCount?: number;
   readonly cancelled?: boolean;
   readonly verificationStatus?: VerificationStatus;
+  readonly unresolvedActionFailure?: boolean;
+  readonly planApprovalRequired?: boolean;
   readonly priorRejections?: readonly CompletionRejectionReason[];
   readonly contract?: { readonly status: "active" | "blocked" | "completed"; readonly deliverables: readonly string[]; readonly steps: readonly { readonly status: string }[]; readonly evidence: readonly unknown[] };
   readonly workPlan?: { readonly status: "active" | "blocked" | "completed"; readonly steps: readonly { readonly status: string; readonly evidenceCallIds?: readonly string[] }[] };
@@ -31,7 +35,7 @@ export interface CompletionGateInput {
 
 export type CompletionGateResult =
   | { readonly accepted: true }
-  | { readonly accepted: false; readonly reason: CompletionRejectionReason; readonly observation: string; readonly terminal?: "blocked" };
+  | { readonly accepted: false; readonly reason: CompletionRejectionReason; readonly observation: string; readonly terminal?: "blocked" | "needs_user" };
 
 const observations: Record<CompletionRejectionReason, string> = {
   required_evidence_missing: "[completion_rejected] 当前任务要求外部证据，但本 Turn 尚无成功 Web Evidence。请调用可用能力补充证据，或明确说明当前无法核实。",
@@ -44,6 +48,8 @@ const observations: Record<CompletionRejectionReason, string> = {
   deliverable_missing: "[completion_rejected] 当前任务仍有未交付项。请完成或明确说明无法完成的交付物。",
   task_step_pending: "[completion_rejected] 当前任务仍有未完成步骤。请继续执行，或将阻塞原因写入任务状态。",
   contract_evidence_missing: "[completion_rejected] 当前任务的成功标准仍缺少证据。请补充工具/验证证据，或明确说明无法核实。",
+  unresolved_action_failure: "[completion_rejected] 本 Turn 有文件修改或命令动作失败/被拒绝，尚未被后续成功动作恢复。请修复或验证该阻塞；不能报告任务完成。",
+  plan_approval_required: "[needs_user] 当前工作计划尚未获用户批准。请先批准当前 Plan revision，再在后续 Turn 继续执行。",
 };
 
 export function evaluateCompletionGate(input: CompletionGateInput): CompletionGateResult {
@@ -59,7 +65,11 @@ export function evaluateCompletionGate(input: CompletionGateInput): CompletionGa
           ? "tool_result_missing"
           : input.requiredExternalEvidence && !input.successfulExternalEvidence
           ? "required_evidence_missing"
-            : input.verificationStatus === "not_run"
+          : input.unresolvedActionFailure
+            ? "unresolved_action_failure"
+            : input.planApprovalRequired
+              ? "plan_approval_required"
+              : input.verificationStatus === "not_run"
               ? "verification_missing_after_mutation"
               : input.verificationStatus === "failed_after_last_change"
                 ? "verification_failed_after_mutation"
@@ -73,7 +83,7 @@ export function evaluateCompletionGate(input: CompletionGateInput): CompletionGa
                       ? "contract_evidence_missing"
                       : undefined;
   if (!reason) return { accepted: true };
+  if (reason === "plan_approval_required") return { accepted: false, reason, observation: observations[reason], terminal: "needs_user" };
   const repeated = (input.priorRejections ?? []).filter(item => item === reason).length > 0;
-  if (reason === "verification_missing_after_mutation" && repeated) return { accepted: true };
   return { accepted: false, reason, observation: observations[reason], ...(repeated ? { terminal: "blocked" as const } : {}) };
 }

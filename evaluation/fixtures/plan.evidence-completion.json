@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "plan.evidence-completion",
+  "capability": "Plan/Act evidence gate",
+  "prompt": "Complete an approved Act plan only when the matching evidence exists.",
+  "workspace": { "kind": "test-managed", "seed": "synthetic" },
+  "network": "local-test-only",
+  "timeoutMs": 120000,
+  "expectedApprovals": ["act-plan"],
+  "expectedFacts": ["all required plan steps have matching successful evidence"],
+  "contractTests": { "files": ["tests/core/session.test.ts"], "namePattern": "settles an Act plan from matching successful evidence" },
+  "gateClass": "security",
+  "rubricProfile": "agent-task-v1",
+  "cleanup": "test-managed-cleanup"
+}

@@ -10,6 +10,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createUserInteractionCapability } from "../src/tools/user-interaction.js";
+import { createControlCapability } from "../src/tools/control.js";
 
 let protocolRoot: string;
 beforeEach(async () => { protocolRoot = await mkdtemp(join(tmpdir(), "isla-protocol-")); });
@@ -98,6 +99,34 @@ describe("NDJSON protocol", () => {
     const events = output.trim().split("\n").map(line => JSON.parse(line) as { type: string });
     expect(events.map(event => event.type)).toEqual(["ready", "response_start", "response_end", "bye"]);
     expect(JSON.parse(output.trim().split("\n")[2])).toMatchObject({ type: "response_end", elapsedMs: expect.any(Number), verificationStatus: "not_applicable" });
+  });
+  it('serializes Plan approval as needs_user and accepts an explicit mode_set for that revision', async () => {
+    class PlanProvider extends FakeProvider {
+      override async generateWithTools(request: ModelRequest): Promise<ToolResponse> {
+        this.requests.push(request);
+        return { text: '', toolCalls: [{ id: 'protocol-plan', name: 'propose_work_plan', arguments: JSON.stringify({
+          goal: '修复模块',
+          steps: [{ id: 'change', title: '修改实现', kind: 'change', dependencies: [] }, { id: 'verify', title: '运行测试', kind: 'verify', dependencies: ['change'] }],
+          verification: ['测试通过'],
+        }) }] };
+      }
+    }
+    let output = '';
+    const out = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });
+    const input = Readable.from((async function* () {
+      yield '{"type":"prompt","id":"p1","text":"修复并验证"}\n';
+      await waitForOutput(() => output, '"outcome":"needs_user"');
+      yield '{"type":"mode_set","id":"m1","mode":"act","approvePlanRevision":1}\n';
+      yield '{"type":"exit","id":"e1"}\n';
+    })());
+    const session = new ChatSession(new PlanProvider([]), { enableTools: true, enablePlanAct: true, capabilities: [createControlCapability()] });
+    await runProtocol(input, out, session, 'fake', 'fake-model');
+    const events = output.trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'response_end', id: 'p1', outcome: 'needs_user' }),
+      expect.objectContaining({ type: 'plan_state', id: 'm1', mode: expect.objectContaining({ mode: 'act', actApprovedRevision: 1 }) }),
+    ]));
+    expect(session.currentWorkMode).toMatchObject({ mode: 'act', actApprovedRevision: 1 });
   });
   it("forwards native model step events through NDJSON", async () => {
     let output = "";

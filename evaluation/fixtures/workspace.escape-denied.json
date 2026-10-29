@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "workspace.escape-denied",
+  "capability": "workspace boundary",
+  "prompt": "Attempt traversal and symlink escapes from a synthetic workspace and reject them.",
+  "workspace": { "kind": "test-managed", "seed": "synthetic" },
+  "network": "local-test-only",
+  "timeoutMs": 120000,
+  "expectedApprovals": [],
+  "expectedFacts": ["traversal and symlink escapes are blocked"],
+  "contractTests": { "files": ["tests/sandbox.test.ts"], "namePattern": "blocks traversal, protected names and symlink escapes" },
+  "gateClass": "security",
+  "rubricProfile": "agent-task-v1",
+  "cleanup": "test-managed-cleanup"
+}

@@ -3,7 +3,7 @@ export type WorkPlanStatus = 'active' | 'blocked' | 'completed';
 export type WorkPlanStepKind = 'inspect' | 'change' | 'verify' | 'other';
 export interface WorkPlanStep { readonly id: string; readonly title: string; readonly status: 'pending' | 'in_progress' | 'completed' | 'blocked'; readonly dependencies: readonly string[]; readonly kind?: WorkPlanStepKind; readonly evidenceCallIds?: readonly string[]; }
 export interface WorkPlanV1 { readonly version: 1; readonly planId: string; readonly revision: number; readonly progressRevision?: number; readonly replanCount?: number; readonly replanReason?: string; readonly goal: string; readonly constraints: readonly string[]; readonly assumptions: readonly string[]; readonly steps: readonly WorkPlanStep[]; readonly risks: readonly string[]; readonly verification: readonly string[]; readonly openQuestions: readonly string[]; readonly status: WorkPlanStatus; readonly approvedRevision?: number; readonly updatedAt: string; }
-export interface WorkPlanEvidence { readonly callId: string; readonly success: boolean; readonly kind: 'tool' | 'change' | 'verification'; readonly tool?: string; }
+export interface WorkPlanEvidence { readonly callId: string; readonly success: boolean; readonly executed?: boolean; readonly kind: 'tool' | 'change' | 'verification'; readonly tool?: string; }
 export interface WorkModeStateV1 { readonly version: 1; readonly mode: WorkMode; readonly revision: number; readonly actApprovedRevision?: number; readonly updatedAt: string; }
 export function validateWorkPlan(value: unknown): WorkPlanV1 {
   if (!value || typeof value !== 'object') throw new Error('PLAN_INVALID');
@@ -38,7 +38,7 @@ export function advanceWorkPlanProgress(current: WorkPlanV1, submitted: WorkPlan
       if ((step.status === 'in_progress' || step.status === 'completed') && step.dependencies.some(id => previous.get(id)?.status !== 'completed')) throw new Error('PLAN_DEPENDENCY_PENDING');
     }
     const refs = step.evidenceCallIds ?? prior.evidenceCallIds ?? [];
-    if (step.status === 'completed' && (refs.length === 0 || refs.some(id => !evidence.get(id)?.success))) throw new Error('PLAN_COMPLETION_EVIDENCE_REQUIRED');
+    if (step.status === 'completed' && (refs.length === 0 || refs.some(id => !workPlanEvidenceSatisfiesStep(step, evidence.get(id))))) throw new Error('PLAN_COMPLETION_EVIDENCE_REQUIRED');
     if (step.status === 'completed' && step.kind === 'change' && !refs.some(id => evidence.get(id)?.kind === 'change')) throw new Error('PLAN_CHANGE_EVIDENCE_REQUIRED');
     if (step.status === 'completed' && step.kind === 'verify' && !refs.some(id => evidence.get(id)?.kind === 'verification')) throw new Error('PLAN_VERIFICATION_EVIDENCE_REQUIRED');
     if (step.status === 'blocked' && !refs.some(id => evidence.has(id) && !evidence.get(id)!.success)) throw new Error('PLAN_BLOCKER_EVIDENCE_REQUIRED');
@@ -47,5 +47,12 @@ export function advanceWorkPlanProgress(current: WorkPlanV1, submitted: WorkPlan
   if (plan.status === 'completed' && steps.some(step => step.status !== 'completed')) throw new Error('PLAN_STEPS_INCOMPLETE');
   if (plan.status === 'blocked' && !steps.some(step => step.status === 'blocked')) throw new Error('PLAN_BLOCKER_EVIDENCE_REQUIRED');
   return validateWorkPlan({ ...plan, steps, progressRevision: (current.progressRevision ?? 0) + 1, replanCount: current.replanCount ?? 0, approvedRevision: current.approvedRevision, updatedAt: new Date().toISOString() });
+}
+export function workPlanEvidenceSatisfiesStep(step: WorkPlanStep, item: WorkPlanEvidence | undefined): boolean {
+  if (!item) return false;
+  // A failed baseline test is still valid evidence that an inspection ran;
+  // only a verify step requires the check itself to pass.
+  if (step.kind === 'inspect') return item.executed ?? item.success;
+  return item.success;
 }
 function text(value: unknown): value is string { return typeof value === 'string' && !!value.trim() && value.length <= 1000; }

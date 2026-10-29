@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "turn.disconnect-resume-once",
+  "capability": "Host turn replay after disconnect",
+  "prompt": "Disconnect a web observer during a turn and resume event replay without starting a duplicate turn.",
+  "workspace": { "kind": "test-managed", "seed": "synthetic" },
+  "network": "local-test-only",
+  "timeoutMs": 120000,
+  "expectedApprovals": [],
+  "expectedFacts": ["the web turn survives client disconnect and supports event replay"],
+  "contractTests": { "files": ["tests/host.test.ts"], "namePattern": "keeps a web turn alive across client disconnect and supports event replay" },
+  "gateClass": "security",
+  "rubricProfile": "agent-task-v1",
+  "cleanup": "test-managed-cleanup"
+}
