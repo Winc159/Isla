@@ -7,6 +7,7 @@ import { defaultLocalRuntimeConfigPath, loadOrCreateLocalRuntimeConfig } from '.
 import { loadRuntime } from '../runtime/bootstrap.js';
 import { createSessionFactory } from '../runtime/session-factory.js';
 import { ResourceBridgeClient } from '../resource/bridge-client.js';
+import { registerSubagentWorker } from '../jobs/subagent-worker.js';
 
 const runtimePath = defaultLocalRuntimeConfigPath();
 const local = await loadOrCreateLocalRuntimeConfig(runtimePath);
@@ -17,7 +18,9 @@ const workspaceRoot = loaded.config.workspaceRoot ?? process.cwd();
 const resourceHost = local.resource.host === '0.0.0.0' ? '127.0.0.1' : local.resource.host;
 const resourceBridge = new ResourceBridgeClient(`http://${resourceHost}:${local.resource.port}`, local.resource.token);
 if (loaded.config.capabilityPolicy?.resourceEnabled !== false) await resourceBridge.health();
-const factory = createSessionFactory({ runtime: loaded.runtime, config: { ...loaded.config, ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}) }, sessionStore: application.sessions, memoryRuntime: application.memory, resourceBridge, workspaceRoot, diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents, eventStore: application.events, executionProcesses: application.processes, dependencyManager: application.dependencies, policyRules });
+const factory = createSessionFactory({ runtime: loaded.runtime, config: { ...loaded.config, ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}) }, sessionStore: application.sessions, memoryRuntime: application.memory, resourceBridge, workspaceRoot, diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents, jobs: application.jobs, eventStore: application.events, executionProcesses: application.processes, dependencyManager: application.dependencies, policyRules });
+registerSubagentWorker({ jobs: application.jobs, sessions: application.sessions, agents: application.agents, provider: loaded.config.provider, model: loaded.config.model, parentFactory: factory, createChildFactory: requestedWorkspace => createSessionFactory({ runtime: loaded.runtime, config: { ...loaded.config, ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}), loopBudget: { initialBudget: 6, extensionSteps: 2, autoLimit: 8, hardLimit: 8 } }, sessionStore: application.sessions, workspaceRoot: requestedWorkspace, agentRegistry: application.agents, jobs: application.jobs, executionProcesses: application.processes, dependencyManager: application.dependencies, policyRules }) });
+await application.jobs.start();
 const host = new ResidentHost({
   host: local.host.host,
   port: local.host.port,
@@ -29,11 +32,12 @@ const host = new ResidentHost({
   uiDirectory: join(dirname(fileURLToPath(import.meta.url)), '../../dist/agent-ui'),
   defaultWorkspaceRoot: workspaceRoot,
   resourceBridge,
+  jobRuntime: application.jobs,
   ...(loaded.mcpHost ? { mcpStatuses: () => loaded.mcpHost!.statuses(), mcpAuthorizationUrl: (serverId: string) => loaded.mcpHost!.authorizationUrl(serverId), finishMcpAuthorization: (serverId: string, params: URLSearchParams) => loaded.mcpHost!.finishAuthorization(serverId, params), mcpOAuthCallbackServerId: (pathname: string) => loaded.mcpHost!.callbackServerId(pathname), mcpOAuthCallbackOrigin: (serverId: string) => loaded.mcpHost!.callbackOrigin(serverId) } : {}),
   ...(application.memory.store ? { memoryStore: application.memory.store } : {}),
   contextLimits: { maxContextTurns: loaded.config.maxContextTurns, maxContextChars: loaded.config.maxContextChars, maxContextTokens: loaded.config.maxContextTokens, maxOutputTokens: loaded.config.maxOutputTokens, contextReserveTokens: loaded.config.contextReserveTokens, contextRetainTurns: loaded.config.contextRetainTurns },
   createSession: (stored, requestedWorkspace, events) => requestedWorkspace
-    ? createSessionFactory({ runtime: loaded.runtime, config: { ...loaded.config, ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}) }, sessionStore: application.sessions, memoryRuntime: application.memory, resourceBridge, workspaceRoot: requestedWorkspace, diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents, executionProcesses: application.processes, dependencyManager: application.dependencies, policyRules }).create({ stored, interactive: false, approvalPolicy: events?.approvalService ? 'ask' : 'never', ...(events?.turnId ? { resourceTurnId: events.turnId } : {}), ...(events?.approvalService ? { approvalService: events.approvalService } : {}), ...(events?.userQuestionService ? { userQuestionService: events.userQuestionService } : {}), ...(events ? { onModelStepEvent: events.onModelStepEvent, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished } : {}) })
+    ? createSessionFactory({ runtime: loaded.runtime, config: { ...loaded.config, ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}) }, sessionStore: application.sessions, memoryRuntime: application.memory, resourceBridge, workspaceRoot: requestedWorkspace, diagnostics: event => application.diagnostics.emit(event), agentRegistry: application.agents, jobs: application.jobs, executionProcesses: application.processes, dependencyManager: application.dependencies, policyRules }).create({ stored, interactive: false, approvalPolicy: events?.approvalService ? 'ask' : 'never', ...(events?.turnId ? { resourceTurnId: events.turnId } : {}), ...(events?.approvalService ? { approvalService: events.approvalService } : {}), ...(events?.userQuestionService ? { userQuestionService: events.userQuestionService } : {}), ...(events ? { onModelStepEvent: events.onModelStepEvent, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished } : {}) })
     : factory.create({ stored, interactive: false, approvalPolicy: events?.approvalService ? 'ask' : 'never', ...(events?.turnId ? { resourceTurnId: events.turnId } : {}), ...(events?.approvalService ? { approvalService: events.approvalService } : {}), ...(events?.userQuestionService ? { userQuestionService: events.userQuestionService } : {}), ...(events ? { onModelStepEvent: events.onModelStepEvent, onToolStarted: events.onToolStarted, onToolFinished: events.onToolFinished } : {}) }),
   ...(loaded.config.systemPrompt ? { initialMessages: [{ role: 'system' as const, content: loaded.config.systemPrompt }] } : {}),
   capabilitySnapshot: factory.capabilitySnapshot,

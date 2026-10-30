@@ -95,24 +95,43 @@ export class ServiceRegistry implements Effect {
 }
 
 export interface AgentHandleLike extends Effect { readonly id: string; readonly sessionId: string; }
+export interface AgentOwnershipV1 { readonly parentAgentId?: string; readonly jobId?: string; readonly depth: 0 | 1; }
 
 export class AgentRegistry<T extends AgentHandleLike = AgentHandleLike> implements Effect {
-  private readonly agents = new Map<string, { readonly handle: T; readonly scope: RuntimeScope }>();
+  private readonly agents = new Map<string, { readonly handle: T; readonly scope: RuntimeScope; readonly ownership: AgentOwnershipV1; readonly children: Set<string> }>();
   private closed = false;
   constructor(private readonly parentScope: RuntimeScope) {}
-  register(handle: T, scope = this.parentScope.child("agent", handle.id)): T {
+  register(handle: T, scope = this.parentScope.child("agent", handle.id), ownership: AgentOwnershipV1 = { depth: 0 }): T {
     if (this.closed) throw new Error("AGENT_REGISTRY_CLOSED");
     if (this.agents.has(handle.id)) throw new Error(`AGENT_DUPLICATE:${handle.id}`);
-    this.agents.set(handle.id, { handle, scope });
+    const parent = ownership.parentAgentId ? this.agents.get(ownership.parentAgentId) : undefined;
+    if (ownership.parentAgentId && !parent) throw new Error('AGENT_PARENT_NOT_FOUND');
+    if (ownership.depth === 1 && parent?.ownership.depth !== 0 || ownership.depth === 0 && ownership.parentAgentId) throw new Error('AGENT_DEPTH_EXCEEDED');
+    const children = new Set<string>();
+    this.agents.set(handle.id, { handle, scope, ownership, children });
+    parent?.children.add(handle.id);
     return handle;
   }
   get(id: string): T | undefined { return this.agents.get(id)?.handle; }
   list(): readonly T[] { return [...this.agents.values()].map(entry => entry.handle); }
+  ownership(id: string): AgentOwnershipV1 | undefined { return this.agents.get(id)?.ownership; }
+  children(id: string): readonly T[] { return [...(this.agents.get(id)?.children ?? [])].map(childId => this.agents.get(childId)?.handle).filter((handle): handle is T => Boolean(handle)); }
+  canCreateChild(id: string): boolean { const parent = this.agents.get(id); return parent?.ownership.depth === 0 && parent.children.size < 2; }
+  registerChild<TChild extends AgentHandleLike>(parentId: string, child: TChild, scope?: RuntimeScope, jobId?: string): TChild {
+    const parent = this.agents.get(parentId);
+    if (!parent) throw new Error('AGENT_PARENT_NOT_FOUND');
+    if (parent.ownership.depth !== 0) throw new Error('AGENT_DEPTH_EXCEEDED');
+    if (parent.children.size >= 2) throw new Error('SUBAGENT_CONCURRENCY_LIMIT');
+    return this.register(child as unknown as T, scope ?? parent.scope.child('agent', child.id), { parentAgentId: parentId, ...(jobId ? { jobId } : {}), depth: 1 }) as unknown as TChild;
+  }
   async dispose(id: string): Promise<boolean> {
     const entry = this.agents.get(id);
     if (!entry) return false;
-    this.agents.delete(id);
     const errors: unknown[] = [];
+    for (const childId of [...entry.children]) try { await this.dispose(childId); } catch (error) { errors.push(error); }
+    this.agents.delete(id);
+    const parentId = entry.ownership.parentAgentId;
+    if (parentId) this.agents.get(parentId)?.children.delete(id);
     try { await entry.handle.close(); } catch (error) { errors.push(error); }
     try { await entry.scope.close(); } catch (error) { errors.push(error); }
     if (errors.length) throw new AggregateError(errors, `AGENT_DISPOSE_FAILED:${id}`);

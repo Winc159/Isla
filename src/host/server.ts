@@ -20,6 +20,9 @@ import { DEFAULT_MAX_CONTEXT_TURNS } from '../core/session.js';
 import { isRuntimeError } from '../core/errors.js';
 import type { AgentRegistry } from '../core/service-kernel.js';
 import type { FileEventStore } from '../core/event-store.js';
+import type { JobRuntime } from '../jobs/runtime.js';
+import { JOB_STATUSES, type JobStatus } from '../jobs/types.js';
+import { projectResourceJob } from '../jobs/resource-adapter.js';
 
 export interface ResidentHostOptions {
   readonly host?: string;
@@ -41,6 +44,7 @@ export interface ResidentHostOptions {
   readonly uiDirectory?: string;
   readonly defaultWorkspaceRoot?: string;
   readonly resourceBridge?: import('../resource/bridge-client.js').ResourceBridgeClient;
+  readonly jobRuntime?: JobRuntime;
   readonly mcpStatuses?: () => readonly import('../mcp/types.js').McpStatus[];
   readonly mcpAuthorizationUrl?: (serverId: string) => string | undefined;
   readonly finishMcpAuthorization?: (serverId: string, params: URLSearchParams) => Promise<void>;
@@ -171,6 +175,16 @@ export class ResidentHost {
         return;
       }
       if (request.method === 'GET' && url.pathname === '/resource/jobs') { if (!this.options.resourceBridge) { this.send(response, 503, { error: 'RESOURCE_UNAVAILABLE' }); return; } try { const jobs = await this.options.resourceBridge.list(undefined, 50); this.send(response, 200, { jobs }); } catch { this.send(response, 503, { error: 'RESOURCE_UNAVAILABLE' }); } return; }
+      if (request.method === 'GET' && url.pathname === '/jobs') { const runtime = this.options.jobRuntime; if (!runtime) { this.send(response, 503, { error: 'JOB_RUNTIME_UNAVAILABLE' }); return; } const statusValue = url.searchParams.get('status') ?? undefined; if (statusValue && !JOB_STATUSES.includes(statusValue as JobStatus)) { this.send(response, 400, { error: 'JOB_STATUS_INVALID' }); return; } const limitValue = Number(url.searchParams.get('limit') ?? 50); if (!Number.isSafeInteger(limitValue) || limitValue < 1 || limitValue > 100) { this.send(response, 400, { error: 'JOB_LIMIT_INVALID' }); return; } const jobs = runtime.list({ ...(statusValue ? { status: statusValue as JobStatus } : {}), limit: limitValue }).map(job => ({ ...job, kind: 'isla' as const })); let resourceJobs: readonly unknown[] = []; try { if (this.options.resourceBridge) resourceJobs = (await this.options.resourceBridge.list(undefined, Math.min(50, limitValue))).map(projectResourceJob); } catch { /* Resource availability does not change the general Job fact source. */ } this.send(response, 200, { jobs: [...jobs, ...resourceJobs].slice(0, limitValue) }); return; }
+      const jobMatch = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})(?:\/(events|cancel))?$/iu);
+      if (jobMatch) {
+        const runtime = this.options.jobRuntime; if (!runtime) { this.send(response, 503, { error: 'JOB_RUNTIME_UNAVAILABLE' }); return; }
+        const id = jobMatch[1]!;
+        if (request.method === 'GET' && !jobMatch[2]) { const job = runtime.get(id); this.send(response, job ? 200 : 404, job ? { job } : { error: 'JOB_NOT_FOUND' }); return; }
+        if (request.method === 'GET' && jobMatch[2] === 'events') { const job = runtime.get(id); if (!job) { this.send(response, 404, { error: 'JOB_NOT_FOUND' }); return; } const after = Math.max(0, Number(url.searchParams.get('after') ?? 0) || 0); this.send(response, 200, { events: runtime.events(id, after, 100) }); return; }
+        if (request.method === 'POST' && jobMatch[2] === 'cancel') { this.send(response, 200, runtime.cancel(id)); return; }
+        if (request.method === 'POST' && jobMatch[2] === 'respond') { const body = await readJson(request); if (typeof body.answer !== 'string') { this.send(response, 400, { error: 'JOB_ANSWER_INVALID' }); return; } try { this.send(response, 200, { job: runtime.respond(id, body.answer) }); } catch (error) { const code = error instanceof Error ? error.message : 'JOB_RESPONSE_FAILED'; this.send(response, code === 'JOB_NOT_FOUND' ? 404 : 409, { error: safeCode(code) }); } return; }
+      }
       if (request.method === 'GET' && url.pathname === '/sessions') { this.send(response, 200, { sessions: await this.list(url.searchParams.get('workspaceKey') ?? undefined, url.searchParams.get('q') ?? '', url.searchParams.get('archived') === 'true') }); return; }
       if (request.method === 'POST' && url.pathname === '/workspace/resolve') { const body = await readJson(request); if (typeof body.workspaceRoot !== 'string' || !body.workspaceRoot.trim()) { this.send(response, 400, { error: 'WORKSPACE_REQUIRED' }); return; } const root = await resolveWorkspace(body.workspaceRoot, undefined, process.cwd()); this.send(response, 200, { workspaceRoot: root, workspaceKey: workspaceKey(root) }); return; }
       if (request.method === 'POST' && url.pathname === '/quick') { await this.quick(await readJson(request), response, request.headers.accept?.includes('application/x-ndjson') === true, request); return; }

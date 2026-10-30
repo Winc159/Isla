@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createApplication, createStderrDiagnosticSink } from "../src/runtime/application.js";
 import { IslaRuntime } from "../src/core/runtime.js";
+import { JobStore } from "../src/jobs/store.js";
 
 describe("ApplicationContext resources", () => {
   it("owns an isolated memory/session resource set and closes idempotently", () => {
@@ -8,7 +9,7 @@ describe("ApplicationContext resources", () => {
       provider: "local", model: "fixture", baseURL: "http://127.0.0.1:1/v1", apiKey: "fixture", timeoutMs: 1000,
       debug: false, maxContextTurns: 2, maxContextChars: 1000, contextRetainTurns: 1, modelRetries: 0,
       memoryEnabled: false, logLevel: "quiet", workspaceRoot: process.cwd(),
-    }, new IslaRuntime());
+    }, new IslaRuntime(), { jobStore: new JobStore(':memory:') });
     expect(app.runtime).toBeInstanceOf(IslaRuntime);
     expect(app.sessions).toBeDefined();
     expect(app.memory.enabled).toBe(false);
@@ -20,7 +21,7 @@ describe("ApplicationContext resources", () => {
       provider: "local", model: "fixture", baseURL: "http://127.0.0.1:1/v1", apiKey: "fixture", timeoutMs: 1000,
       debug: false, maxContextTurns: 2, maxContextChars: 1000, contextRetainTurns: 1, modelRetries: 0,
       memoryEnabled: false, logLevel: "quiet", workspaceRoot: process.cwd(),
-    }, new IslaRuntime());
+    }, new IslaRuntime(), { jobStore: new JobStore(':memory:') });
     const events: string[] = [];
     const child = app.scope.child("session", "test-session");
     child.defer(() => { events.push("child-effect"); });
@@ -35,7 +36,7 @@ describe("ApplicationContext resources", () => {
       provider: 'local', model: 'fixture', baseURL: 'http://127.0.0.1:1/v1', apiKey: 'fixture', timeoutMs: 1000,
       debug: false, maxContextTurns: 2, maxContextChars: 1000, contextRetainTurns: 1, modelRetries: 0,
       memoryEnabled: false, logLevel: 'quiet', workspaceRoot: process.cwd(),
-    }, new IslaRuntime());
+    }, new IslaRuntime(), { jobStore: new JobStore(':memory:') });
     const processStatus = await app.processes.start({ workspaceRoot: process.cwd(), ownerId: 'session-test', executable: process.execPath, argv: ['-e', 'setInterval(() => {}, 1000)'] });
     await app.dispose();
     expect(app.processes.status(processStatus.processId, 'session-test')?.state).toBe('cancelled');

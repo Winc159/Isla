@@ -7,7 +7,7 @@ export default defineConfig({
   base: '/',
   esbuild: { jsx: 'automatic' },
   server: {
-    proxy: Object.fromEntries(['/ui', '/health', '/sessions', '/workspace', '/memory', '/resource', '/mcp', '/capabilities', '/api'].map(path => [path, {
+    proxy: Object.fromEntries(['/ui', '/health', '/sessions', '/workspace', '/memory', '/resource', '/jobs', '/mcp', '/capabilities', '/api'].map(path => [path, {
       target: host,
       changeOrigin: true,
       configure(proxy) { proxy.on('proxyReq', request => request.setHeader('origin', host)); },

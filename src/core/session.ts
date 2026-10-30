@@ -1,4 +1,5 @@
 import type { ModelProvider, Message, ModelRequest, ModelResponse, ProjectSourceReference, ToolDefinition, ToolResponse } from "./types.js";
+import { normalize as normalizePath } from 'node:path';
 import type { ToolCapability, ToolExecutionResult } from "../tools/types.js";
 import { createProjectFilesCapability } from "../tools/project-files.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -127,6 +128,10 @@ function resolvesActionFailure(tool: string, group: ActionFailureGroup, executio
   return false;
 }
 function optionsHasWorkContext(mode: WorkModeStateV1, plan: WorkPlanV1 | undefined): boolean { return mode.revision > 0 || plan !== undefined; }
+function normalizeEvidencePath(path: string): string {
+  const normalized = normalizePath(path).replaceAll('\\', '/');
+  return process.platform === 'win32' ? normalized.toLocaleLowerCase() : normalized;
+}
 export class ChatSession {
   private readonly messages: Message[];
   private readonly maxContextTurns: number;
@@ -303,10 +308,28 @@ export class ChatSession {
 
   private collectWorkPlanEvidence(): Map<string, WorkPlanEvidence> {
     const evidence = new Map<string, WorkPlanEvidence>();
+    const callArguments = new Map(this.messages.flatMap(message => message.toolCalls ?? []).map(call => [call.id, call.arguments] as const));
+    const pathsByCall = new Map<string, string>();
+    for (const [callId, raw] of callArguments) {
+      try {
+        const value: unknown = JSON.parse(raw);
+        if (value && typeof value === 'object' && 'path' in value && typeof value.path === 'string') pathsByCall.set(callId, normalizeEvidencePath(value.path));
+      } catch { /* malformed tool arguments cannot provide path evidence */ }
+    }
+    const mutatedPaths = new Set<string>();
     for (const turn of this.journal.turns) for (const action of turn.actions) {
-      if (action.type === 'tool' && !evidence.has(action.callId)) evidence.set(action.callId, { callId: action.callId, success: action.ok, executed: action.ok, kind: 'tool', tool: action.tool });
-      else if (action.type === 'workspace_mutation') evidence.set(action.callId, { callId: action.callId, success: true, executed: true, kind: 'change', tool: action.tool });
+      if (action.type === 'tool' && !evidence.has(action.callId)) {
+        const path = pathsByCall.get(action.callId);
+        const readback = action.ok && action.tool === 'read_text_file' && path !== undefined && mutatedPaths.has(path);
+        evidence.set(action.callId, { callId: action.callId, success: action.ok, executed: action.ok, kind: readback ? 'verification' : 'tool', tool: action.tool });
+      }
+      else if (action.type === 'workspace_mutation') {
+        const path = pathsByCall.get(action.callId);
+        if (path) mutatedPaths.add(path);
+        evidence.set(action.callId, { callId: action.callId, success: true, executed: true, kind: 'change', tool: action.tool });
+      }
       else if (action.type === 'verification') evidence.set(action.callId, { callId: action.callId, success: action.outcome === 'passed', executed: true, kind: 'verification', tool: 'run_command' });
+      else if (action.type === 'readback_verification') evidence.set(action.callId, { callId: action.callId, success: true, executed: true, kind: 'verification', tool: 'read_text_file' });
     }
     return evidence;
   }
@@ -649,6 +672,7 @@ export class ChatSession {
       }
       let terminalResponse: ModelResponse | undefined;
       let execution: ToolExecutionResult = { ok: false, code: "EXECUTION_FAILED", message: "Tool execution interrupted" };
+      const actionTurn = this.journal.turns.at(-1);
       try {
         if (this.checkpointStore && (call.name === 'write_text_file' || call.name === 'edit_text_file' || (this.workMode.mode === 'act' && ['run_command','exec_start'].includes(call.name)))) {
           const checkpoint = await this.checkpointStore.create();
@@ -678,7 +702,6 @@ export class ChatSession {
           if (turn && sourceIds.length) (turn.actions as TurnActionRecord[]).push({ type: "project_retrieval", sourceIds, truncated: execution.details.truncated });
         }
         if (execution.ok && (call.name === "write_text_file" || call.name === "edit_text_file")) input.successfulWrites.add(writeKey);
-        const actionTurn = this.journal.turns.at(-1);
         if (actionTurn && execution.ok && (call.name === "write_text_file" || call.name === "edit_text_file")) (actionTurn.actions as TurnActionRecord[]).push({ type: "workspace_mutation", step: input.round, callId: call.id, tool: call.name });
         if (execution.ok && execution.details?.type === "task_state_update") {
           try {
@@ -795,6 +818,10 @@ export class ChatSession {
         await this.persistState(false);
         this.onToolFinished?.(call.name, call.id, execution);
         await this.onSessionEvent?.({ type: "tool_result", callId: call.id, tool: call.name, result: execution });
+      }
+      if (actionTurn && execution.ok && call.name === 'read_text_file' && this.collectWorkPlanEvidence().get(call.id)?.tool === 'read_text_file' && this.collectWorkPlanEvidence().get(call.id)?.kind === 'verification') {
+        (actionTurn.actions as TurnActionRecord[]).push({ type: 'readback_verification', step: input.round, callId: call.id, outcome: 'passed' });
+        await this.persistState(false);
       }
       if (!execution.ok) {
         const failureGroup = actionFailureGroup(call.name);

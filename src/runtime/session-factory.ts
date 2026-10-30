@@ -30,6 +30,8 @@ import { createResourceCapability } from '../tools/resource.js';
 import { randomUUID } from 'node:crypto';
 import type { AgentRegistry } from '../core/service-kernel.js';
 import type { FileEventStore } from '../core/event-store.js';
+import type { JobRuntime } from '../jobs/runtime.js';
+import { createSubagentCapability } from '../tools/subagent.js';
 
 export interface SessionFactoryOptions {
   readonly runtime: IslaRuntime;
@@ -45,6 +47,7 @@ export interface SessionFactoryOptions {
   readonly eventStore?: FileEventStore;
   readonly executionProcesses?: import('../tools/process-registry.js').ExecutionProcessRegistry;
   readonly dependencyManager?: import('../dependencies/manager.js').DependencyManager;
+  readonly jobs?: JobRuntime;
 }
 export interface SessionFactoryConfig {
   readonly provider: string;
@@ -105,6 +108,10 @@ export interface SessionEntryOptions {
   readonly onToolFinished?: (tool: string, callId: string, result: ToolExecutionResult) => void;
   readonly onModelStepEvent?: (event: import('../core/events.js').ModelStepEvent) => void;
   readonly onTurnPhaseChanged?: (event: import('../core/events.js').TurnPhaseEvent) => void;
+  readonly jobMode?: boolean;
+  readonly parentAgentId?: string;
+  readonly jobId?: string;
+  readonly agentId?: string;
 }
 
 export function projectStoredSession(storedSession: StoredSession): {
@@ -168,12 +175,15 @@ export function createSessionFactory(options: SessionFactoryOptions) {
     },
     create(entry: SessionEntryOptions) {
       let current = entry.stored;
-        const composed = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, contextMessages: () => current.messages, skillCatalog, ...(executionProcesses ? { executionProcesses } : {}), ...(options.dependencyManager ? { dependencyManager: options.dependencyManager } : {}), ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(resourceEnabled && resourceBridge?.isAvailable ? [createResourceCapability(resourceBridge, current.id, entry.resourceTurnId ?? `session-${current.id}`)] : []), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime, entry.userQuestionService, browserConsoleUrl, browserConsoleToken, browserVault)] : []), ...(config.mcpHost?.capabilities(entry.userQuestionService) ?? [])];
+      const agentId = entry.agentId ?? `agent-${randomUUID()}`;
+      const fullCapabilities = [...createToolCapabilities({ workspaceRoot, sessionQuery, workspaceKey: workspaceKey(workspaceRoot), currentSessionId: () => current.id, contextMessages: () => current.messages, skillCatalog, ...(executionProcesses ? { executionProcesses } : {}), ...(options.dependencyManager ? { dependencyManager: options.dependencyManager } : {}), ...(config.capabilityPolicy?.skillAllow ? { skillAllow: config.capabilityPolicy.skillAllow } : {}), ...(config.capabilityPolicy?.skillDeny ? { skillDeny: config.capabilityPolicy.skillDeny } : {}), ...(entry.userQuestionService ? { userQuestionService: entry.userQuestionService } : {}), ...(config.webFetch ? { webFetch: config.webFetch } : {}), ...(config.webSearch ? { webSearch: config.webSearch } : {}) }), ...(resourceEnabled && resourceBridge?.isAvailable ? [createResourceCapability(resourceBridge, current.id, entry.resourceTurnId ?? `session-${current.id}`)] : []), ...(effectiveBrowserRuntime ? [createBrowserCapability(effectiveBrowserRuntime, entry.userQuestionService, browserConsoleUrl, browserConsoleToken, browserVault)] : []), ...(config.mcpHost?.capabilities(entry.userQuestionService) ?? [])];
+      const readonlySubagentTools = new Set(['read_text_file','list_directory','glob_project','grep_project','search_project','web_fetch','web_search']);
+      const composed = entry.jobMode ? fullCapabilities.map(capability => ({ ...capability, tools: capability.tools.filter(tool => readonlySubagentTools.has(tool.definition.name)) })).filter(capability => capability.tools.length > 0) : [...fullCapabilities, ...(options.jobs && agentRegistry ? [createSubagentCapability({ jobs: options.jobs, parentAgentId: agentId, parentSessionId: current.id, workspaceRoot, canCreate: () => agentRegistry.canCreateChild(agentId) })] : [])];
 const catalog = capabilityCatalog(current.id, entry.resourceTurnId ?? `session-${current.id}`, entry.userQuestionService);
       const activator = new CapabilityActivator(catalog, ('capabilityActivation' in current && current.capabilityActivation) ? current.capabilityActivation : undefined);
       const routingTools = createCapabilityRoutingTools(catalog, activator, () => 0);
       const routingCapability = { id: 'capability-routing', tools: routingTools } as import('../tools/types.js').ToolCapability;
-      const withRouting = [...composed, routingCapability];
+      const withRouting = entry.jobMode ? composed : [...composed, routingCapability];
       const snapshot = composeCapabilitySnapshot(withRouting, skillCatalog.listSync().entries, config.capabilityPolicy);
       const visible = new Set(snapshot.toolDefinitions.map(tool => tool.name));
       const filtered = withRouting.map(capability => ({ ...capability, tools: capability.tools.filter(tool => visible.has(tool.definition.name)) })).filter(capability => capability.tools.length > 0);
@@ -188,16 +198,17 @@ const catalog = capabilityCatalog(current.id, entry.resourceTurnId ?? `session-$
         contextReserveTokens: config.contextReserveTokens,
         modelRetries: config.modelRetries,
         enableTools: true,
-        enablePlanAct: true,
+        enablePlanAct: entry.jobMode !== true,
         skillCatalog: ('skillCatalog' in current && current.skillCatalog) ? current.skillCatalog : { version: 1, entries: skillCatalog.listSync().entries },
         ...('capabilityActivation' in current && current.capabilityActivation ? { capabilityActivation: current.capabilityActivation } : {}),
         ...('workPlan' in current && current.workPlan ? { workPlan: current.workPlan } : {}),
         ...('workMode' in current && current.workMode ? { workMode: current.workMode } : {}),
         agentLoop: true,
-        ...(config.loopBudget ? { loopBudget: config.loopBudget } : {}),
-        agentLoopTimeoutMs: config.timeoutMs ?? 600_000,
+        ...(entry.jobMode ? { loopBudget: { initialBudget: 6, extensionSteps: 2, autoLimit: 8, hardLimit: 8 } } : config.loopBudget ? { loopBudget: config.loopBudget } : {}),
+        agentLoopTimeoutMs: entry.jobMode ? Math.min(config.timeoutMs ?? 120_000, 120_000) : config.timeoutMs ?? 600_000,
         capabilities: filtered,
         resolveCapabilities: async (input, step, signal) => {
+          if (entry.jobMode) return filtered;
           const dynamic = await composeCapabilityStepSnapshot(catalog, activator, input, step, [
             'builtin.control',
             'builtin.project-files',
@@ -209,7 +220,7 @@ const catalog = capabilityCatalog(current.id, entry.resourceTurnId ?? `session-$
         },
         projectRoot: workspaceRoot,
         ...(diagnostics ? { onDiagnostic: diagnostics } : {}),
-        permissionPreset: 'workspace',
+        permissionPreset: entry.jobMode ? 'readonly' : 'workspace',
         approvalPolicy: entry.approvalPolicy ?? (entry.interactive ? 'ask' : 'never'),
         ...(policyRules ? { policyRules } : {}),
         ...(entry.approvalService ? { approvalService: entry.approvalService } : {}),
@@ -230,9 +241,10 @@ const catalog = capabilityCatalog(current.id, entry.resourceTurnId ?? `session-$
         ...(eventStore ? { onSessionEvent: event => eventStore.append(current.id, event).then(() => undefined) } : {}),
       });
       if (agentRegistry) {
-        const id = `agent-${randomUUID()}`;
-        agentRegistry.register({ id, sessionId: current.id, close: async () => { await executionProcesses?.closeOwner(current.id); await session.close(); } });
-        agentIds.set(session, id);
+        const handle = { id: agentId, sessionId: current.id, close: async () => { await executionProcesses?.closeOwner(current.id); await session.close(); } };
+        if (entry.parentAgentId) agentRegistry.registerChild(entry.parentAgentId, handle, undefined, entry.jobId);
+        else agentRegistry.register(handle);
+        agentIds.set(session, agentId);
       }
       sessionIds.set(session, current.id);
       return session;

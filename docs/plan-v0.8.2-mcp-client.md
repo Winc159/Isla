@@ -21,7 +21,7 @@ supersedes: []
 - 设计基线：`92c9286 feat: add v0.8.1.0 quality and lifecycle gates`。
 - 需求来源：路线图 v0.8.2“完整 MCP Client”；用户要求进入下一阶段并自主修复验收问题。
 - 方案状态：版本范围已收口；本文档是实现、验收证据和明确延期项的事实源。
-- 路径说明：当前仓库已有的 `docs/plan-v0.8.2.md` 正文标题实际为 v0.8.3 Persistent Job/Subagent；为避免覆盖既有方案，本计划使用显式 MCP 文件名，并保留原文件不动。
+- 路径说明：v0.8.2 MCP 计划使用显式文件名 `docs/plan-v0.8.2-mcp-client.md`。原名 `docs/plan-v0.8.2.md` 的正文实际是 v0.8.3 计划，现已规范为 `docs/plan-v0.8.3.md`；内容保留不变。
 
 ## 历史依据与本次决策
 

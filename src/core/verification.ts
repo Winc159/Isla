@@ -9,6 +9,7 @@ export function deriveVerificationStatus(journal: SessionJournal): VerificationS
     for (const action of turn.actions) {
       if (action.type === "workspace_mutation") { changed = true; status = "not_run"; }
       else if (action.type === "verification" && changed) status = action.outcome === "passed" ? "passed_after_last_change" : "failed_after_last_change";
+      else if (action.type === "readback_verification" && changed) status = "passed_after_last_change";
     }
   }
   return status;

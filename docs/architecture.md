@@ -199,6 +199,8 @@ Resource Service 使用独立配置、SQLite Job、Scheduler 和受管目录边�
 
 公网多用户、无边界 Agent Team、任意递归和自主演化仍不属于个人 Agent 基线。
 
+v0.8.3 的 Job 由 Resident Host 的通用 Job Store 保存状态事实；Job 生命周期不依附 Session，Host 重启后由过期租约恢复。Subagent 归父 Job 所有并最多一层，独立 Session 仅承载其执行上下文。Resource Job 继续由 Resource SQLite/Scheduler/Worker 管理，Host 只做只读投影。Work Plan 的有效步骤更新计入 Agent Loop 进展；文件变更后的同路径 `read_text_file` 回读可作为 verification evidence，并写入 Journal。采用 Codex App Server 的可恢复任务与 OpenHands 的后台任务/会话恢复边界；暂缓分布式多 Host 调度、任意 DAG 和在线 Job 迁移；拒绝迁移 Resource 状态机或把提示词当成权限/终态保证。若引入多 Host 或 Resource 事实源替换需求，重新评估。
+
 ## 架构修改约束
 
 新增抽象必须由现实需求驱动；入口应复用 Application、SessionFactory 和核心契约；新能力必须声明配置、风险、权限、取消、持久化、协议和测试边界。若修改模型输入、Session 事实、终态、Approval 或 Sandbox 契约，必须先更新设计决策并取得确认。

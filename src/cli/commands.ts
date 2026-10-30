@@ -17,8 +17,9 @@ import { browserCommand } from './browser-command.js';
 import { approvalCommand } from './approval-command.js';
 import { planCommand } from './plan-command.js';
 import { checkpointCommand } from './checkpoint-command.js';
+import { jobsCommand } from './jobs-command.js';
 
-const registeredCommands = [newCommand, sessionsCommand, taskCommand, planCommand, checkpointCommand, skillsCommand, capabilitiesCommand, contextCommand, browserCommand, approvalCommand, memoryCommand, traceCommand, configCommand, profileCommand, modelsCommand, mcpCommand, helpCommand, exitCommand];
+const registeredCommands = [newCommand, sessionsCommand, taskCommand, planCommand, checkpointCommand, jobsCommand, skillsCommand, capabilitiesCommand, contextCommand, browserCommand, approvalCommand, memoryCommand, traceCommand, configCommand, profileCommand, modelsCommand, mcpCommand, helpCommand, exitCommand];
 const commands = new Map<string, CliCommand>(
   registeredCommands.map(command => [command.name, command]),
 );

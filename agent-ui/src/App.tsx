@@ -149,24 +149,29 @@ export function App() {
   }, [client, workspace?.workspaceKey]);
 
   useEffect(() => {
-    if (!client || !workspace) return;
+    if (!client) return;
     let cancelled = false;
+    const refreshJobs = async () => {
+      try { const general = await client.jobs() as { jobs?: AnyRecord[] }; if (!cancelled) setJobs(general.jobs ?? []); }
+      catch (error) { if (!cancelled) setNotice(errorMessage(error)); }
+    };
     void (async () => {
       try {
         if (page === 'memory') {
           const result = await client.memory() as { records?: AnyRecord[] };
           if (!cancelled) setMemories(result.records ?? []);
         } else if (page === 'jobs') {
-          const result = await client.resourceJobs() as { jobs?: AnyRecord[] };
-          if (!cancelled) setJobs(result.jobs ?? []);
+          await refreshJobs();
         } else if (page === 'mcp') {
           const [status, catalog] = await Promise.all([client.mcpStatus() as Promise<{ servers?: AnyRecord[] }>, client.capabilities() as Promise<{ entries?: AnyRecord[] }>]);
           if (!cancelled) { setMcpServers(status.servers ?? []); setCapabilities(catalog.entries ?? []); }
         }
       } catch (error) { if (!cancelled) setNotice(errorMessage(error)); }
     })();
-    return () => { cancelled = true; };
-  }, [client, page, workspace]);
+    const interval = page === 'jobs' ? window.setInterval(() => void refreshJobs(), 3000) : undefined;
+    if (page === 'jobs') window.addEventListener('focus', refreshJobs);
+    return () => { cancelled = true; if (interval !== undefined) window.clearInterval(interval); if (page === 'jobs') window.removeEventListener('focus', refreshJobs); };
+  }, [client, page]);
 
   useEffect(() => {
     if (!client || page !== 'mcp') return;
@@ -479,7 +484,7 @@ export function App() {
 
       {page === 'memory' && <section className="page-content"><PageHeading eyebrow="会话之外的长期信息" title="记忆" description="查看 Isla 记住的偏好与事实。内容只在你检查后管理。" />{memories.length ? <div className="record-grid">{memories.map(record => <article className="record-card" key={String(record.id)}><div className="record-meta"><span>{String(record.kind ?? '记忆')}</span><span className={`state-tag ${String(record.status)}`}>{String(record.status)}</span></div><h3>{String(record.id)}</h3><p>{String(record.scope ?? '个人')}</p><div className="record-actions"><button className="quiet-button" onClick={() => typeof record.id === 'string' && void showMemory(record.id)}>查看内容</button><button className="quiet-button danger-text" onClick={() => void disableMemory(record)}>停用</button></div></article>)}</div> : <EmptyState title="还没有可查看的记忆" text="对话中形成的长期信息会显示在这里。" />}{memoryContent && <div className="detail-drawer"><button className="drawer-close" onClick={() => setMemoryContent('')}>×</button><div className="eyebrow">记忆正文</div><pre>{memoryContent}</pre></div>}</section>}
 
-      {page === 'jobs' && <section className="page-content"><PageHeading eyebrow="对话之外继续运行" title="后台任务" description="这里仅展示 Resource 服务提供的安全任务投影，不直接读取任务数据库。" />{jobs.length ? <div className="record-grid">{jobs.map((job, index) => <article className="record-card" key={String(job.jobId ?? index)}><div className="record-meta"><span>{String(job.type ?? 'Resource Job')}</span><span className={`state-tag ${String(job.status)}`}>{String(job.status)}</span></div><h3>{String(job.jobId ?? '任务')}</h3><p>{String(job.progress ?? job.summary ?? '状态由 Resource 服务管理')}</p><small>更新于 {formatDate(String(job.updatedAt ?? ''))}</small></article>)}</div> : <EmptyState title="当前没有可显示的任务" text="Resource 服务不可用时，任务状态仍由它自身管理；此页面不会尝试直接访问数据库。" />}</section>}
+      {page === 'jobs' && <section className="page-content"><PageHeading eyebrow="对话之外继续运行" title="后台任务" description="Isla Job 由 Host 持久化；Resource Job 由 Resource 服务执行并提供只读投影。" />{jobs.length ? <div className="record-grid">{jobs.map((job, index) => { const general = job.kind === 'isla'; const progress = job.progress as AnyRecord | undefined; const waiting = job.waitingUser as AnyRecord | undefined; return <article className="record-card" key={String(job.id ?? index)}><div className="record-meta"><span>{general ? 'Isla Job' : 'Resource Job'}</span><span className={`state-tag ${String(job.status)}`}>{String(job.status)}</span></div><h3>{String(job.id ?? '任务')}</h3><p>{String(waiting?.prompt ?? progress?.message ?? job.stage ?? (general ? job.errorCode ?? '由 Isla Host 管理' : job.errorCode ?? '状态由 Resource 服务管理'))}</p><small>更新于 {formatDate(String(job.updatedAt ?? ''))}</small>{general && job.status === 'waiting_user' && <button className="secondary-button" onClick={() => { const answer = window.prompt(String(waiting?.prompt ?? '请输入任务需要的信息')); if (answer?.trim()) void client?.respondToJob(String(job.id), answer).then(() => client.jobs()).then(result => setJobs((result as { jobs?: AnyRecord[] }).jobs ?? [])); }}>回答并继续</button>}{general && ['queued','running','waiting_user'].includes(String(job.status)) && <button className="secondary-button" onClick={() => void client?.cancelJob(String(job.id)).then(() => client.jobs()).then(result => setJobs((result as { jobs?: AnyRecord[] }).jobs ?? []))}>取消任务</button>}</article>; })}</div> : <EmptyState title="当前没有可显示的任务" text="通用 Job 与 Resource Job 都没有可展示的条目。Resource 任务状态仍由 Resource 服务管理。" />}</section>}
 
       {page === 'mcp' && <section className="page-content"><PageHeading eyebrow="已连接的工具能力" title="工具连接" description="管理 Resident Host 已配置的 MCP Server。需要登录的服务器可在此发起授权。" />{mcpServers.length ? <div className="record-grid">{mcpServers.map(server => <article className="record-card" key={String(server.id)}><div className="record-meta"><span>{String(server.transport ?? 'stdio')}</span><span className={`state-tag ${String(server.state)}`}>{String(server.state)}</span></div><h3>{String(server.id)}</h3><p>{String(server.toolCount ?? 0)} 个工具 · {server.required ? '必需' : '可选'}</p>{server.state === 'auth-required' && <button className="primary-button" disabled={mcpAuthBusy === String(server.id)} onClick={() => void startMcpAuthorization(String(server.id))}>{mcpAuthBusy === String(server.id) ? '正在准备授权…' : '连接并授权'}</button>}{Array.isArray(server.tools) && <div className="tag-list">{server.tools.map(String).map(tool => <span key={tool}>{tool}</span>)}</div>}</article>)}</div> : <EmptyState title="尚未连接 MCP Server" text="目前没有已配置的工具服务器。" />}<div className="section-heading"><h2>Host 能力目录</h2><span>{capabilities.length} 项</span></div><div className="capability-list">{capabilities.map((entry, index) => <div key={String(entry.id ?? index)}><strong>{String(entry.id ?? '能力')}</strong><span>{String(entry.summary ?? entry.description ?? '由 Resident Host 管理')}</span></div>)}</div></section>}
 

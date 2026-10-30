@@ -74,4 +74,14 @@ describe("service kernel", () => {
     expect(events).toEqual(["agent"]);
     await root.close();
   });
+
+  it('enforces one child ownership level and disposes children with their parent', async () => {
+    const root = new RuntimeScope('host', 'host'); const registry = new AgentRegistry(root); const disposed: string[] = [];
+    registry.register({ id: 'parent', sessionId: 'parent-session', close: () => { disposed.push('parent'); } });
+    await registry.registerChild('parent', { id: 'child', sessionId: 'child-session', close: () => { disposed.push('child'); } }, undefined, 'job-1');
+    expect(registry.ownership('child')).toEqual({ parentAgentId: 'parent', jobId: 'job-1', depth: 1 });
+    expect(registry.canCreateChild('child')).toBe(false);
+    expect(() => registry.registerChild('child', { id: 'grandchild', sessionId: 'g', close: () => {} })).toThrow('AGENT_DEPTH_EXCEEDED');
+    await registry.dispose('parent'); expect(disposed).toEqual(['child', 'parent']); expect(registry.list()).toHaveLength(0); await root.close();
+  });
 });

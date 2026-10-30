@@ -1,5 +1,13 @@
 # Isla Roadmap
 
+## 版本计划
+
+- [v0.8.1.0：评估、安全与发布门禁](./plan-v0.8.1.0.md)
+- [v0.8.2：完整 MCP Client](./plan-v0.8.2-mcp-client.md)
+- [v0.8.3：Persistent Job 与受限 Subagent](./plan-v0.8.3.md)
+
+`plan-v0.8.2.md` 是历史遗留文件名，正文属于 v0.8.3；正式入口已统一为 `plan-v0.8.3.md`。
+
 Isla 的目标是成为长期运行、贴合个人习惯的完整 Agent 产品。个人定位不等于削减 Agent 基础设施；Web UI、Plan/Act、审批、MCP、后台任务、受管执行环境和可恢复协议属于产品基线。长期架构见 [agent-platform-baseline.md](./agent-platform-baseline.md)。
 
 ## 当前能力
@@ -24,7 +32,7 @@ Isla 的目标是成为长期运行、贴合个人习惯的完整 Agent 产品�
 6. v0.8.0.0：主 Agent Web UI。
 7. v0.8.1.0：评估、安全与发布门禁。
 8. v0.8.2：完整 MCP Client（版本范围已收口；stdio/Streamable HTTP、Tools/Resources/Prompts、list_changed、Form Elicitation、OAuth loopback/回调与私有凭据存储、独立 JSON-RPC peer、官方 Filesystem Server interop、Node 24 全量验证、npm pack，以及默认百炼 `qwen3.5-plus-2026-02-15` 三轮真实任务 `100/100/100` 均有通过证据。公网 HTTPS OAuth 反向代理部署、GitHub Actions 三平台结果确认及 macOS ARM64 原生验收登记为后续部署/平台验收；不声称尚未获得的证据已通过）。
-9. v0.8.3：Persistent Job 与受限 Subagent。
+9. v0.8.3：Persistent Job 与受限 Subagent 已实现并通过自动验证；修正 Plan 进展误判与 readback 验证契约后，百炼真实评估三轮 `100/100`，见 [v0.8.3 验收记录](./plan-v0.8.3.md#验收记录2026-10-30)。
 
 ## 中期
 

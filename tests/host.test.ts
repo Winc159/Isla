@@ -8,6 +8,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { SessionStore, StoredSession } from '../src/sessions/store.js';
 import type { HostTurnObservers } from '../src/host/server.js';
 import { RuntimeError } from '../src/core/errors.js';
+import { JobRuntime } from '../src/jobs/runtime.js';
+import { JobStore } from '../src/jobs/store.js';
 
 const sessions: StoredSession[] = [];
 const store: SessionStore = {
@@ -30,6 +32,17 @@ let host: ResidentHost | undefined;
 afterEach(async () => { await host?.close(); host = undefined; sessions.length = 0; });
 
 describe('resident host', () => {
+  it('serves authenticated persistent Job views, event cursors and cancellation', async () => {
+    const jobs = new JobRuntime(new JobStore(':memory:'));
+    const created = jobs.create({ type: 'research', owner: { kind: 'session', id: 's-1' }, inputRef: 'payload://fixture' });
+    host = new ResidentHost({ host: '127.0.0.1', port: 0, token: 'job-host-token', provider: 'fake', model: 'm', sessionStore: store, jobRuntime: jobs, createSession: () => ({}) as never });
+    const address = await host.start(); const client = new ResidentHostClient(`http://${address.host}:${address.port}`, address.token);
+    expect(await client.jobs()).toMatchObject({ jobs: [{ id: created.id, kind: 'isla', status: 'queued' }] });
+    expect(await client.jobEvents(created.id)).toMatchObject({ events: [{ type: 'job.created', jobId: created.id }] });
+    await expect(fetch(`http://${address.host}:${address.port}/jobs`, { headers: { authorization: 'Bearer invalid-token' } })).resolves.toMatchObject({ status: 401 });
+    expect(await client.cancelJob(created.id)).toMatchObject({ accepted: true, job: { status: 'cancelled' } });
+    await jobs.close();
+  });
   it('binds loopback and protects private API with bearer token', async () => {
     host = new ResidentHost({ host: '127.0.0.1', port: 0, token: 'test-token', provider: 'fake', model: 'm', sessionStore: store, createSession: () => ({ send: async text => ({ text: `echo:${text}` }), cancelActiveTurn: () => true, whenIdle: async () => {} } as never) });
     const address = await host.start();

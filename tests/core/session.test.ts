@@ -257,6 +257,26 @@ describe("session", () => {
     await expect(session.send('复核、修改并验证')).resolves.toMatchObject({text:'目标完成，验证通过。',outcome:'completed'});
     expect(session.currentWorkPlan).toMatchObject({status:'completed',steps:[{id:'inspect',status:'completed'},{id:'change',status:'completed'},{id:'verify',status:'completed'}]});
   });
+  it('accepts a same-path readback after a successful write as Plan verification evidence', async () => {
+    const plan: WorkPlanV1 = { version:1,planId:'readback-verification',revision:1,progressRevision:0,replanCount:0,goal:'Read, create and verify a report',constraints:[],assumptions:[],steps:[{id:'inspect',title:'Read source',kind:'inspect',status:'pending',dependencies:[]},{id:'change',title:'Write report',kind:'change',status:'pending',dependencies:['inspect']},{id:'verify',title:'Read report back',kind:'verify',status:'pending',dependencies:['change']}],risks:[],verification:['Report matches requested content'],openQuestions:[],status:'active',approvedRevision:1,updatedAt:new Date().toISOString() };
+    const files: ToolCapability = { id:'project-files',instructions:'test tools',tools:[
+      { definition:{name:'read_text_file',description:'read',parameters:{type:'object'}},execute:async args => `read:${JSON.parse(args).path}` },
+      { definition:{name:'write_text_file',description:'write',parameters:{type:'object'}},execute:async args => `wrote:${JSON.parse(args).path}` },
+    ]};
+    const responses: ToolResponse[] = [
+      {text:'',toolCalls:[{id:'source-read',name:'read_text_file',arguments:JSON.stringify({path:'source.md'})}]},
+      {text:'',toolCalls:[{id:'report-write',name:'write_text_file',arguments:JSON.stringify({path:'report.txt',content:'verified report'})}]},
+      {text:'',toolCalls:[{id:'report-readback',name:'read_text_file',arguments:JSON.stringify({path:'report.txt'})}]},
+      {text:'报告已写入并通过回读验证。'},
+    ];
+    const provider = new class extends FakeProvider {
+      async generateWithTools(request: ModelRequest): Promise<ToolResponse> { this.requests.push(request); return responses.shift() ?? {text:'unexpected'}; }
+    }([]);
+    const session = new ChatSession(provider,{enableTools:true,agentLoop:true,capabilities:[files,createControlCapability()],workPlan:plan,workMode:{version:1,mode:'act',revision:1,actApprovedRevision:1,updatedAt:new Date().toISOString()}});
+    await expect(session.send('读取来源、写入报告，并回读验证')).resolves.toMatchObject({text:'报告已写入并通过回读验证。'});
+    expect(session.currentWorkPlan).toMatchObject({status:'completed',steps:[{id:'inspect',status:'completed'},{id:'change',status:'completed'},{id:'verify',status:'completed',evidenceCallIds:['report-readback']} ]});
+    await session.close();
+  });
   it('settles an evidence-backed Act plan before a direct final answer without submit_result', async () => {
     const plan: WorkPlanV1 = { version:1,planId:'direct-final-plan',revision:1,progressRevision:0,replanCount:0,goal:'Inspect and verify',constraints:[],assumptions:[],steps:[{id:'inspect',title:'Read source',kind:'inspect',status:'pending',dependencies:[]},{id:'verify',title:'Run tests',kind:'verify',status:'pending',dependencies:['inspect']}],risks:[],verification:['Tests pass'],openQuestions:[],status:'active',approvedRevision:1,updatedAt:new Date().toISOString() };
     const tools: ToolCapability = { id:'project-files',instructions:'test tools',tools:[

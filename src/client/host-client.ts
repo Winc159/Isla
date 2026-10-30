@@ -87,6 +87,11 @@ export class ResidentHostClient {
   async turnEvents(sessionId: string, turnId: string, after = 0): Promise<{ readonly events: readonly { readonly sequence: number; readonly event: HostTurnEvent | import('../core/events.js').ModelStepEvent }[]; readonly nextSequence: number; readonly firstSequence: number; readonly truncated: boolean; readonly active: boolean }> { return this.request(`/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/events?after=${after}`) as Promise<{ readonly events: readonly { readonly sequence: number; readonly event: HostTurnEvent | import('../core/events.js').ModelStepEvent }[]; readonly nextSequence: number; readonly firstSequence: number; readonly truncated: boolean; readonly active: boolean }>; }
   async cancelTurn(sessionId: string, turnId: string): Promise<{ readonly accepted: boolean }> { return this.request(`/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/cancel`, true, {}) as Promise<{ readonly accepted: boolean }>; }
   async resourceJobs(): Promise<unknown> { return this.request('/resource/jobs'); }
+  async jobs(): Promise<unknown> { return this.request('/jobs'); }
+  async job(id: string): Promise<unknown> { return this.request(`/jobs/${encodeURIComponent(id)}`); }
+  async jobEvents(id: string, after = 0): Promise<unknown> { return this.request(`/jobs/${encodeURIComponent(id)}/events?after=${after}`); }
+  async cancelJob(id: string): Promise<unknown> { return this.request(`/jobs/${encodeURIComponent(id)}/cancel`, true, {}); }
+  async respondToJob(id: string, answer: string): Promise<unknown> { return this.request(`/jobs/${encodeURIComponent(id)}/respond`, true, { answer }); }
   async mcpStatus(): Promise<unknown> { return this.request('/mcp/status'); }
   async startMcpOAuth(serverId: string): Promise<{ readonly authorizationUrl: string }> { return this.request(`/mcp/oauth/${encodeURIComponent(serverId)}/start`, true, {}) as Promise<{ readonly authorizationUrl: string }>; }
   async events(sessionId: string): Promise<string> { const response = await fetch(`${this.baseURL}/sessions/${encodeURIComponent(sessionId)}/events`, { headers: { authorization: `Bearer ${this.token}` } }); if (!response.ok) throw new Error(`HOST_HTTP_${response.status}`); return response.text(); }

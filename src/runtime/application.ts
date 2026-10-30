@@ -11,6 +11,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ExecutionProcessRegistry } from '../tools/process-registry.js';
 import { DependencyManager } from '../dependencies/manager.js';
+import { JobStore } from '../jobs/store.js';
+import { JobRuntime } from '../jobs/runtime.js';
 
 export interface DiagnosticSink { emit(event: DiagnosticEvent): void; }
 export interface DiagnosticEvent { readonly code: string; readonly component: string; readonly severity?: 'warning' | 'error' | 'debug'; readonly detail?: string; readonly domain?: import('../core/errors.js').RuntimeErrorDomain; }
@@ -34,9 +36,10 @@ export interface IslaApplication {
   readonly policies: FilePolicyStore;
   readonly processes: ExecutionProcessRegistry;
   readonly dependencies: DependencyManager;
+  readonly jobs: JobRuntime;
 }
 
-export function createApplication(config: AppConfig, runtime: IslaRuntime, options: { readonly sessionStore?: SessionStore; readonly diagnostics?: DiagnosticSink; readonly mcpHost?: McpHost } = {}): IslaApplication {
+export function createApplication(config: AppConfig, runtime: IslaRuntime, options: { readonly sessionStore?: SessionStore; readonly diagnostics?: DiagnosticSink; readonly mcpHost?: McpHost; readonly jobStore?: JobStore } = {}): IslaApplication {
   const diagnostics = options.diagnostics ?? { emit: () => {} };
   const embeddingProvider = config.embeddingProvider === 'openai' && config.embeddingModel && config.embeddingApiKey
     ? new OpenAIEmbeddingProvider(config.embeddingModel, config.embeddingApiKey, config.embeddingBaseURL, config.timeoutMs)
@@ -55,6 +58,7 @@ export function createApplication(config: AppConfig, runtime: IslaRuntime, optio
   const events = new FileEventStore(`${config.sessionDirectory}/events`);
   const policies = new FilePolicyStore(join(config.sessionDirectory ?? join(homedir(), '.isla', 'sessions'), 'runtime', 'approval-rules.json'));
   const dependencies = new DependencyManager({ manifests: config.execution?.dependencies ?? [], root: join(homedir(), '.isla', 'toolchains') });
+  const jobs = new JobRuntime(options.jobStore ?? new JobStore(join(config.sessionDirectory ?? join(homedir(), '.isla', 'sessions'), 'jobs.sqlite')));
   const processes = new ExecutionProcessRegistry({
     defaultAdapter: config.execution?.defaultAdapter ?? 'local',
     ...(config.execution?.containerImage ? { container: { engine: config.execution.containerEngine ?? 'docker', image: config.execution.containerImage } } : {}),
@@ -63,6 +67,7 @@ export function createApplication(config: AppConfig, runtime: IslaRuntime, optio
   if (options.mcpHost) scope.defer(() => options.mcpHost!.close());
   scope.defer(() => processes.close());
   scope.defer(() => agents.close());
+  scope.defer(() => jobs.close());
   scope.defer(() => memory.close());
   let disposal: Promise<void> | undefined;
   return {
@@ -76,6 +81,7 @@ export function createApplication(config: AppConfig, runtime: IslaRuntime, optio
     policies,
     processes,
     dependencies,
+    jobs,
     close: () => { if (closed) return; closed = true; void scope.close(); },
     dispose: () => {
       if (disposal) return disposal;
