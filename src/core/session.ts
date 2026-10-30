@@ -881,7 +881,7 @@ export class ChatSession {
         return response;
       } catch (error) {
         const cancelled = signal.aborted || (isRuntimeError(error) && error.code === "TURN_CANCELLED");
-        const retryable = !cancelled && attempt < this.modelRetries && isRuntimeError(error) && error.recoverable && ["PROVIDER_TIMEOUT", "PROVIDER_NETWORK", "PROVIDER_RATE_LIMIT"].includes(error.code);
+        const retryable = !cancelled && attempt < this.modelRetries && isRuntimeError(error) && error.recoverable && ["PROVIDER_TIMEOUT", "PROVIDER_NETWORK", "PROVIDER_RATE_LIMIT", "PROVIDER_EMPTY_RESPONSE"].includes(error.code);
         record.status = cancelled ? "aborted" : "failed"; record.endedAt = new Date().toISOString(); if (isRuntimeError(error)) record.error = error.toRecord(); await this.persistState(false);
         this.onModelStepEvent?.({ type: "model_step_end", step, attempt: attempt + 1, result: cancelled ? "cancelled" : retryable ? "retry" : "failed" });
         this.onDiagnostic?.({ code: "MODEL_REQUEST_FAILED", component: "provider", severity: "warning", detail: `phase=${phase};attempt=${attempt + 1};elapsedMs=${Date.parse(record.endedAt) - Date.parse(record.startedAt)};code=${isRuntimeError(error) ? error.code : "UNKNOWN"};withTools=${withTools}` });

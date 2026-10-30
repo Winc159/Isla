@@ -48,6 +48,7 @@ export function App() {
   const [memoryContent, setMemoryContent] = useState('');
   const [jobs, setJobs] = useState<AnyRecord[]>([]);
   const [mcpServers, setMcpServers] = useState<AnyRecord[]>([]);
+  const [mcpAuthBusy, setMcpAuthBusy] = useState('');
   const [capabilities, setCapabilities] = useState<AnyRecord[]>([]);
   const [trace, setTrace] = useState<unknown>();
   const [context, setContext] = useState<unknown>();
@@ -89,6 +90,21 @@ export function App() {
     setWorkspaceDraft(result.workspaceRoot);
     setNotice('工作区已连接');
   }, []);
+
+  const startMcpAuthorization = useCallback(async (serverId: string) => {
+    if (!client) return;
+    const popup = window.open('about:blank', '_blank');
+    setMcpAuthBusy(serverId);
+    try {
+      const result = await client.startMcpOAuth(serverId);
+      if (!/^https:\/\//u.test(result.authorizationUrl)) throw new Error('授权地址不安全，已拒绝打开。');
+      if (popup) popup.location.replace(result.authorizationUrl);
+      else setNotice('浏览器阻止了新窗口，请允许弹出窗口后重试。');
+    } catch (error) {
+      popup?.close();
+      setNotice(errorMessage(error));
+    } finally { setMcpAuthBusy(''); }
+  }, [client]);
 
   const refreshSessions = useCallback(async (api = client, currentWorkspace = workspace, query = sessionSearch, archived = showArchived) => {
     if (!api || !currentWorkspace) return [] as Session[];
@@ -151,6 +167,19 @@ export function App() {
     })();
     return () => { cancelled = true; };
   }, [client, page, workspace]);
+
+  useEffect(() => {
+    if (!client || page !== 'mcp') return;
+    let cancelled = false;
+    const refreshMcpStatus = async () => {
+      try {
+        const [status, catalog] = await Promise.all([client.mcpStatus() as Promise<{ servers?: AnyRecord[] }>, client.capabilities() as Promise<{ entries?: AnyRecord[] }>]);
+        if (!cancelled) { setMcpServers(status.servers ?? []); setCapabilities(catalog.entries ?? []); }
+      } catch (error) { if (!cancelled) setNotice(errorMessage(error)); }
+    };
+    window.addEventListener('focus', refreshMcpStatus);
+    return () => { cancelled = true; window.removeEventListener('focus', refreshMcpStatus); };
+  }, [client, page]);
 
   useEffect(() => {
     if (!client || !workspace || !sessionId || !activeTurn) return;
@@ -452,7 +481,7 @@ export function App() {
 
       {page === 'jobs' && <section className="page-content"><PageHeading eyebrow="对话之外继续运行" title="后台任务" description="这里仅展示 Resource 服务提供的安全任务投影，不直接读取任务数据库。" />{jobs.length ? <div className="record-grid">{jobs.map((job, index) => <article className="record-card" key={String(job.jobId ?? index)}><div className="record-meta"><span>{String(job.type ?? 'Resource Job')}</span><span className={`state-tag ${String(job.status)}`}>{String(job.status)}</span></div><h3>{String(job.jobId ?? '任务')}</h3><p>{String(job.progress ?? job.summary ?? '状态由 Resource 服务管理')}</p><small>更新于 {formatDate(String(job.updatedAt ?? ''))}</small></article>)}</div> : <EmptyState title="当前没有可显示的任务" text="Resource 服务不可用时，任务状态仍由它自身管理；此页面不会尝试直接访问数据库。" />}</section>}
 
-      {page === 'mcp' && <section className="page-content"><PageHeading eyebrow="已连接的工具能力" title="工具连接" description="当前版本展示 Host 暴露的能力状态。连接与 OAuth 管理会在 MCP Client 版本继续完善。" />{mcpServers.length ? <div className="record-grid">{mcpServers.map(server => <article className="record-card" key={String(server.id)}><div className="record-meta"><span>{String(server.transport ?? 'stdio')}</span><span className={`state-tag ${String(server.state)}`}>{String(server.state)}</span></div><h3>{String(server.id)}</h3><p>{String(server.toolCount ?? 0)} 个工具 · {server.required ? '必需' : '可选'}</p>{Array.isArray(server.tools) && <div className="tag-list">{server.tools.map(String).map(tool => <span key={tool}>{tool}</span>)}</div>}</article>)}</div> : <EmptyState title="尚未连接 MCP Server" text="目前没有已配置的本地工具服务器。" />}<div className="section-heading"><h2>Host 能力目录</h2><span>{capabilities.length} 项</span></div><div className="capability-list">{capabilities.map((entry, index) => <div key={String(entry.id ?? index)}><strong>{String(entry.id ?? '能力')}</strong><span>{String(entry.summary ?? entry.description ?? '由 Resident Host 管理')}</span></div>)}</div></section>}
+      {page === 'mcp' && <section className="page-content"><PageHeading eyebrow="已连接的工具能力" title="工具连接" description="管理 Resident Host 已配置的 MCP Server。需要登录的服务器可在此发起授权。" />{mcpServers.length ? <div className="record-grid">{mcpServers.map(server => <article className="record-card" key={String(server.id)}><div className="record-meta"><span>{String(server.transport ?? 'stdio')}</span><span className={`state-tag ${String(server.state)}`}>{String(server.state)}</span></div><h3>{String(server.id)}</h3><p>{String(server.toolCount ?? 0)} 个工具 · {server.required ? '必需' : '可选'}</p>{server.state === 'auth-required' && <button className="primary-button" disabled={mcpAuthBusy === String(server.id)} onClick={() => void startMcpAuthorization(String(server.id))}>{mcpAuthBusy === String(server.id) ? '正在准备授权…' : '连接并授权'}</button>}{Array.isArray(server.tools) && <div className="tag-list">{server.tools.map(String).map(tool => <span key={tool}>{tool}</span>)}</div>}</article>)}</div> : <EmptyState title="尚未连接 MCP Server" text="目前没有已配置的工具服务器。" />}<div className="section-heading"><h2>Host 能力目录</h2><span>{capabilities.length} 项</span></div><div className="capability-list">{capabilities.map((entry, index) => <div key={String(entry.id ?? index)}><strong>{String(entry.id ?? '能力')}</strong><span>{String(entry.summary ?? entry.description ?? '由 Resident Host 管理')}</span></div>)}</div></section>}
 
       {page === 'settings' && <section className="page-content settings-page"><PageHeading eyebrow="本机运行环境" title="设置与诊断" description="凭据与 Profile 仍由本机配置管理；Web 工作台不读取或保存 API Key。" /><form className="settings-card" onSubmit={submitWorkspace}><label htmlFor="workspace-path">工作区文件夹路径</label><div className="workspace-form-row"><input id="workspace-path" value={workspaceInput || workspaceDraft} onChange={event => setWorkspaceInput(event.target.value)} placeholder="输入本机文件夹路径" /><button className="primary-button" disabled={!client}>连接工作区</button></div><small>Isla 会在这个目录内运行工具。切换工作区会重新加载对应会话。</small></form><div className="settings-card diagnostics-card"><div><div className="eyebrow">当前连接</div><h2>Resident Host</h2><p>{workspace?.workspaceRoot ?? '尚未连接工作区'}</p></div><div className="diagnostic-grid"><span>服务范围<strong>仅本机</strong></span><span>活动 Turn<strong>{activeTurn ? '1' : '0'}</strong></span><span>模型配置<strong>{sessions.find(item => item.sessionId === sessionId)?.provider ?? 'Host'}</strong></span></div></div><div className="settings-card"><div className="eyebrow">隐私边界</div><p>认证凭据只保存在当前页面内存中，刷新后由同源 Host 重新提供；工作区路径与当前会话 ID 保存在本机浏览器，用于恢复界面状态。Tool 原始参数与凭据不会写入浏览器存储。</p></div></section>}
     </main>

@@ -88,6 +88,7 @@ export class ResidentHostClient {
   async cancelTurn(sessionId: string, turnId: string): Promise<{ readonly accepted: boolean }> { return this.request(`/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/cancel`, true, {}) as Promise<{ readonly accepted: boolean }>; }
   async resourceJobs(): Promise<unknown> { return this.request('/resource/jobs'); }
   async mcpStatus(): Promise<unknown> { return this.request('/mcp/status'); }
+  async startMcpOAuth(serverId: string): Promise<{ readonly authorizationUrl: string }> { return this.request(`/mcp/oauth/${encodeURIComponent(serverId)}/start`, true, {}) as Promise<{ readonly authorizationUrl: string }>; }
   async events(sessionId: string): Promise<string> { const response = await fetch(`${this.baseURL}/sessions/${encodeURIComponent(sessionId)}/events`, { headers: { authorization: `Bearer ${this.token}` } }); if (!response.ok) throw new Error(`HOST_HTTP_${response.status}`); return response.text(); }
   private async request(path: string, auth = true, body?: unknown): Promise<unknown> { const response = await fetch(`${this.baseURL}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { ...(auth ? { authorization: `Bearer ${this.token}` } : {}), ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); if (!response.ok) throw new Error(`HOST_HTTP_${response.status}`); return response.json(); }
 }

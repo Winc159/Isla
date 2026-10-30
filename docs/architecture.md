@@ -154,7 +154,7 @@ flowchart LR
 
 ## MCP 与 Browser 边界
 
-MCP Host 只消费 Profile 显式配置的本地 stdio Server。外部 description、schema、instructions 和结果都视为不可信；稳定限定名、目录预算、Profile allow/deny 和 Tool Runtime 继续生效。当前不支持远程 transport、OAuth、resources、prompts、热重载或在线安装。
+MCP Host 消费 Profile 显式配置的 stdio 与 Streamable HTTP Server，HTTP endpoint 要求 HTTPS（loopback 可用 HTTP），由官方 TypeScript SDK 管理 MCP 握手与协议；同源重定向策略阻止凭证跨源转发。MCP 工具、已列出的只读 Resources 和 Prompts 以受限 Capability 暴露，外部 schema/description/instructions/结果均视为不可信，并继续经过现有 Policy、Approval 和 Tool Runtime。`tools/list_changed`、`resources/list_changed`、`prompts/list_changed` 会触发单 Server 有界重新发现与目录原子替换，刷新失败时撤下该 Server 目录。Form Elicitation 使用 SDK 的现代 `input_required` 与旧版 Form 请求处理器，绑定当前回合的 UserQuestionService；同一 Server 上可交互请求串行执行，避免并发回合答案串线，缺少交互或无法表达/验证的 Schema 会拒绝请求。OAuth 授权交互与持久化 Token 仍未完成：Host 启动时连接早于用户交互，且 Resident Host 与 WebUI 浏览器可能不在同一设备，安全 callback 路由需另行确定。运行期热重载未实现；不提供在线安装。
 
 Browser 使用隔离的 Playwright 上下文和 URL Policy。Browser Console 仅监听 loopback，用于人工接管；凭据使用需要独立批准，明文不进入模型、Session、Tool Result 或普通日志。Browser 能力不等于任意网络或任意 JavaScript 权限。
 

@@ -37,6 +37,18 @@ describe('Bailian provider contract', () => {
     await expect(runtime.createSession({ providerId: 'bailian' }).send('test')).rejects.toThrow('空回答');
   });
 
+  it('retries one recoverable empty response when the session retry budget allows it', async () => {
+    let calls = 0;
+    server.use(http.post(endpoint, () => {
+      calls += 1;
+      return calls === 1
+        ? HttpResponse.json({ model: 'qwen-plus', choices: [{ message: { role: 'assistant', content: '' } }] })
+        : HttpResponse.json({ model: 'qwen-plus', choices: [{ message: { role: 'assistant', content: '已恢复' } }] });
+    }));
+    await expect(session().send('test')).resolves.toMatchObject({ text: '已恢复' });
+    expect(calls).toBe(2);
+  });
+
   it('disables Tool Calling when the model catalog explicitly rejects it', () => {
     const runtime = new IslaRuntime();
     runtime.use(createBailianPlugin({ provider: 'bailian', model: 'deepseek-v4-flash', toolCalling: false, apiKey: 'test-only-key', baseURL: 'https://workspace.example/compatible-mode/v1', timeoutMs: 1000, debug: false, maxContextTurns: 20, maxContextChars: 60000, contextRetainTurns: 6, modelRetries: 0, memoryEnabled: false }));
@@ -63,7 +75,7 @@ describe('Bailian provider contract', () => {
     runtime.use(createBailianPlugin({ provider: 'bailian', model: 'qwen-plus', apiKey: 'test-only-key', baseURL: 'https://workspace.example/compatible-mode/v1', timeoutMs: 1000, debug: false, maxContextTurns: 20, maxContextChars: 60000, contextRetainTurns: 6, modelRetries: 0, memoryEnabled: false }));
     const response = await runtime.createSession({ providerId: 'bailian', enableTools: true, projectRoot: process.cwd() }).send('读取 README');
     expect(response.text).toBeDefined();
-    expect(body).toMatchObject({ model: 'qwen-plus', stream: false });
+    expect(body).toMatchObject({ model: 'qwen-plus', stream: false, thinking: { type: 'disabled' } });
     expect((body as { tools?: unknown[] }).tools).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'function', function: expect.objectContaining({ name: 'read_text_file' }) })]));
   });
 });

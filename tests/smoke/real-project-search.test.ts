@@ -5,18 +5,18 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { defaultConfigPath } from "../../src/config/store.js";
 
 const enabled = process.env.ISLA_RUN_REAL_SMOKE === "1";
-const configured = Boolean(process.env.DEEPSEEK_API_KEY && process.env.ISLA_MODEL);
 const tracePath = process.env.ISLA_NDJSON_LOG;
 
-describe.skipIf(!enabled || !configured)("real v0.2.3 project search", () => {
+describe.skipIf(!enabled)("real Profile project search", () => {
   it("uses search_project and returns a verifiable source", async () => {
     const root = await mkdtemp(join(tmpdir(), "isla-real-project-search-"));
     const sessionDir = await mkdtemp(join(tmpdir(), "isla-real-project-session-"));
     const memoryDir = await mkdtemp(join(tmpdir(), "isla-real-project-memory-"));
     await writeFile(join(root, "PROJECT-FACT.md"), "Isla 的唯一验收代号是 ORBIT-731。\n", "utf8");
-    const child = spawn(process.execPath, [resolve("dist/entrypoints/cli.js"), "--env", "--protocol", "ndjson"], { cwd: root, env: { ...process.env, ISLA_PROVIDER: "deepseek", ISLA_SESSION_DIR: sessionDir, ISLA_MEMORY_DB: join(memoryDir, "memory.sqlite"), ISLA_MEMORY_ENABLED: "0" }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(process.execPath, [resolve("dist/entrypoints/cli.js"), "--config", defaultConfigPath(), "--protocol", "ndjson"], { cwd: root, env: { ...process.env, ISLA_SESSION_DIR: sessionDir, ISLA_MEMORY_DB: join(memoryDir, "memory.sqlite"), ISLA_MEMORY_ENABLED: "0" }, stdio: ["pipe", "pipe", "pipe"] });
     const events: Array<{ type: string; tool?: string; ok?: boolean; text?: string; projectSources?: readonly { path: string; startLine: number }[] }> = [];
     const stderr: string[] = [];
     child.stderr.on("data", chunk => stderr.push(String(chunk).replace(/api[_-]?key|authorization/gi, "[redacted]")));

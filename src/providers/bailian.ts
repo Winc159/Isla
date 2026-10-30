@@ -38,7 +38,7 @@ class BailianProvider implements ModelProvider {
         ...(request.maxCompletionTokens ? { max_completion_tokens: request.maxCompletionTokens } : {}),
       } as never, options?.signal ? { signal: options.signal } : undefined);
       const text = response.choices[0]?.message.content;
-      if (!text?.trim()) throw new RuntimeError({ code: 'PROVIDER_EMPTY_RESPONSE', recoverable: false, message: '百炼模型返回了空回答。' });
+      if (!text?.trim()) throw new RuntimeError({ code: 'PROVIDER_EMPTY_RESPONSE', recoverable: true, message: '百炼模型返回了空回答。' });
       return {
         text,
         model: response.model,
@@ -54,15 +54,17 @@ class BailianProvider implements ModelProvider {
       const response = await this.client.chat.completions.create({
         model: this.model,
         messages: request.messages.map(message => toChatMessage(message)) as never,
+        // Qwen reasoning models may otherwise spend the bounded completion on
+        // reasoning_content without returning either visible text or tool calls.
+        thinking: { type: 'disabled' as const },
         ...(request.tools ? { tools: request.tools.map(toChatTool) } : {}),
-        ...(request.tools?.length ? {} : { thinking: { type: 'disabled' as const } }),
         ...(request.toolChoice ? { tool_choice: request.toolChoice === 'auto' || request.toolChoice === 'required' ? request.toolChoice : { type: 'function', function: { name: request.toolChoice.name } } } : {}),
         stream: false,
         ...(request.maxCompletionTokens ? { max_completion_tokens: request.maxCompletionTokens } : {}),
       } as never, options?.signal ? { signal: options.signal } : undefined);
       const message = response.choices[0]?.message as { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> } | undefined;
       const toolCalls = message?.tool_calls?.map(call => ({ id: call.id ?? '', name: call.function?.name ?? '', arguments: call.function?.arguments ?? '' })) ?? [];
-      if (!toolCalls.length && !message?.content?.trim()) throw new RuntimeError({ code: 'PROVIDER_EMPTY_RESPONSE', recoverable: false, message: '百炼模型返回了空回答。' });
+      if (!toolCalls.length && !message?.content?.trim()) throw new RuntimeError({ code: 'PROVIDER_EMPTY_RESPONSE', recoverable: true, message: '百炼模型返回了空回答。' });
       return { text: message?.content ?? '', model: response.model, ...(toolCalls.length ? { toolCalls } : {}) };
     } catch (error) { throw normalizeProviderError(error, 'Bailian'); }
   }

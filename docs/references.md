@@ -65,6 +65,10 @@
 
 - [MCP Specification](https://modelcontextprotocol.io/specification/) — MCP 当前稳定协议、版本与扩展边界；v0.4.0 使用官方 SDK，不手写 wire protocol；查看日期 2026-09-20。
 - [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) — 官方 TypeScript client/server/transport 实现；实施时必须再次确认 v2 稳定包名、版本与 Node 要求并锁定依赖；查看日期 2026-09-20。
+- [MCP TypeScript SDK Connect Guide](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/clients/connect.md) — v0.8.2 采用官方 Streamable HTTP 与 stdio transports，不自研协议或 legacy SSE parser；查看日期 2026-10-29。
+- [MCP TypeScript SDK OAuth Guide](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/clients/oauth.md) — v0.8.2 的 OAuth discovery/issuer/PKCE/token exchange 交给 SDK；Isla 负责 state 校验、Resident Host callback 与私有凭据存储；查看日期 2026-10-30。
+- [MCP Filesystem Server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem) — 官方开源 filesystem MCP Server，用于 v0.8.2 外部 stdio 互操作验收（npm `@modelcontextprotocol/server-filesystem@2.1.0`）；只在隔离临时目录执行只读测试，不作为 Isla 运行时依赖；查看日期 2026-10-30。
+- [MCP Client Redirect Credential Disclosure Advisory](https://github.com/modelcontextprotocol/typescript-sdk/security/advisories/GHSA-6prh-2h8m-c8cw) — 使用 Client 2.3.0 修复 2.0.0–2.2.x HTTP/OAuth 跨源重定向泄漏问题，并回归同源 redirect policy；查看日期 2026-10-29。
 - [MCP Architecture](https://modelcontextprotocol.io/docs/learn/architecture) — Host、Client、Server 责任与 tools/resources/prompts 概念；Isla v0.4.0 只实现 Host 消费本地 stdio tools；查看日期 2026-09-20。
 - [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) — 小红书、抖音等平台采集能力的首个外部互操作候选；其非商业学习许可、浏览器状态和安装依赖均由独立项目负责，不进入 Isla 包；查看日期 2026-09-20。
 

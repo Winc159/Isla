@@ -8,12 +8,12 @@ import { loadRuntime } from '../runtime/bootstrap.js';
 import { createSessionFactory } from '../runtime/session-factory.js';
 import { ResourceBridgeClient } from '../resource/bridge-client.js';
 
-const loaded = await loadRuntime();
+const runtimePath = defaultLocalRuntimeConfigPath();
+const local = await loadOrCreateLocalRuntimeConfig(runtimePath);
+const loaded = await loadRuntime(process.argv.slice(2), process.env, { mcpOAuthCallbackBaseUrl: `http://${local.host.host}:${local.host.port}` });
 const application = createApplication(loaded.config, loaded.runtime, { diagnostics: createStderrDiagnosticSink(loaded.config.logLevel ?? 'normal', process.stderr), ...(loaded.mcpHost ? { mcpHost: loaded.mcpHost } : {}) });
 const policyRules = await application.policies.list();
 const workspaceRoot = loaded.config.workspaceRoot ?? process.cwd();
-const runtimePath = defaultLocalRuntimeConfigPath();
-const local = await loadOrCreateLocalRuntimeConfig(runtimePath);
 const resourceHost = local.resource.host === '0.0.0.0' ? '127.0.0.1' : local.resource.host;
 const resourceBridge = new ResourceBridgeClient(`http://${resourceHost}:${local.resource.port}`, local.resource.token);
 if (loaded.config.capabilityPolicy?.resourceEnabled !== false) await resourceBridge.health();
@@ -29,7 +29,7 @@ const host = new ResidentHost({
   uiDirectory: join(dirname(fileURLToPath(import.meta.url)), '../../dist/agent-ui'),
   defaultWorkspaceRoot: workspaceRoot,
   resourceBridge,
-  ...(loaded.mcpHost ? { mcpStatuses: () => loaded.mcpHost!.statuses() } : {}),
+  ...(loaded.mcpHost ? { mcpStatuses: () => loaded.mcpHost!.statuses(), mcpAuthorizationUrl: (serverId: string) => loaded.mcpHost!.authorizationUrl(serverId), finishMcpAuthorization: (serverId: string, params: URLSearchParams) => loaded.mcpHost!.finishAuthorization(serverId, params), mcpOAuthCallbackServerId: (pathname: string) => loaded.mcpHost!.callbackServerId(pathname), mcpOAuthCallbackOrigin: (serverId: string) => loaded.mcpHost!.callbackOrigin(serverId) } : {}),
   ...(application.memory.store ? { memoryStore: application.memory.store } : {}),
   contextLimits: { maxContextTurns: loaded.config.maxContextTurns, maxContextChars: loaded.config.maxContextChars, maxContextTokens: loaded.config.maxContextTokens, maxOutputTokens: loaded.config.maxOutputTokens, contextReserveTokens: loaded.config.contextReserveTokens, contextRetainTurns: loaded.config.contextRetainTurns },
   createSession: (stored, requestedWorkspace, events) => requestedWorkspace

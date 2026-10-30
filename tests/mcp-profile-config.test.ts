@@ -7,7 +7,7 @@ const config: IslaConfigFileV1 = { version: 1, defaultProfile: 'main', profiles:
 
 describe('MCP profile configuration', () => {
   it('lists only a safe summary', () => {
-    expect(listMcpConfig(config, 'main')).toEqual([{ id: 'local', required: false, commandConfigured: true, argsCount: 1, cwdConfigured: false, envKeys: [], sensitiveEnvCount: 1, startupTimeoutMs: 10_000, callTimeoutMs: 60_000 }]);
+    expect(listMcpConfig(config, 'main')).toEqual([{ id: 'local', required: false, transport: 'stdio', endpointConfigured: false, commandConfigured: true, argsCount: 1, cwdConfigured: false, envKeys: [], sensitiveEnvCount: 1, startupTimeoutMs: 10_000, callTimeoutMs: 60_000 }]);
   });
 
   it('replaces one profile without mutating the input or other profiles', () => {

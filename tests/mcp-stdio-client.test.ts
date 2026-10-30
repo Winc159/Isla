@@ -11,7 +11,7 @@ describe('MCP stdio client spike', () => {
     try {
       await client.connect();
       const tools = await client.listTools();
-      expect(tools.map(tool => tool.name)).toEqual(['ping', 'structured', 'slow', 'failure', 'unsupported', 'oversize', 'crash']);
+      expect(tools.map(tool => tool.name)).toEqual(['ping', 'disable_ping', 'structured', 'slow', 'failure', 'unsupported', 'oversize', 'crash', 'ask_destination']);
       await expect(client.callTool('ping', {})).resolves.toMatchObject({ content: [{ type: 'text', text: 'pong' }] });
     } finally {
       await client.close();

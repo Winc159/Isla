@@ -117,14 +117,14 @@ API Key 与 Profile 保存在同一文件中，是本地明文凭据，请按私
 测试、CI 或临时运行仍可使用环境变量：将 `.env.example` 复制为 `.env`，然后使用显式的 `--env` 启动：
 
 ```bash
-npm run dev -- --env
+npm run dev:env
 ```
 
 构建后也可以运行：
 
 ```bash
 npm run build
-npm start -- --env
+npm run start:env
 ```
 
 输入 `/new` 开启新对话，输入 `/sessions` 通过方向键选择历史会话，输入 `/memory` 查看长期记忆，输入 `/trace` 查看安全运行摘要，输入 `/config` 查看启动配置，输入 `/profile` 查看当前 Profile，输入 `/exit` 或空闲时按 `Ctrl+C` 退出；生成期间第一次 `Ctrl+C` 取消当前回合，未收敛时第二次才强制退出。
@@ -199,14 +199,14 @@ printf '{"type":"exit"}\n' | isla --protocol ndjson
 
 首次执行 `isla` 时先完成本地 Profile 向导；NDJSON 命令应输出 `ready` 和 `bye`。随后使用目标主机上的隔离 Profile 完成一次普通问答、一次只读 Tool 调用、取消、Session 恢复和退出。真实 Provider 请求仍需用户明确授权，并且凭据只保存在目标主机本地配置中。
 
-真实 DeepSeek smoke 必须显式开启，并使用当前 shell 已配置的环境变量：
+真实 Provider smoke 必须显式开启，并使用 Isla 默认 Profile（`~/.isla/config.json`）中的 Provider、模型和凭据。测试不会读取 `.env` 或通过环境变量切换 Provider：
 
 ```powershell
 $env:ISLA_RUN_REAL_SMOKE = "1"
 npm run test:smoke:real
 ```
 
-该命令要求 `DEEPSEEK_API_KEY` 和 `ISLA_MODEL`。未满足条件时测试保持跳过，避免默认测试产生网络请求或费用。
+未显式设置开关时测试保持跳过，避免默认测试产生网络请求或费用。开启后若默认 Profile 不可用，测试会明确失败；如需切换模型，请先修改 Config/Profile。
 
 完整真实 NDJSON 场景（两轮问答、inspect、只读 discuss、Approval 拒绝/批准、new_session 和退出）使用：
 

@@ -23,7 +23,7 @@ export const mcpCommand: CliCommand = {
       if (loaded.status !== 'ready') { context.output.write(`配置不可用：${loaded.status === 'invalid' || loaded.status === 'unreadable' ? loaded.message : '未找到可用 Profile'}\n`); return { type: 'continue' }; }
       const entries = listMcpConfig(loaded.config, context.profileName);
       context.output.write(`Profile：${context.profileName}\nMCP 配置：${entries.length ? '' : '未配置'}\n`);
-      for (const item of entries) context.output.write(`  ${item.id} · ${item.required ? 'required' : 'optional'} · args=${item.argsCount} · env=${item.envKeys.length || item.sensitiveEnvCount ? `${item.envKeys.length} 个公开 key${item.sensitiveEnvCount ? `、secret(${item.sensitiveEnvCount})` : ''}（值已隐藏）` : '无'} · timeout=${item.startupTimeoutMs}/${item.callTimeoutMs}\n`);
+      for (const item of entries) context.output.write(`  ${item.id} · ${item.transport} · ${item.required ? 'required' : 'optional'} · ${item.endpointConfigured ? 'HTTPS endpoint' : `args=${item.argsCount}`} · env=${item.envKeys.length || item.sensitiveEnvCount ? `${item.envKeys.length} 个公开 key${item.sensitiveEnvCount ? `、secret(${item.sensitiveEnvCount})` : ''}（值已隐藏）` : '无'} · timeout=${item.startupTimeoutMs}/${item.callTimeoutMs}\n`);
       const configuredServers = loaded.config.profiles[context.profileName]?.mcp?.servers;
       const restartRequired = context.mcpHost ? fingerprintMcpServers(configuredServers) !== context.mcpHost.configFingerprint : false;
       context.output.write(`${restartRequired ? '当前 MCP 配置已改变，请重启 Isla。' : '当前 MCP 配置与本次启动一致。'}\n`);
@@ -87,6 +87,28 @@ async function runMcpSetup(context: Parameters<CliCommand['execute']>[0]): Promi
       if (action === 'add' && index >= 0) { context.output.write(`Server 已存在：${id}\n`); return; }
       if (action === 'edit' && index < 0) { context.output.write(`未找到 Server：${id}\n`); return; }
       const old = index >= 0 ? current[index] : undefined;
+      const transportInput = (await rl.question(`transport（stdio/streamable-http）${old ? ` [${old.transport}]` : ' [stdio]'}: `)).trim();
+      const transport = transportInput || old?.transport || 'stdio';
+      if (transport !== 'stdio' && transport !== 'streamable-http') { context.output.write('不支持的 MCP transport，未写入配置。\n'); return; }
+      if (transport === 'streamable-http') {
+        const url = (await rl.question(`HTTPS MCP endpoint${old?.url ? ` [${old.url}]` : ''}: `)).trim() || old?.url;
+        if (!url) { context.output.write('endpoint 不能为空，未写入配置。\n'); return; }
+        const callbackBaseUrl = (await rl.question(`OAuth 回调基址（远程 Host 填 HTTPS 公网地址；留空使用本机 loopback${old?.oauth?.callbackBaseUrl ? ` [${old.oauth.callbackBaseUrl}]` : ''}）: `)).trim() || old?.oauth?.callbackBaseUrl;
+        const headersInput = (await rl.question('额外 HTTP headers JSON（留空表示无；敏感认证头不允许）: ')).trim();
+        let headers: Record<string, string> = {};
+        try { headers = headersInput ? JSON.parse(headersInput) as Record<string, string> : (old?.headers ? { ...old.headers } : {}); }
+        catch { context.output.write('headers JSON 无效，未写入配置。\n'); return; }
+        const requiredInput = (await rl.question(`required（y/N）${old?.required ? ' [y]' : ''}: `)).trim().toLowerCase();
+        const required = requiredInput ? requiredInput === 'y' : (old?.required ?? false);
+        const startupTimeoutMs = Number((await rl.question(`startupTimeoutMs [${old?.startupTimeoutMs ?? 10000}]: `)).trim() || old?.startupTimeoutMs || 10000);
+        const callTimeoutMs = Number((await rl.question(`callTimeoutMs [${old?.callTimeoutMs ?? 60000}]: `)).trim() || old?.callTimeoutMs || 60000);
+        const next = { id, transport, url, ...(callbackBaseUrl ? { oauth: { callbackBaseUrl } } : {}), ...(Object.keys(headers).length ? { headers } : {}), required, startupTimeoutMs, callTimeoutMs, env: {} } as McpServerConfig;
+        if (index >= 0) current[index] = next; else current.push(next);
+        if ((await rl.question('保存 MCP 配置？(y/N): ')).trim().toLowerCase() !== 'y') { context.output.write('已取消，未写入配置。\n'); return; }
+        await saveMcpServers(context.configStore, context.profileName, current, loaded.revision);
+        context.output.write('MCP 配置已保存，下次启动 Isla 时生效。\n');
+        return;
+      }
       const command = (await rl.question(`command${old ? ` [${old.command}]` : ''}: `)).trim() || old?.command;
       if (!command) { context.output.write('command 不能为空，未写入配置。\n'); return; }
       const args = await promptArguments(rl, old?.args ?? []);

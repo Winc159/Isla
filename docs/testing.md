@@ -23,7 +23,7 @@
 | Browser/PTY | Browser mock/适配器测试默认运行；真实 PTY 用 `npm run test:pty`，依赖可选 `node-pty` 和本机工具链 | Browser 离线测试是；真实 PTY 否 |
 | Resource 子系统 | `tests/resource/`，覆盖契约、SQLite schema、Scheduler、百度下载、归档、HTTP API、Web 工具台后端和 mock E2E | 是 |
 | Resource Worker | Config/Profile、Host structured inference、HTTP client、三类 schema、调用条件、失败降级和命名兜底 | 是 |
-| 真实 Provider | `test:smoke:real`、`test:smoke:real:ndjson`，需要显式开关、网络、Profile/环境和费用授权 | 否 |
+| 真实 Provider | `test:smoke:real`、`test:smoke:real:ndjson`，需要显式开关、网络、默认 Profile 和费用授权 | 否 |
 | 本地真实评估 | `.isla-local/evaluation-scripts/` 与 `.isla-local/evaluations/` | 否，且不得入 Git |
 | 发布前检查 | `verify`、`pack:check`、Markdown/安全/版本检查 | 是或发布前手工执行 |
 
@@ -47,7 +47,7 @@ CI 在 Node.js 24 上对 Ubuntu、Windows 和 macOS 执行 `npm ci`、`npm run c
 
 ## 真实网络与本机依赖
 
-真实 Provider 测试必须由 `ISLA_RUN_REAL_SMOKE=1` 等显式开关启用，并使用隔离配置。MCP 第三方 Server、Playwright 浏览器安装、真实 PTY、Linux systemd/macOS launchd 和跨机部署都依赖本机环境，不能用 Windows 离线测试代替。
+真实 Provider 测试必须由 `ISLA_RUN_REAL_SMOKE=1` 等显式开关启用，并读取 Isla 默认 Config/Profile；不得依赖 `.env` 或通过环境变量覆盖 Provider/模型。需要隔离配置时先创建/选择明确 Profile。MCP 第三方 Server、Playwright 浏览器安装、真实 PTY、Linux systemd/macOS launchd 和跨机部署都依赖本机环境，不能用 Windows 离线测试代替。
 
 未设置开关而被跳过的真实测试只能记录为“未执行”或“跳过”，不能写成通过。真实网络结果也不能替代确定性的 fixture 与单元测试。
 

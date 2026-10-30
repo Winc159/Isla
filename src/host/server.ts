@@ -42,6 +42,10 @@ export interface ResidentHostOptions {
   readonly defaultWorkspaceRoot?: string;
   readonly resourceBridge?: import('../resource/bridge-client.js').ResourceBridgeClient;
   readonly mcpStatuses?: () => readonly import('../mcp/types.js').McpStatus[];
+  readonly mcpAuthorizationUrl?: (serverId: string) => string | undefined;
+  readonly finishMcpAuthorization?: (serverId: string, params: URLSearchParams) => Promise<void>;
+  readonly mcpOAuthCallbackServerId?: (pathname: string) => string | undefined;
+  readonly mcpOAuthCallbackOrigin?: (serverId: string) => string | undefined;
   readonly contextLimits?: { readonly maxContextTurns: number; readonly maxContextChars: number; readonly maxContextTokens: number; readonly maxOutputTokens: number; readonly contextReserveTokens: number; readonly contextRetainTurns: number };
 }
 
@@ -130,6 +134,24 @@ export class ResidentHost {
       this.send(response, 200, { token: this.token, defaultWorkspaceRoot: this.options.defaultWorkspaceRoot ?? process.cwd() });
       return;
     }
+    const oauthCallbackServerId = this.options.mcpOAuthCallbackServerId?.(url.pathname);
+    if (request.method === 'GET' && oauthCallbackServerId) {
+      const callbackOrigin = this.options.mcpOAuthCallbackOrigin?.(decodeURIComponent(oauthCallbackServerId));
+      if (!callbackOrigin || requestOrigin(request) !== callbackOrigin) { this.send(response, 400, { error: 'OAUTH_CALLBACK_ORIGIN_INVALID' }); return; }
+      response.statusCode = 200;
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.setHeader('cache-control', 'no-store');
+      response.setHeader('referrer-policy', 'no-referrer');
+      try {
+        if (!this.options.finishMcpAuthorization) throw new Error('MCP_OAUTH_UNAVAILABLE');
+        await this.options.finishMcpAuthorization(decodeURIComponent(oauthCallbackServerId), url.searchParams);
+        response.end('<!doctype html><meta charset="utf-8"><title>Isla 授权完成</title><p>授权已完成。请返回 Isla 工作台。</p>');
+      } catch {
+        response.statusCode = 400;
+        response.end('<!doctype html><meta charset="utf-8"><title>Isla 授权未完成</title><p>授权未完成或已过期。请返回 Isla 工作台重新发起。</p>');
+      }
+      return;
+    }
     if (this.options.uiDirectory && (request.method === 'GET' || request.method === 'HEAD') && isUiAssetPath(url.pathname)) {
       await this.serveUiAsset(url.pathname, response, request.method === 'HEAD');
       return;
@@ -140,6 +162,14 @@ export class ResidentHost {
       if (request.method === 'POST' && url.pathname === '/api/v1/inference/structured') { await this.structuredInference(request, response); return; }
       if (request.method === 'GET' && url.pathname === '/capabilities') { this.send(response, 200, this.options.capabilitySnapshot?.() ?? { version: 1, hash: '', entries: [] }); return; }
       if (request.method === 'GET' && url.pathname === '/mcp/status') { this.send(response, 200, { servers: this.options.mcpStatuses?.() ?? [] }); return; }
+      const oauthStart = url.pathname.match(/^\/mcp\/oauth\/([A-Za-z0-9_-]{1,64})\/start$/u);
+      if (request.method === 'POST' && oauthStart) {
+        const authorizationUrl = this.options.mcpAuthorizationUrl?.(decodeURIComponent(oauthStart[1]!));
+        if (!authorizationUrl) { this.send(response, 409, { error: 'MCP_AUTH_NOT_REQUIRED' }); return; }
+        response.setHeader('cache-control', 'no-store');
+        this.send(response, 200, { authorizationUrl });
+        return;
+      }
       if (request.method === 'GET' && url.pathname === '/resource/jobs') { if (!this.options.resourceBridge) { this.send(response, 503, { error: 'RESOURCE_UNAVAILABLE' }); return; } try { const jobs = await this.options.resourceBridge.list(undefined, 50); this.send(response, 200, { jobs }); } catch { this.send(response, 503, { error: 'RESOURCE_UNAVAILABLE' }); } return; }
       if (request.method === 'GET' && url.pathname === '/sessions') { this.send(response, 200, { sessions: await this.list(url.searchParams.get('workspaceKey') ?? undefined, url.searchParams.get('q') ?? '', url.searchParams.get('archived') === 'true') }); return; }
       if (request.method === 'POST' && url.pathname === '/workspace/resolve') { const body = await readJson(request); if (typeof body.workspaceRoot !== 'string' || !body.workspaceRoot.trim()) { this.send(response, 400, { error: 'WORKSPACE_REQUIRED' }); return; } const root = await resolveWorkspace(body.workspaceRoot, undefined, process.cwd()); this.send(response, 200, { workspaceRoot: root, workspaceKey: workspaceKey(root) }); return; }
@@ -467,6 +497,13 @@ function safeLabel(value: string): string { return /^[a-z0-9_.-]{1,64}$/iu.test(
 function safeSummary(value: string): string { return value.replaceAll(/[\r\n\t]/gu, ' ').replaceAll(/(?:[A-Za-z]:\\|\\\\)[^\s"']+/gu, '[路径已隐藏]').replaceAll(/\/(?:Users|home|private|root)\/[^\s"']+/gu, '[路径已隐藏]').slice(0, 500); }
 
 function isLoopback(host: string): boolean { return host === '127.0.0.1' || host === '::1' || host === 'localhost'; }
+function requestOrigin(request: IncomingMessage): string | undefined {
+  const host = request.headers.host;
+  const forwardedProto = request.headers['x-forwarded-proto'];
+  const protocol = typeof forwardedProto === 'string' && !forwardedProto.includes(',') ? forwardedProto : (request.socket as typeof request.socket & { encrypted?: boolean }).encrypted ? 'https' : 'http';
+  if (!host || !/^(https?)$/u.test(protocol)) return undefined;
+  try { return new URL(`${protocol}://${host}`).origin; } catch { return undefined; }
+}
 function sameOriginBrowserRequest(request: IncomingMessage): boolean {
   if (request.headers['sec-fetch-site'] !== 'same-origin' || typeof request.headers.host !== 'string') return false;
   try {

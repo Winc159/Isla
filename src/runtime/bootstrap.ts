@@ -40,7 +40,7 @@ export function createRuntime(config: AppConfig): IslaRuntime {
   else r.use(createLocalPlugin(config));
   return r;
 }
-export async function loadRuntime(argv: readonly string[] = process.argv.slice(2), env: Record<string, string | undefined> = process.env): Promise<{ runtime: IslaRuntime; config: AppConfig; startup: CliStartupArgs; worker?: WorkerRuntimeBinding; mcpHost?: McpHost }> {
+export async function loadRuntime(argv: readonly string[] = process.argv.slice(2), env: Record<string, string | undefined> = process.env, options: { readonly mcpOAuthCallbackBaseUrl?: string; readonly mcpOAuthStoreRoot?: string } = {}): Promise<{ runtime: IslaRuntime; config: AppConfig; startup: CliStartupArgs; worker?: WorkerRuntimeBinding; mcpHost?: McpHost }> {
   const startup = parseCliStartupArgs(argv);
   const loaded = await loadStartupConfig(startup, env);
   const config = loaded.config;
@@ -66,7 +66,7 @@ export async function loadRuntime(argv: readonly string[] = process.argv.slice(2
         : (() => { throw new Error(`--models is not supported for the ${resolvedConfig.provider} provider`); })();
     process.stdout.write(`${JSON.stringify(models)}\n`);
   }
-  const mcpHost = resolvedConfig.mcpServers?.length ? new McpHost(resolvedConfig.mcpServers) : undefined;
+  const mcpHost = resolvedConfig.mcpServers?.length ? new McpHost(resolvedConfig.mcpServers, { ...(options.mcpOAuthCallbackBaseUrl ? { callbackBaseUrl: options.mcpOAuthCallbackBaseUrl } : {}), ...(options.mcpOAuthStoreRoot ? { oauthStoreRoot: options.mcpOAuthStoreRoot } : {}) }) : undefined;
   if (mcpHost) await mcpHost.start();
   return { runtime: createRuntime(resolvedConfig), config: resolvedConfig, startup, ...(loaded.worker ? { worker: createWorkerRuntimeBinding(loaded.worker.config, loaded.worker.name, loaded.worker.revision) } : {}), ...(mcpHost ? { mcpHost } : {}) };
 }
@@ -84,7 +84,7 @@ async function loadStartupConfig(startup: CliStartupArgs, env: Record<string, st
     return { config: resolvedConfig, ...(worker ? { worker: { name: worker.name, config: profileToAppConfig(worker.profile), revision: String(loaded.revision) } } : {}) };
   }
   if (loaded.status === 'invalid' || loaded.status === 'unreadable') throw new Error(`Unable to load Isla config: ${loaded.message}`);
-  if (startup.profileName) throw new Error(`Isla profile configuration is unavailable: ${startup.profileName}`);
-  // Migration compatibility: a complete environment configuration remains usable until a config file is created.
-  return { config: readConfig(env) };
+  throw new Error(startup.profileName
+    ? `Isla profile configuration is unavailable: ${startup.profileName}. Create a Config/Profile or explicitly opt in with --env.`
+    : `Isla Config/Profile is unavailable. Create a Config/Profile or explicitly opt in to environment compatibility with --env.`);
 }

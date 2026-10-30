@@ -7,10 +7,19 @@ import { dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { MemoryStore } from "../../src/memory/store.js";
 import { describe, expect, it } from "vitest";
+import { ConfigStore, defaultConfigPath } from "../../src/config/store.js";
 
 const enabled = process.env.ISLA_RUN_REAL_SMOKE === "1";
-const configured = Boolean(process.env.DEEPSEEK_API_KEY && process.env.ISLA_MODEL);
 const tracePath = process.env.ISLA_NDJSON_LOG?.trim();
+
+async function readDefaultProfile(): Promise<{ readonly name: string; readonly profile: Record<string, unknown> }> {
+  const loaded = await new ConfigStore(defaultConfigPath()).load();
+  if (loaded.status !== "ready") throw new Error(`DEFAULT_PROFILE_CONFIG_UNAVAILABLE:${loaded.status}`);
+  const name = loaded.config.defaultProfile;
+  const profile = loaded.config.profiles[name];
+  if (!profile) throw new Error(`DEFAULT_PROFILE_UNAVAILABLE:${name}`);
+  return { name, profile: profile as unknown as Record<string, unknown> };
+}
 
 if (tracePath) {
   mkdirSync(dirname(tracePath), { recursive: true });
@@ -35,10 +44,10 @@ class Driver {
   readonly stderr: string[] = [];
   private readonly waiters = new Map<string, Array<(event: Event) => void>>();
   private readonly child: ChildProcessWithoutNullStreams;
-  constructor(cwd: string, sessionDir: string, memoryPath: string, configPath?: string) {
-    this.child = spawn(process.execPath, [resolve("dist/entrypoints/cli.js"), ...(configPath ? ["--config", configPath, "--profile", "eval"] : ["--env"]), "--protocol", "ndjson"], {
+  constructor(cwd: string, sessionDir: string, memoryPath: string, configPath = defaultConfigPath(), profileName = "default") {
+    this.child = spawn(process.execPath, [resolve("dist/entrypoints/cli.js"), "--config", configPath, "--profile", profileName, "--protocol", "ndjson"], {
       cwd,
-      env: { ...process.env, ISLA_PROVIDER: "deepseek", ISLA_SESSION_DIR: sessionDir, ISLA_MEMORY_DB: memoryPath, ISLA_MEMORY_ENABLED: "1" },
+      env: { ...process.env, ISLA_SESSION_DIR: sessionDir, ISLA_MEMORY_DB: memoryPath, ISLA_MEMORY_ENABLED: "1" },
       stdio: ["pipe", "pipe", "pipe"],
     });
     const rl = createInterface({ input: this.child.stdout });
@@ -195,23 +204,26 @@ async function runRound(round: number): Promise<void> {
   }
 }
 
-describe.skipIf(!enabled || !configured)("real NDJSON acceptance driver", () => {
+describe.skipIf(!enabled)("real NDJSON acceptance driver", () => {
   it("passes the complete scenario twice", async () => {
     await runRound(1);
     await runRound(2);
   }, 300_000);
 });
 
-describe.skipIf(!enabled || !configured)("real Agent Loop web planning driver", () => {
+describe.skipIf(!enabled)("real Agent Loop web planning driver", () => {
   it("autonomously searches, reads, analyzes, and synthesizes a planning request", async () => {
     const root = await mkdtemp(join(tmpdir(), `isla-agent-web-${randomUUID()}-`));
     const sessions = await mkdtemp(join(tmpdir(), `isla-agent-web-sessions-${randomUUID()}-`));
     const configDir = await mkdtemp(join(tmpdir(), `isla-agent-web-config-${randomUUID()}-`));
     const configPath = join(configDir, "config.json");
-    const source = JSON.parse(await readFile(join(process.env.USERPROFILE ?? "", ".isla", "config.json"), "utf8"));
-    source.profiles.eval = { ...source.profiles.deepseek, sessionDirectory: sessions, memory: { ...(source.profiles.deepseek.memory ?? {}), database: join(configDir, "memory.sqlite") }, runtime: { ...(source.profiles.deepseek.runtime ?? {}), timeoutMs: 600_000 }, tools: { webSearch: { enabled: true, maxResults: 5, timeoutMs: 60_000 }, webFetch: { enabled: true, allowedHosts: ["deny.invalid"], allowSearchResultUrls: true } }, appearance: { logLevel: "quiet" } };
-    await writeFile(configPath, JSON.stringify({ version: 1, defaultProfile: "eval", profiles: { eval: source.profiles.eval } }), "utf8");
-    const driver = new Driver(root, sessions, join(configDir, "memory.sqlite"), configPath);
+    const source = await readDefaultProfile();
+    const profile = source.profile as Record<string, unknown>;
+    const memorySettings = profile.memory as Record<string, unknown> | undefined;
+    const runtimeSettings = profile.runtime as Record<string, unknown> | undefined;
+    const evalProfile = { ...profile, sessionDirectory: sessions, memory: { ...memorySettings, database: join(configDir, "memory.sqlite") }, runtime: { ...runtimeSettings, timeoutMs: 600_000 }, tools: { webSearch: { enabled: true, maxResults: 5, timeoutMs: 60_000 }, webFetch: { enabled: true, allowedHosts: ["deny.invalid"], allowSearchResultUrls: true } }, appearance: { logLevel: "quiet" } };
+    await writeFile(configPath, JSON.stringify({ version: 1, defaultProfile: "eval", profiles: { eval: evalProfile } }), "utf8");
+    const driver = new Driver(root, sessions, join(configDir, "memory.sqlite"), configPath, "eval");
     try {
       await driver.wait("ready", undefined, 30_000);
       const ready = driver.events.find(event => event.type === "ready");
@@ -232,16 +244,19 @@ describe.skipIf(!enabled || !configured)("real Agent Loop web planning driver", 
   }, 180_000);
 });
 
-describe.skipIf(!enabled || !configured)("real conversational Agent Loop evaluation", () => {
+describe.skipIf(!enabled)("real conversational Agent Loop evaluation", () => {
   it("adapts follow-up messages to the previous answer", async () => {
     const root = await mkdtemp(join(tmpdir(), `isla-conversation-${randomUUID()}-`));
     const sessions = await mkdtemp(join(tmpdir(), `isla-conversation-sessions-${randomUUID()}-`));
     const configDir = await mkdtemp(join(tmpdir(), `isla-conversation-config-${randomUUID()}-`));
     const configPath = join(configDir, "config.json");
-    const source = JSON.parse(await readFile(join(process.env.USERPROFILE ?? "", ".isla", "config.json"), "utf8"));
-    source.profiles.eval = { ...source.profiles.deepseek, sessionDirectory: sessions, memory: { ...(source.profiles.deepseek.memory ?? {}), database: join(configDir, "memory.sqlite") }, runtime: { ...(source.profiles.deepseek.runtime ?? {}), timeoutMs: 600_000 }, tools: { webSearch: { enabled: true, maxResults: 5, timeoutMs: 60_000 }, webFetch: { enabled: true, allowedHosts: ["deny.invalid"], allowSearchResultUrls: true } }, appearance: { logLevel: "quiet" } };
-    await writeFile(configPath, JSON.stringify({ version: 1, defaultProfile: "eval", profiles: { eval: source.profiles.eval } }), "utf8");
-    const driver = new Driver(root, sessions, join(configDir, "memory.sqlite"), configPath);
+    const source = await readDefaultProfile();
+    const profile = source.profile as Record<string, unknown>;
+    const memorySettings = profile.memory as Record<string, unknown> | undefined;
+    const runtimeSettings = profile.runtime as Record<string, unknown> | undefined;
+    const evalProfile = { ...profile, sessionDirectory: sessions, memory: { ...memorySettings, database: join(configDir, "memory.sqlite") }, runtime: { ...runtimeSettings, timeoutMs: 600_000 }, tools: { webSearch: { enabled: true, maxResults: 5, timeoutMs: 60_000 }, webFetch: { enabled: true, allowedHosts: ["deny.invalid"], allowSearchResultUrls: true } }, appearance: { logLevel: "quiet" } };
+    await writeFile(configPath, JSON.stringify({ version: 1, defaultProfile: "eval", profiles: { eval: evalProfile } }), "utf8");
+    const driver = new Driver(root, sessions, join(configDir, "memory.sqlite"), configPath, "eval");
     try {
       await driver.wait("ready", undefined, 30_000);
       let step = 0;

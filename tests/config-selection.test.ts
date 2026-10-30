@@ -39,9 +39,14 @@ describe('startup config selection', () => {
     expect(result.config).toMatchObject({ provider: 'local', model: 'env-model' });
   });
 
-  it('falls back to complete environment configuration when the file is missing', async () => {
-    const result = await loadRuntime(['--config', configPath], { ISLA_PROVIDER: 'local', ISLA_MODEL: 'env-model', ISLA_BASE_URL: 'http://localhost:1234/v1' });
-    expect(result.config).toMatchObject({ provider: 'local', model: 'env-model' });
+  it('does not fall back to environment configuration when the file is missing', async () => {
+    await expect(loadRuntime(['--config', configPath], { ISLA_PROVIDER: 'local', ISLA_MODEL: 'env-model', ISLA_BASE_URL: 'http://localhost:1234/v1' })).rejects.toThrow('explicitly opt in');
+  });
+
+  it('always selects provider and model from Config/Profile when conflicting environment values exist', async () => {
+    await writeFile(configPath, JSON.stringify({ version: 1, defaultProfile: 'main', profiles: { main: { provider: 'local', model: 'profile-model', baseURL: 'http://localhost:11434/v1' } } }), 'utf8');
+    const result = await loadRuntime(['--config', configPath], { ISLA_PROVIDER: 'deepseek', DEEPSEEK_API_KEY: 'decoy-key', ISLA_MODEL: 'wrong-model' });
+    expect(result.config).toMatchObject({ provider: 'local', model: 'profile-model' });
   });
 
   it('does not allow a missing config file to satisfy an explicit profile', async () => {

@@ -46,6 +46,37 @@ describe('resident host', () => {
     expect(await events.text()).toContain('event: session');
   });
 
+  it('protects OAuth start with Host auth and accepts callbacks only for the configured origin', async () => {
+    let callbackParams = '';
+    let callbackOrigin = '';
+    host = new ResidentHost({
+      host: '127.0.0.1', port: 0, token: 'oauth-host-token', provider: 'fake', model: 'm', sessionStore: store,
+      createSession: () => ({}) as never,
+      mcpAuthorizationUrl: () => 'https://issuer.example.test/authorize?client_id=fixture',
+      mcpOAuthCallbackServerId: path => path === '/prefix/mcp/oauth/callback/docs' ? 'docs' : undefined,
+      mcpOAuthCallbackOrigin: () => callbackOrigin,
+      finishMcpAuthorization: async (_serverId, params) => { callbackParams = params.toString(); },
+    });
+    const address = await host.start();
+    callbackOrigin = `http://${address.host}:${address.port}`;
+    const startUrl = `${callbackOrigin}/mcp/oauth/docs/start`;
+    expect((await fetch(startUrl, { method: 'POST' })).status).toBe(401);
+    const start = await fetch(startUrl, { method: 'POST', headers: { authorization: 'Bearer oauth-host-token' } });
+    expect(start.headers.get('cache-control')).toBe('no-store');
+    expect(await start.json()).toMatchObject({ authorizationUrl: expect.stringContaining('issuer.example.test') });
+
+    const callbackUrl = `${callbackOrigin}/prefix/mcp/oauth/callback/docs?code=fixture-code&state=fixture-state`;
+    const badOrigin = await fetch(callbackUrl, { headers: { 'x-forwarded-proto': 'https' } });
+    expect(badOrigin.status).toBe(400);
+    expect(callbackParams).toBe('');
+    const callback = await fetch(callbackUrl);
+    expect(callback.status).toBe(200);
+    expect(callback.headers.get('cache-control')).toBe('no-store');
+    expect(callback.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(await callback.text()).not.toContain('fixture-code');
+    expect(callbackParams).toContain('state=fixture-state');
+  });
+
   it('rejects non-loopback binding', () => expect(() => new ResidentHost({ host: '0.0.0.0', provider: 'fake', model: 'm', sessionStore: store, createSession: () => ({}) as never })).toThrow('HOST_LOOPBACK_REQUIRED'));
 
   it('searches session messages and archives/restores through the host API', async () => {

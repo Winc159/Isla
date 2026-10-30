@@ -6,6 +6,8 @@ export interface McpConfigSummary {
   readonly id: string;
   readonly required: boolean;
   readonly commandConfigured: boolean;
+  readonly transport: McpServerConfig['transport'];
+  readonly endpointConfigured: boolean;
   readonly argsCount: number;
   readonly cwdConfigured: boolean;
   readonly envKeys: readonly string[];
@@ -20,7 +22,7 @@ export function isSensitiveMcpEnvKey(key: string): boolean {
 
 export function summarizeMcpServer(server: McpServerConfig): McpConfigSummary {
   const envKeys = Object.keys(server.env).sort();
-  return { id: server.id, required: server.required, commandConfigured: Boolean(server.command), argsCount: server.args.length, cwdConfigured: server.cwd !== undefined, envKeys: envKeys.filter(key => !isSensitiveMcpEnvKey(key)), sensitiveEnvCount: envKeys.filter(isSensitiveMcpEnvKey).length, startupTimeoutMs: server.startupTimeoutMs, callTimeoutMs: server.callTimeoutMs };
+  return { id: server.id, required: server.required, transport: server.transport, commandConfigured: Boolean(server.command), endpointConfigured: Boolean(server.url), argsCount: server.args?.length ?? 0, cwdConfigured: server.cwd !== undefined, envKeys: envKeys.filter(key => !isSensitiveMcpEnvKey(key)), sensitiveEnvCount: envKeys.filter(isSensitiveMcpEnvKey).length, startupTimeoutMs: server.startupTimeoutMs, callTimeoutMs: server.callTimeoutMs };
 }
 
 export function listMcpConfig(file: IslaConfigFileV1, profileName?: string): readonly McpConfigSummary[] {

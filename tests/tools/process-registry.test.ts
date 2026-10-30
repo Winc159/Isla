@@ -75,7 +75,7 @@ describe('ExecutionProcessRegistry', () => {
     registry = processes;
     const started = await processes.start({ workspaceRoot: root, adapter: 'managed-toolchain', dependencyId: 'node-runtime', executableId: 'bin/node', executable: 'node', argv: ['--version'] });
     expect(requested).toBe('node-runtime/bin/node');
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await waitFor(() => processes.read(started.processId).events.some(event => /v\d+\.\d+\.\d+/u.test(event.text)));
     expect(processes.status(started.processId)?.adapter).toBe('managed-toolchain');
     expect(processes.read(started.processId).events.map(event => event.text).join('')).toMatch(/v\d+\.\d+\.\d+/u);
   });
