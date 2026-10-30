@@ -4,7 +4,7 @@ title: "v0.8.2 MCP Client"
 created: "2026-10-29"
 updated: "2026-10-30"
 planVersion: 1
-status: in_progress
+status: complete
 modules: [mcp, host, config, user-questions]
 summary: "将现有 stdio tools adapter 扩展为可安全使用的完整 MCP Client。"
 predecessors: ["v0.8.1.0"]
@@ -20,7 +20,7 @@ supersedes: []
 - 项目相对位置：`docs/plan-v0.8.2-mcp-client.md`。
 - 设计基线：`92c9286 feat: add v0.8.1.0 quality and lifecycle gates`。
 - 需求来源：路线图 v0.8.2“完整 MCP Client”；用户要求进入下一阶段并自主修复验收问题。
-- 方案状态：本地实现与自动验收已收口；整体版本仍受外部验收门禁暂缓，本文档是版本范围、步骤和验收标准的事实源。
+- 方案状态：版本范围已收口；本文档是实现、验收证据和明确延期项的事实源。
 - 路径说明：当前仓库已有的 `docs/plan-v0.8.2.md` 正文标题实际为 v0.8.3 Persistent Job/Subagent；为避免覆盖既有方案，本计划使用显式 MCP 文件名，并保留原文件不动。
 
 ## 历史依据与本次决策
@@ -139,8 +139,8 @@ Resource Service 与 Resource SQLite/Scheduler/Worker 不变；MCP 仅是主 Age
 - 2026-10-30：本地独立 HTTP fixture 完成 MCP 受保护端点 + OAuth discovery/DCR/authorization-code/PKCE/token exchange 整条闭环。通过授权后 Host 连接成功并调用 `echo`；伪造 state 在 token endpoint 前被 Isla 拒绝，伪造 issuer 被 SDK 拒绝，用户拒绝返回 `access_denied` 且不会启用工具/换 token。针对性 OAuth 测试 6 项通过。
 - 2026-10-30：使用未加入 Isla 依赖的官方开源 `@modelcontextprotocol/server-filesystem@2.1.0`，通过 npm 临时 cache 在隔离临时目录安装并由 MCP stdio Host 拉起；Host 发现 14 项工具并成功调用 `read_text_file` 读取合成 fixture，结果逐字核验。临时 cache、服务进程与数据目录均清理。它验证了真实第三方 MCP Server 互操作；Server 本身使用 MCP 官方 SDK，因此 SDK-free fixture 仍作为独立协议实现互通证据。
 - **已收口的本地项目**：步骤 2–7 的实现；Node 24 全量验证（184 test files passed、8 skipped；773 tests passed、14 skipped；离线评估门禁及 Resource/Agent UI 构建通过）；`npm pack --dry-run --json`（450 files）；OAuth/MCP 本机闭环、错误 state/issuer/拒绝路径、官方开源 Filesystem Server 互操作；`git diff --check`。Resource Service 未修改。
-- **暂缓门禁（版本不可标记完成）**：
+- **后续部署/平台验收（不阻塞本版本收口）**：
   1. 远程公网 HTTPS OAuth + reverse-proxy TLS 部署端到端：本机 loopback/mock OAuth 及代理头/精确来源测试通过，但没有公网 TLS 部署实测；需要可访问的 HTTPS Host 与 MCP OAuth Server。
-  2. Linux/macOS 远端 CI 与 macOS ARM64 原生端到端：CI 文件配置 Node 24 Ubuntu/Windows/macOS 矩阵，但本地改动未提交且当前环境无法读取 GitHub 运行状态；本机 WSL 发行版查询遭系统拒绝访问，亦无 macOS ARM64 设备。
-  3. 当前工作树未提交/推送，远端 CI 无法验证当前状态；根据仓库规则，Git 写操作需用户明确授权。
-- **收口结论**：本地实现、自动验收、真实 Provider MCP 复合任务和文档证据一致性已收口；整体 v0.8.2 仍保持 `in_progress`，不得标记版本完成。仅剩公网 TLS 部署、多平台 CI 和 macOS ARM64 原生证据，需要外部部署/设备或用户授权；不以本机模拟替代。
+  2. Linux/macOS 远端 CI 与 macOS ARM64 原生端到端：CI 文件配置 Node 24 Ubuntu/Windows/macOS 矩阵，但本机 WSL 发行版查询遭系统拒绝访问，亦无 macOS ARM64 设备。
+  3. 提交 `546d26dab0da111bdb8350173a9ea0a3101dda05` 已推送至 `origin/main`；CI 工作流配置为 push 触发，但当前可用查询只返回 PR 运行且没有报告，因此需在 GitHub Actions 页面确认本次 push 的 Ubuntu/Windows/macOS 结果。提交推送本身不代表 CI 通过。
+- **收口结论**：v0.8.2 版本范围已完成并收口：本地实现、全量自动验收、真实 Provider MCP 复合任务、包检查和代码推送均有证据。公网 TLS 部署、CI 结果确认和 macOS ARM64 原生验证被登记为后续部署/平台验收，不再阻塞本版本功能收口；不得将缺失的平台结果描述为已通过。

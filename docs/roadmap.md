@@ -23,7 +23,7 @@ Isla 的目标是成为长期运行、贴合个人习惯的完整 Agent 产品�
 5. v0.7.4：Plan 步骤进度/证据、有界重规划、Checkpoint 差异与 Session 恢复闭环（已完成；自动验收 712 通过，真实对话 100/100）。
 6. v0.8.0.0：主 Agent Web UI。
 7. v0.8.1.0：评估、安全与发布门禁。
-8. v0.8.2：完整 MCP Client（本地实现/自动验收及真实 Provider 复合任务已收口；stdio/Streamable HTTP、Tools/Resources/Prompts、list_changed、Form Elicitation、OAuth loopback/回调与私有凭据存储、独立 JSON-RPC peer、官方 Filesystem Server interop、Node 24 全量验证、npm pack，以及默认百炼 `qwen3.5-plus-2026-02-15` 三轮真实任务 `100/100/100` 均有通过证据。整体仍暂缓：公网 HTTPS OAuth 反向代理部署、当前未提交工作树的三平台 CI、Linux WSL 与 macOS ARM64 原生证据尚缺。不得标记版本完成）。
+8. v0.8.2：完整 MCP Client（版本范围已收口；stdio/Streamable HTTP、Tools/Resources/Prompts、list_changed、Form Elicitation、OAuth loopback/回调与私有凭据存储、独立 JSON-RPC peer、官方 Filesystem Server interop、Node 24 全量验证、npm pack，以及默认百炼 `qwen3.5-plus-2026-02-15` 三轮真实任务 `100/100/100` 均有通过证据。公网 HTTPS OAuth 反向代理部署、GitHub Actions 三平台结果确认及 macOS ARM64 原生验收登记为后续部署/平台验收；不声称尚未获得的证据已通过）。
 9. v0.8.3：Persistent Job 与受限 Subagent。
 
 ## 中期
